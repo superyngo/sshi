@@ -595,7 +595,7 @@ impl ConfigTabState {
                                     let target = form.fields.iter().position(|fd| fd.key == target_key);
                                     if let Some(pos) = target {
                                         form.field_vp = Viewport::new();
-                                        form.field_vp.set_dims(form.fields.len().max(1), 8);
+                                        form.field_vp.set_dims(form.fields.len().max(1), 0);
                                         for _ in 0..pos {
                                             form.field_vp.move_down();
                                         }
