@@ -1166,7 +1166,7 @@ impl ConfigTabState {
                 let display = if ve.items.is_empty() {
                     "(none)".to_string()
                 } else {
-                    format!("[{}]", ve.items.join(", "))
+                    if ve.items.is_empty() { "(none)".to_string() } else { format!("[{}]", ve.items.join(", ")) }
                 };
                 let idx = ve.field_index;
                 let form = self.entry_form.as_mut().unwrap();
@@ -2153,7 +2153,7 @@ impl ConfigTabState {
             KeyCode::Char('s') => {
                 let (sidebar_item, field_index, display) = {
                     let ve = self.direct_vec_editor.as_ref().unwrap();
-                    (ve.sidebar_item.clone(), ve.field_index, format!("[{}]", ve.items.join(", ")))
+                    (ve.sidebar_item.clone(), ve.field_index, if ve.items.is_empty() { "(none)".to_string() } else { format!("[{}]", ve.items.join(", ")) })
                 };
                 self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
                 self.direct_vec_editor = None;
