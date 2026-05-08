@@ -150,6 +150,9 @@ pub struct GroupPickerState {
     pub vp: Viewport,
     pub closing: bool,
     pub descriptions: Vec<String>, // empty = no descriptions shown
+    pub allow_add: bool,
+    pub add_input: InputField,
+    pub add_input_active: bool,
 }
 
 impl EntryFormState {
@@ -475,6 +478,11 @@ impl ConfigTabState {
             }
             if let Some(ref ve) = form.vec_editor {
                 if ve.input_active {
+                    return true;
+                }
+            }
+            if let Some(ref gp) = form.group_picker {
+                if gp.add_input_active {
                     return true;
                 }
             }
@@ -888,6 +896,9 @@ impl ConfigTabState {
                                         .iter()
                                         .map(|(_, d)| d.to_string())
                                         .collect(),
+                                    allow_add: false,
+                                    add_input: InputField::new(""),
+                                    add_input_active: false,
                                 });
                             }
                             FieldKind::VecString | FieldKind::VecCheckPath => {
@@ -926,6 +937,9 @@ impl ConfigTabState {
                                         vp,
                                         closing: false,
                                         descriptions: vec![],
+                                        allow_add: true,
+                                        add_input: InputField::new(""),
+                                        add_input_active: false,
                                     });
                                 } else {
                                     let items = parse_bracket_list(&field.display_value);
@@ -1031,6 +1045,21 @@ impl ConfigTabState {
     }
 
     fn handle_group_picker_key(&mut self, key: KeyEvent, gp: &mut GroupPickerState) -> bool {
+        // If add-input is active, route keys to it first
+        if gp.add_input_active {
+            gp.add_input.handle_key(key);
+            if gp.add_input.mode == InputMode::Normal {
+                apply_add_input_to_picker(
+                    &gp.add_input.value.clone(),
+                    &mut gp.available,
+                    &mut gp.checked,
+                    &mut gp.vp,
+                );
+                gp.add_input = InputField::new("");
+                gp.add_input_active = false;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 gp.vp.move_up();
@@ -1045,6 +1074,12 @@ impl ConfigTabState {
                 if idx < gp.checked.len() {
                     gp.checked[idx] = !gp.checked[idx];
                 }
+                true
+            }
+            KeyCode::Char('a') if gp.allow_add => {
+                gp.add_input = InputField::new("");
+                gp.add_input.activate();
+                gp.add_input_active = true;
                 true
             }
             KeyCode::Enter | KeyCode::Char('s') => {
@@ -1461,7 +1496,7 @@ impl ConfigTabState {
 
         if let Some(ref gp) = form.group_picker {
             let picker_title = if gp.descriptions.is_empty() {
-                "  Pick groups  (Space:toggle  Enter/s:apply  Esc:cancel)".to_string()
+                "  Pick groups  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)".to_string()
             } else {
                 format!(
                     "  Editing: {}  (Space:toggle  Enter/s:apply  Esc:cancel)",
@@ -1511,6 +1546,33 @@ impl ConfigTabState {
                         ]));
                     }
                 }
+            }
+            if gp.add_input_active {
+                lines.push(Line::from(""));
+                let accent = Style::default()
+                    .fg(theme.accent_config)
+                    .add_modifier(Modifier::BOLD);
+                let prefix = Span::styled("  New group: ", accent);
+                let input_line = if gp.add_input.mode == InputMode::Active {
+                    let (before, after) = gp.add_input.split_at_cursor();
+                    let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
+                    let after_cursor: String = after.chars().skip(1).collect();
+                    Line::from(vec![
+                        prefix,
+                        Span::styled(before, accent),
+                        Span::styled(
+                            cursor_ch,
+                            Style::default()
+                                .fg(Color::Black)
+                                .bg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(after_cursor, accent),
+                    ])
+                } else {
+                    Line::from(vec![prefix, Span::styled(gp.add_input.value.clone(), accent)])
+                };
+                lines.push(input_line);
             }
         } else if let Some(ref ve) = form.vec_editor {
             lines.push(Line::from(Span::styled(
@@ -2248,6 +2310,22 @@ fn tribool_from_opt(v: Option<bool>) -> &'static str {
         None => "inherit",
         Some(true) => "yes",
         Some(false) => "no",
+    }
+}
+
+fn apply_add_input_to_picker(
+    value: &str,
+    available: &mut Vec<String>,
+    checked: &mut Vec<bool>,
+    vp: &mut Viewport,
+) {
+    let new_group = value.trim().to_string();
+    if !new_group.is_empty() && !available.contains(&new_group) {
+        let pos = available.partition_point(|g| g.as_str() < new_group.as_str());
+        available.insert(pos, new_group);
+        checked.insert(pos, true);
+        vp.set_dims(available.len().max(1), 0);
+        vp.selected = pos;
     }
 }
 
