@@ -2459,6 +2459,9 @@ fn tribool_to_opt(s: &str) -> Option<bool> {
 }
 
 fn enum_cycle(variants: &[&str], current: &str, forward: bool) -> String {
+    if variants.is_empty() {
+        return current.to_string();
+    }
     let pos = variants.iter().position(|&v| v == current).unwrap_or(0);
     let next = if forward {
         (pos + 1) % variants.len()
@@ -2542,6 +2545,11 @@ mod tests {
     #[test]
     fn test_enum_cycle_unknown_defaults_to_first() {
         assert_eq!(enum_cycle(&["a", "b"], "z", true), "b");
+    }
+
+    #[test]
+    fn test_enum_cycle_unknown_backward_defaults_to_last() {
+        assert_eq!(enum_cycle(&["a", "b", "c"], "z", false), "c");
     }
 
     #[test]
