@@ -10,7 +10,7 @@
 
 > **Line-number drift:** All line references are accurate against the initial codebase state. Each Task modifies `config_tab.rs`, causing subsequent Tasks' line numbers to shift. When executing, re-locate targets by searching for function/variable names, not by absolute line number.
 
-**Execution order:** Task 0 must land first (it fixes the pre-existing `editing_field_index` bug that every subsequent task depends on for correct write targeting). Tasks 1–7 are mostly independent **except**: Task 4+5 Step 2 modifies the same `activate_inline_edit` match arm as Task 1 Step 1 — execute Task 1 first. Task 8 must land **before** Task 9 — the popup guard (`is_any_popup_open`) needs to exist before Task 9 adds `direct_vec_editor` / `direct_group_picker` states that depend on it. Task 9 Step 10 then extends `is_any_popup_open` for the new states.
+**Execution order:** Task 0 must land first (it fixes the pre-existing `editing_field_index` bug that every subsequent task depends on for correct write targeting). Tasks 1–7 are mostly independent **except**: Task 4+5 Step 2 modifies the same `activate_inline_edit` match arm as Task 1 Step 1 — execute Task 1 first. Task 8 must land **before** Task 9 — the popup guard (`is_any_popup_open`) and removal of the old catch-all must be complete before Task 9 adds `direct_vec_editor` / `direct_group_picker` states. Task 9 Step 11 then extends `is_any_popup_open` for the new states. Task 7 should land before Task 8 since both modify app.rs `pending_save` guards — Task 7 adds `pending_field_restore` threading, Task 8 removes the catch-all and restructures the guard.
 
 ---
 
@@ -212,7 +212,7 @@ Currently when `navbar_focused = true`, Tab cycles the tab **and** drops navbar 
 
 Add `a` key in GroupPicker to type a new group name → adds to available list + auto-selects it.
 
-- [ ] **Step 1: Extend GroupPickerState with add-input fields**
+- [ ] **Step 1: Extend GroupPickerState with add-input fields and allow_add flag**
 
   Change struct at line ~145:
   ```rust
@@ -223,10 +223,13 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
       pub vp: Viewport,
       pub closing: bool,
       pub descriptions: Vec<String>,
-      pub add_input: InputField,       // ← new
-      pub add_input_active: bool,      // ← new
+      pub allow_add: bool,              // ← new: true for groups picker, false for check-enabled
+      pub add_input: InputField,        // ← new
+      pub add_input_active: bool,       // ← new
   }
   ```
+
+  > **Why `allow_add` over `descriptions.is_empty()`:** Using `descriptions.is_empty()` as a proxy for "is this a groups picker" is fragile — if a future picker has descriptions but also needs Add functionality, the condition would block it. `allow_add` makes the intent explicit.
 
 - [ ] **Step 2: Update all GroupPickerState construction sites**
 
@@ -244,6 +247,7 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
           .iter()
           .map(|(_, d)| d.to_string())
           .collect(),
+      allow_add: false,
       add_input: InputField::new(""),
       add_input_active: false,
   });
@@ -258,6 +262,7 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
       vp,
       closing: false,
       descriptions: vec![],
+      allow_add: true,
       add_input: InputField::new(""),
       add_input_active: false,
   });
@@ -319,8 +324,7 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
               }
               true
           }
-          KeyCode::Char('a') if gp.descriptions.is_empty() => {
-              // Only allow Add for groups picker (not check enabled picker)
+          KeyCode::Char('a') if gp.allow_add => {
               gp.add_input = InputField::new("");
               gp.add_input.activate();
               gp.add_input_active = true;
@@ -435,12 +439,40 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
 
 `ShellEnum` (sh/powershell/cmd) and `Enum` (e.g., conflict_strategy: newest/skip) should cycle with Left/Right/Enter/Space instead of opening a text input.
 
+- [ ] **Step 0: Rename `FieldKind::Enum { _variants }` to `Enum { variants }`**
+
+  The current definition uses `_variants` (underscore = unused). Since this plan adds pattern matching on the field, remove the underscore prefix.
+
+  In the `FieldKind` enum (line ~66):
+  ```rust
+  // Before:
+  Enum {
+      _variants: Vec<&'static str>,
+  },
+
+  // After:
+  Enum {
+      variants: Vec<&'static str>,
+  },
+  ```
+
+  Also update the single construction site at line ~1913:
+  ```rust
+  // Before:
+  FieldKind::Enum {
+      _variants: vec!["newest", "skip"],
+  },
+
+  // After:
+  FieldKind::Enum {
+      variants: vec!["newest", "skip"],
+  },
+  ```
+
 - [ ] **Step 1: Add cycle helper functions near line ~2229**
 
   After `tribool_to_opt`, add:
   ```rust
-  /// Generic cycle over a fixed list of variants (forward or back).
-  /// Used for ShellEnum, Enum, TriBool, and Bool to avoid separate helper functions.
   fn enum_cycle(variants: &[&str], current: &str, forward: bool) -> String {
       let pos = variants.iter().position(|&v| v == current).unwrap_or(0);
       let next = if forward {
@@ -451,30 +483,92 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
       variants[next].to_string()
   }
 
+  const SHELL_VARIANTS: &[&str] = &["sh", "powershell", "cmd"];
+
   fn shell_cycle_fwd(s: &str) -> String {
-      match s {
-          "sh" => "powershell".to_string(),
-          "powershell" => "cmd".to_string(),
-          other => {
-              tracing::warn!(shell = other, "unknown shell value, defaulting to sh");
-              "sh".to_string()
-          }
+      let result = enum_cycle(SHELL_VARIANTS, s, true);
+      if !SHELL_VARIANTS.contains(&s) {
+          tracing::warn!(shell = s, "unknown shell value, defaulting to sh");
       }
+      result
   }
 
   fn shell_cycle_back(s: &str) -> String {
-      match s {
-          "sh" => "cmd".to_string(),
-          "cmd" => "powershell".to_string(),
-          other => {
-              tracing::warn!(shell = other, "unknown shell value, defaulting to sh");
-              "sh".to_string()
-          }
+      let result = enum_cycle(SHELL_VARIANTS, s, false);
+      if !SHELL_VARIANTS.contains(&s) {
+          tracing::warn!(shell = s, "unknown shell value, defaulting to sh");
+      }
+      result
+  }
+  ```
+
+  > **Unification note:** `tribool_cycle_fwd/back` can now be replaced by `enum_cycle(&["inherit", "yes", "no"], current, true/false)`. Similarly Bool toggle becomes `enum_cycle(&["true", "false"], current, true)`. ShellEnum reuses `enum_cycle` via `SHELL_VARIANTS` constant, keeping the `tracing::warn!` on unknown values. This reduces cycle-specific code to one generic function.
+
+- [ ] **Step 1b: Add unit tests for enum_cycle and apply_add_input_to_picker**
+
+  At the bottom of `config_tab.rs`, add a `#[cfg(test)]` module:
+  ```rust
+  #[cfg(test)]
+  mod tests {
+      use super::*;
+
+      #[test]
+      fn test_enum_cycle_forward() {
+          assert_eq!(enum_cycle(&["a", "b", "c"], "a", true), "b");
+          assert_eq!(enum_cycle(&["a", "b", "c"], "c", true), "a");
+      }
+
+      #[test]
+      fn test_enum_cycle_backward() {
+          assert_eq!(enum_cycle(&["a", "b", "c"], "c", false), "b");
+          assert_eq!(enum_cycle(&["a", "b", "c"], "a", false), "c");
+      }
+
+      #[test]
+      fn test_enum_cycle_unknown_defaults_to_first() {
+          assert_eq!(enum_cycle(&["a", "b"], "z", true), "b");
+      }
+
+      #[test]
+      fn test_shell_cycle_fwd() {
+          assert_eq!(shell_cycle_fwd("sh"), "powershell");
+          assert_eq!(shell_cycle_fwd("powershell"), "cmd");
+          assert_eq!(shell_cycle_fwd("cmd"), "sh");
+      }
+
+      #[test]
+      fn test_shell_cycle_back() {
+          assert_eq!(shell_cycle_back("sh"), "cmd");
+          assert_eq!(shell_cycle_back("cmd"), "powershell");
+          assert_eq!(shell_cycle_back("powershell"), "sh");
       }
   }
   ```
 
-  > **Unification note:** `tribool_cycle_fwd/back` can now be replaced by `enum_cycle(&["true", "false", "none"], current, true/false)`. Similarly Bool toggle becomes `enum_cycle(&["true", "false"], current, true)`. ShellEnum keeps dedicated helpers to preserve the `tracing::warn!` on unknown values. This reduces cycle-specific code to one generic function.
+  Also add tests for `apply_add_input_to_picker` (from Task 3 Step 3) once that helper is defined:
+  ```rust
+  #[test]
+  fn test_apply_add_input_dedup_and_sorted() {
+      let mut available = vec!["alpha".into(), "charlie".into()];
+      let mut checked = vec![false, false];
+      let mut vp = Viewport::new();
+      vp.set_dims(2, 0);
+      apply_add_input_to_picker("bravo", &mut available, &mut checked, &mut vp);
+      assert_eq!(available, vec!["alpha", "bravo", "charlie"]);
+      assert_eq!(checked, vec![false, true, false]);
+      assert_eq!(vp.selected, 1);
+  }
+
+  #[test]
+  fn test_apply_add_input_no_duplicate() {
+      let mut available = vec!["alpha".into()];
+      let mut checked = vec![false];
+      let mut vp = Viewport::new();
+      vp.set_dims(1, 0);
+      apply_add_input_to_picker("alpha", &mut available, &mut checked, &mut vp);
+      assert_eq!(available.len(), 1);
+  }
+  ```
 
 - [ ] **Step 2: Exclude ShellEnum and Enum from text input in activate_inline_edit**
 
@@ -713,11 +807,13 @@ Add `a` key in GroupPicker to type a new group name → adds to available list +
 
 **Files:**
 - Modify: `src/tui/tabs/config_tab.rs:1082-1211` (commit_entry_form — change return type)
-- Modify: `src/tui/app.rs` (save_config — consume returned index)
+- Modify: `src/tui/app.rs` (save_config — accept `Option<usize>` param)
 
 After pressing `s` to save an entry form popup, `reload()` is called which resets `field_vp` to index 0, losing the user's scroll position.
 
-**Approach:** Change `commit_entry_form` to return `Option<usize>` (the field index to restore), then consume it in `save_config`. This avoids polluting `ConfigTabState` with a transient communication field.
+**Approach:** `commit_entry_form` returns `Option<usize>` (field index to restore). `save_config` accepts `field_restore: Option<usize>` and applies it after `reload()`. No new struct fields needed — the return value flows directly through the call chain.
+
+> **config_dirty interaction:** `reload()` sets `self.config_dirty = false`. The flow is: `commit_entry_form` → sets `config_dirty = true`, returns saved_sel → `pending_save = true` → `save_config` → writes TOML → `reload()` → resets `config_dirty = false`, resets `field_vp`. The restore step re-applies `field_vp.selected` after reload. On Esc cancel (Task 6), `pending_save` is never set, so `reload()` is never called and `config_dirty` remains `true` — correct behavior (unsaved edits still pending).
 
 - [ ] **Step 1: Change commit_entry_form signature to return Option\<usize\>**
 
@@ -742,7 +838,7 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
 
   // After:
   self.config_dirty = true;
-  let saved_sel = self.field_vp.selected;   // capture before reset
+  let saved_sel = self.field_vp.selected;
   let items = build_sidebar_items(config);
   self.items = items;
   self.sidebar_vp = Viewport::new();
@@ -751,43 +847,26 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
   Some(saved_sel)
   ```
 
-- [ ] **Step 2: Update all call sites of commit_entry_form**
+- [ ] **Step 2: Thread the return value through app.rs pending_save handlers**
 
-  Search for `self.commit_entry_form(` in `config_tab.rs`. Each call site should now capture the return value:
+  `commit_entry_form` is only called from config_tab's key handlers, which set `pending_save = true`. The actual `save_config()` call happens in app.rs's `pending_save` guards. Add a transient `pending_field_restore: Option<usize>` field to `ConfigTabState` to carry the value from `commit_entry_form` to the app.rs caller:
+
+  In `ConfigTabState`, add:
+  ```rust
+  pub pending_field_restore: Option<usize>,
+  ```
+  Initialize to `None` in `ConfigTabState::new()`.
+
+  At each call site of `self.commit_entry_form(config)` inside config_tab.rs, capture the return:
   ```rust
   // Before:
   self.commit_entry_form(config);
 
   // After:
-  let _saved_sel = self.commit_entry_form(config);
-  ```
-  The `_saved_sel` is ignored at the call site inside `config_tab.rs` — the caller in `app.rs` is the one that uses it. If `commit_entry_form` is only called from the `pending_save` path in `app.rs`, the change is simpler (see Step 3).
-
-- [ ] **Step 3: Restore field_vp selection in save_config**
-
-  In app.rs `save_config` (line ~1774), after `reload()`, add the restoration:
-  ```rust
-  fn save_config(&mut self) {
-      // ...existing save logic...
-      match config_io::save_config(&self.config, path_arg) {
-          Ok(resolved) => {
-              self.config_tab.reload_banner_until = ...;
-              self.config_tab.reload(&self.config, Some(&resolved));
-              // Restore field selection if coming from entry form commit
-              if let Some(saved_sel) = self.pending_field_restore.take() {
-                  let count = self.config_tab.current_descriptors(&self.config).len();
-                  if saved_sel < count {
-                      self.config_tab.field_vp.selected = saved_sel;
-                      self.config_tab.field_vp.set_dims(count, 0);
-                  }
-              }
-          }
-          Err(e) => { ... }
-      }
-  }
+  self.pending_field_restore = self.commit_entry_form(config);
   ```
 
-  Store the returned value on `App` before calling `save_config`. In the `pending_save` handler in app.rs (line ~1074), change:
+  In app.rs, each `pending_save` guard site (there are 3 — popup guard at ~1074, catch-all at ~1349, general routing at ~1380), change:
   ```rust
   // Before:
   if self.config_tab.pending_save {
@@ -798,23 +877,23 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
   // After:
   if self.config_tab.pending_save {
       self.config_tab.pending_save = false;
-      self.pending_field_restore = self.config_tab.last_committed_field_sel.take();
+      let restore = self.config_tab.pending_field_restore.take();
       self.save_config();
+      if let Some(idx) = restore {
+          let count = self.config_tab.current_descriptors(&self.config).len();
+          if idx < count {
+              self.config_tab.field_vp.selected = idx;
+          }
+      }
   }
   ```
 
-  Add `last_committed_field_sel: Option<usize>` to `ConfigTabState` and `pending_field_restore: Option<usize>` to `App`. `commit_entry_form` writes `self.last_committed_field_sel = Some(saved_sel)` in addition to returning it.
-
-  > **Simpler alternative:** If `commit_entry_form` is called from exactly one place (the `pending_save` guard in app.rs), pass the return value directly without the extra `App` field. Check the actual call graph before choosing.
-
-  > **Why return value over state field:** `saved_field_sel_after_commit: Option<usize>` in `ConfigTabState` would be a transient communication channel — it holds data that is only meaningful for one tick and doesn't represent any real config-tab state. A return value makes the data flow explicit and avoids polluting the struct.
-
-- [ ] **Step 4: Build and verify**
+- [ ] **Step 3: Build and verify**
   ```bash
   cargo build 2>&1 | grep -E "^error"
   ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 4: Commit**
   ```bash
   git add src/tui/tabs/config_tab.rs src/tui/app.rs
   git commit -m "fix(tui): preserve field selection after saving entry form popup"
@@ -825,8 +904,8 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
 ## Task 8: Unified popup key blocking (Req 8)
 
 **Files:**
-- Modify: `src/tui/tabs/config_tab.rs:466-483` (is_editing_active → rename to is_any_popup_open)
-- Modify: `src/tui/app.rs:1068-1079` and `1119-1163` (global key routing)
+- Modify: `src/tui/tabs/config_tab.rs:466-483` (is_editing_active → add is_any_popup_open)
+- Modify: `src/tui/app.rs:1066-1078` and `1119-1163` and `1340-1354` (global key routing)
 
 **Root cause:** `is_editing_active()` only blocks global keys when a text input is actively typing. When `entry_form` or `confirm` is open but idle, global shortcuts (`q`, `?`, `i`, `L`) still fire. Need a broader check.
 
@@ -839,9 +918,9 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
   }
   ```
 
-- [ ] **Step 2: Extend the edit guard in app.rs to cover all popup states**
+- [ ] **Step 2: Widen the popup guard in app.rs to cover all popup states**
 
-  In app.rs, the edit guard section (line ~1068):
+  In app.rs, the popup guard section (line ~1066):
   ```rust
   // §edit-guard: while config tab has an active text input, suspend all
   // global shortcuts and route directly to the config tab.
@@ -854,7 +933,7 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
   if self.active_tab == TabId::Config && self.config_tab.is_any_popup_open() {
   ```
 
-  The rest of the block (lines 1069-1078) stays the same — it already routes keys to config_tab and handles pending_save and pending_delete.
+  The rest of the block stays the same — it already routes keys to config_tab and handles pending_save and pending_delete.
 
 - [ ] **Step 3: Remove now-redundant Esc special-case**
 
@@ -869,11 +948,11 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
       return Ok(handled);
   }
   ```
-  This is now covered by the broader popup guard. Remove it (replace with just a comment if needed for clarity).
+  This is now covered by the broader popup guard (which runs before this point and returns). Remove it entirely.
 
-- [ ] **Step 4: Update the second catch-all block (app.rs ~1341-1354)**
+- [ ] **Step 4: Remove now-redundant catch-all match arm**
 
-  There is a second catch-all in the `match key.code` block:
+  The catch-all at app.rs ~1340-1354:
   ```rust
   _ if self.active_tab == TabId::Config
       && (self.config_tab.entry_form.is_some()
@@ -883,14 +962,10 @@ After pressing `s` to save an entry form popup, `reload()` is called which reset
       ...
   }
   ```
-  This block handles `pending_save` and `pending_delete` for popup states. **Keep this block** but update its condition to use `is_any_popup_open()` for consistency, so it also covers `editing_field` (and later, Task 9's direct sub-popups):
-  ```rust
-  _ if self.active_tab == TabId::Config
-      && self.config_tab.is_any_popup_open() =>
-  {
-      // ... body unchanged ...
-  }
-  ```
+
+  **Remove this entire match arm.** After Step 2, the popup guard at line ~1066 already intercepts all key events when any popup is open and routes them to `config_tab.handle_key()` with the same `pending_save`/`pending_delete` checks. The catch-all is now dead code — it can never be reached because the popup guard returns before the `match key.code` block executes.
+
+  > **Why remove instead of keeping as safety net:** A dead catch-all is misleading — it suggests there's a second code path for popup key handling when there isn't. Removing it makes the control flow explicit: one popup guard, one path.
 
 - [ ] **Step 5: Build and verify**
   ```bash
@@ -918,8 +993,9 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
   ```rust
   #[derive(Debug)]
   pub struct DirectVecEditorState {
-      pub field_key: String,
+      pub field_index: usize,
       pub sidebar_item: SidebarItem,
+      pub field_key: String,
       pub items: Vec<String>,
       pub vp: Viewport,
       pub input: InputField,
@@ -928,8 +1004,9 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
 
   #[derive(Debug)]
   pub struct DirectGroupPickerState {
-      pub field_key: String,
+      pub field_index: usize,
       pub sidebar_item: SidebarItem,
+      pub field_key: String,
       pub available: Vec<String>,
       pub checked: Vec<bool>,
       pub vp: Viewport,
@@ -938,6 +1015,8 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
       pub add_input_active: bool,
   }
   ```
+
+  > **Why `field_index`:** Unlike the original plan's string-key-matching commit approach, these structs store the field descriptor index so commit can reuse the existing `apply_*_field` functions. This avoids fragile string matching and stays in sync with field descriptor definitions.
 
 - [ ] **Step 2: Add fields to ConfigTabState**
 
@@ -957,8 +1036,8 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
       let field_key = f.key.clone();
       let current_val = f.display_value.clone();
       let sidebar_item = self.items[self.sidebar_vp.selected].clone();
+      let field_index = self.field_vp.selected;
       if field_key == "groups" || matches!(f.kind, FieldKind::VecCheckPath | FieldKind::CheckEnabled) {
-          // Open DirectGroupPicker for groups (and check enabled)
           let mut known: std::collections::BTreeSet<String> = config
               .host.iter().flat_map(|h| h.groups.iter().cloned())
               .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
@@ -971,8 +1050,9 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
           let mut vp = Viewport::new();
           vp.set_dims(available.len().max(1), 0);
           self.direct_group_picker = Some(DirectGroupPickerState {
-              field_key,
+              field_index,
               sidebar_item,
+              field_key,
               available,
               checked,
               vp,
@@ -981,13 +1061,13 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
               add_input_active: false,
           });
       } else {
-          // Open DirectVecEditor for paths, skipped_hosts, etc.
           let items = parse_bracket_list(&current_val);
           let mut vp = Viewport::new();
           vp.set_dims(items.len().max(1), 0);
           self.direct_vec_editor = Some(DirectVecEditorState {
-              field_key,
+              field_index,
               sidebar_item,
+              field_key,
               items,
               vp,
               input: InputField::new(""),
@@ -998,7 +1078,7 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
   }
   ```
 
-  > **CheckEnabled:** `FieldKind::CheckEnabled` is included in the match so that `check.enabled` fields also open a group-picker directly instead of the full entry form. If `CheckEnabled` should continue to use the entry form, remove it from the match.
+  > **CheckEnabled:** Included so `check.enabled` fields open a group-picker directly.
 
 - [ ] **Step 4: Route keys to direct sub-popups in handle_key**
 
@@ -1051,7 +1131,12 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
               true
           }
           KeyCode::Char('s') => {
-              self.commit_direct_vec_editor(config);
+              self.commit_direct_popup_field(
+                  ve.sidebar_item.clone(),
+                  ve.field_index,
+                  &format!("[{}]", ve.items.join(", ")),
+                  config,
+              );
               self.direct_vec_editor = None;
               self.pending_save = true;
               true
@@ -1065,59 +1150,29 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
   }
   ```
 
-- [ ] **Step 6: Implement commit_direct_vec_editor**
+- [ ] **Step 6: Add shared commit_direct_popup_field — reuse field descriptor mechanism**
+
+  Instead of string-matching on field keys, this shared helper uses the existing field descriptor + `apply_*_field` pattern. It formats the new value as a display string and delegates to `commit_inline_edit`:
 
   ```rust
-  fn commit_direct_vec_editor(&mut self, config: &mut AppConfig) {
-      let ve = match self.direct_vec_editor.as_ref() {
-          Some(v) => v,
-          None => return,
-      };
-      let key = ve.field_key.clone();
-      let item = ve.sidebar_item.clone();
+  fn commit_direct_popup_field(
+      &mut self,
+      item: SidebarItem,
+      field_index: usize,
+      display_value: &str,
+      config: &mut AppConfig,
+  ) {
+      self.editing_field_index = field_index;
+      self.commit_inline_edit(display_value, config);
       self.config_dirty = true;
-      let items = ve.items.clone();
-      match item {
-          SidebarItem::SectionSettings => {
-              match key.as_str() {
-                  "skipped_hosts" => config.settings.skipped_hosts = items,
-                  other => tracing::warn!(key = other, "commit_direct_vec_editor: unhandled SectionSettings key"),
-              }
-          }
-          SidebarItem::Host(i) => {
-              if let Some(h) = config.host.get_mut(i) {
-                  match key.as_str() {
-                      "groups" => h.groups = items,
-                      other => tracing::warn!(key = other, "commit_direct_vec_editor: unhandled Host key"),
-                  }
-              }
-          }
-          SidebarItem::Check(i) => {
-              if let Some(c) = config.check.get_mut(i) {
-                  match key.as_str() {
-                      "groups" => c.groups = items,
-                      "enabled" => c.enabled = items,
-                      other => tracing::warn!(key = other, "commit_direct_vec_editor: unhandled Check key"),
-                  }
-              }
-          }
-          SidebarItem::Sync(i) => {
-              if let Some(s) = config.sync.get_mut(i) {
-                  match key.as_str() {
-                      "groups" => s.groups = items,
-                      "paths" => s.paths = items,
-                      other => tracing::warn!(key = other, "commit_direct_vec_editor: unhandled Sync key"),
-                  }
-              }
-          }
-          other => tracing::warn!(item = ?other, "commit_direct_vec_editor: unhandled SidebarItem variant"),
-      }
   }
   ```
 
-- [ ] **Step 7: Implement handle_direct_group_picker_key and commit_direct_group_picker**
+  > **Why this is better than string matching:** `commit_inline_edit` already dispatches to `apply_settings_field`, `apply_host_field`, `apply_check_field`, `apply_sync_field` based on the sidebar item and field index. It handles all field types correctly. Adding new fields requires zero changes to this commit path — only the field descriptor definitions need updating.
 
-  > **Uses shared helper** `apply_add_input_to_picker` defined in Task 3 Step 3 — call it instead of duplicating the insert logic.
+- [ ] **Step 7: Implement handle_direct_group_picker_key**
+
+  > **Uses shared helper** `apply_add_input_to_picker` defined in Task 3 Step 3.
 
   ```rust
   fn handle_direct_group_picker_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
@@ -1153,7 +1208,23 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
               true
           }
           KeyCode::Enter | KeyCode::Char('s') => {
-              self.commit_direct_group_picker(config);
+              let gp = self.direct_group_picker.as_ref().unwrap();
+              let selected: Vec<String> = gp.available.iter()
+                  .zip(gp.checked.iter())
+                  .filter(|(_, &c)| c)
+                  .map(|(g, _)| g.clone())
+                  .collect();
+              let display = if selected.is_empty() {
+                  "(none)".to_string()
+              } else {
+                  format!("[{}]", selected.join(", "))
+              };
+              self.commit_direct_popup_field(
+                  gp.sidebar_item.clone(),
+                  gp.field_index,
+                  &display,
+                  config,
+              );
               self.direct_group_picker = None;
               self.pending_save = true;
               true
@@ -1165,52 +1236,40 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
           _ => true,
       }
   }
+  ```
 
-  fn commit_direct_group_picker(&mut self, config: &mut AppConfig) {
-      let gp = match self.direct_group_picker.as_ref() {
-          Some(g) => g,
-          None => return,
-      };
-      let selected: Vec<String> = gp.available.iter()
-          .zip(gp.checked.iter())
-          .filter(|(_, &c)| c)
-          .map(|(g, _)| g.clone())
-          .collect();
-      let key = gp.field_key.clone();
-      let item = gp.sidebar_item.clone();
-      self.config_dirty = true;
-      match item {
-          SidebarItem::Host(i) => {
-              if let Some(h) = config.host.get_mut(i) {
-                  if key == "groups" { h.groups = selected; }
-              }
-          }
-          SidebarItem::Check(i) => {
-              if let Some(c) = config.check.get_mut(i) {
-                  match key.as_str() {
-                      "groups" => c.groups = selected,
-                      "enabled" => c.enabled = selected,
-                      _ => {}
-                  }
-              }
-          }
-          SidebarItem::Sync(i) => {
-              if let Some(s) = config.sync.get_mut(i) {
-                  if key == "groups" { s.groups = selected; }
-              }
-          }
-          _ => {}
-      }
+- [ ] **Step 8: Extract shared cursor rendering helper**
+
+  The cursor character rendering pattern appears identically in Task 3's GroupPicker add-input render and in both direct sub-popup renderers (4+ total occurrences). Extract it before implementing renderers:
+
+  ```rust
+  fn input_cursor_line<'a>(input: &InputField, prefix: Span<'a>, style: Style) -> Line<'a> {
+      let (before, after) = input.split_at_cursor();
+      let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
+      let after_cursor: String = after.chars().skip(1).collect();
+      Line::from(vec![
+          prefix,
+          Span::styled(before, style),
+          Span::styled(
+              cursor_ch,
+              Style::default()
+                  .fg(Color::Black)
+                  .bg(Color::Yellow)
+                  .add_modifier(Modifier::BOLD),
+          ),
+          Span::styled(after_cursor, style),
+      ])
   }
   ```
 
-- [ ] **Step 8: Add rendering for direct sub-popups**
+  Update Task 3 Step 4's GroupPicker render to use `input_cursor_line(&gp.add_input, prefix, accent)` instead of the inline cursor block.
+
+- [ ] **Step 9: Add rendering for direct sub-popups**
 
   In `render()` (line ~1353), before the existing `entry_form` check, add:
   ```rust
   // Direct sub-popup overlays (req 9: vec fields open sub-popup without entry form)
   if self.direct_vec_editor.is_some() || self.direct_group_picker.is_some() {
-      // Render the main screen underneath
       let vert = Layout::default()
           .direction(Direction::Vertical)
           .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -1226,7 +1285,6 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
           Paragraph::new(Span::styled(crumb, Style::default().fg(theme.inactive))),
           vert[1],
       );
-      // Render popup overlay
       if let Some(ref dve) = self.direct_vec_editor {
           self.render_direct_vec_editor(area, frame, theme, dve);
       } else if let Some(ref dgp) = self.direct_group_picker {
@@ -1236,33 +1294,9 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
   }
   ```
 
-- [ ] **Step 9: Implement render_direct_vec_editor and render_direct_group_picker**
+- [ ] **Step 10: Implement render_direct_vec_editor and render_direct_group_picker**
 
-  > **Extract cursor rendering helper** — the cursor character rendering pattern below appears identically in Task 3's GroupPicker add-input render and here (4+ total occurrences). Extract it before implementing these renderers:
-  > ```rust
-  > /// Renders an active InputField with a block-cursor character into a Vec<Line>.
-  > /// `prefix` is the label span shown before the input content.
-  > fn input_cursor_line<'a>(input: &InputField, prefix: Span<'a>, style: Style) -> Line<'a> {
-  >     let (before, after) = input.split_at_cursor();
-  >     let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-  >     let after_cursor: String = after.chars().skip(1).collect();
-  >     Line::from(vec![
-  >         prefix,
-  >         Span::styled(before, style),
-  >         Span::styled(
-  >             cursor_ch,
-  >             Style::default()
-  >                 .fg(Color::Black)
-  >                 .bg(Color::Yellow)
-  >                 .add_modifier(Modifier::BOLD),
-  >         ),
-  >         Span::styled(after_cursor, style),
-  >     ])
-  > }
-  > ```
-  > Then replace all inline cursor-rendering blocks with `input_cursor_line(...)`. Update Task 3 Step 4 render as well.
-
-  These mirror the existing `render_entry_form` popup structure but show only the vec/group-picker content.
+  These mirror the existing `render_entry_form` popup structure but show only the vec/group-picker content. Both use the shared `input_cursor_line` helper.
 
   ```rust
   fn render_direct_vec_editor(
@@ -1285,7 +1319,7 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
 
       let mut lines: Vec<Line> = vec![
           Line::from(Span::styled(
-              format!("  (a:add  d:del  s:save  Esc:cancel)"),
+              "  (a:add  d:del  s:save  Esc:cancel)",
               Style::default().fg(theme.warning),
           )),
           Line::from(""),
@@ -1305,16 +1339,11 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
       if dve.input_active {
           lines.push(Line::from(""));
           let accent = Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD);
-          let prefix = Span::styled("  New: ", accent);
-          let (before, after) = dve.input.split_at_cursor();
-          let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-          let after_cursor: String = after.chars().skip(1).collect();
-          lines.push(Line::from(vec![
-              prefix,
-              Span::styled(before, accent),
-              Span::styled(cursor_ch, Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-              Span::styled(after_cursor, accent),
-          ]));
+          lines.push(input_cursor_line(
+              &dve.input,
+              Span::styled("  New: ", accent),
+              accent,
+          ));
       }
       frame.render_widget(Paragraph::new(lines), inner);
   }
@@ -1362,22 +1391,17 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
       if dgp.add_input_active {
           lines.push(Line::from(""));
           let accent = Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD);
-          let prefix = Span::styled("  New group: ", accent);
-          let (before, after) = dgp.add_input.split_at_cursor();
-          let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-          let after_cursor: String = after.chars().skip(1).collect();
-          lines.push(Line::from(vec![
-              prefix,
-              Span::styled(before, accent),
-              Span::styled(cursor_ch, Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD)),
-              Span::styled(after_cursor, accent),
-          ]));
+          lines.push(input_cursor_line(
+              &dgp.add_input,
+              Span::styled("  New group: ", accent),
+              accent,
+          ));
       }
       frame.render_widget(Paragraph::new(lines), inner);
   }
   ```
 
-- [ ] **Step 10: Update is_any_popup_open to include direct sub-popups**
+- [ ] **Step 11: Update is_any_popup_open to include direct sub-popups**
 
   ```rust
   pub fn is_any_popup_open(&self) -> bool {
@@ -1397,37 +1421,18 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
       // ... existing checks for editing_field, entry_form inline input ...
       if let Some(ref form) = self.entry_form {
           if let Some(ref gp) = form.group_picker {
-              if gp.add_input_active { return true; }  // ← added by Task 3 Step 5
+              if gp.add_input_active { return true; }
           }
       }
       if let Some(ref dve) = self.direct_vec_editor {
-          if dve.input_active { return true; }          // ← added by Task 9 Step 10
+          if dve.input_active { return true; }
       }
       if let Some(ref dgp) = self.direct_group_picker {
-          if dgp.add_input_active { return true; }      // ← added by Task 9 Step 10
+          if dgp.add_input_active { return true; }
       }
       false
   }
   ```
-
-- [ ] **Step 11: Verify app.rs catch-all covers direct sub-popups**
-
-  The catch-all block updated in Task 8 Step 4 already uses `is_any_popup_open()`, which now includes `direct_vec_editor` / `direct_group_picker`. Verify the `pending_save` flow explicitly:
-
-  In app.rs, the popup guard (line ~1068):
-  ```rust
-  if self.active_tab == TabId::Config && self.config_tab.is_any_popup_open() {
-      let handled = self.config_tab.handle_key(key, &mut self.config);
-      if self.config_tab.pending_save {      // ← this check must be present
-          self.config_tab.pending_save = false;
-          self.save_config();
-      }
-      // ... pending_delete check ...
-      return Ok(handled);
-  }
-  ```
-
-  `handle_direct_vec_editor_key` sets `self.pending_save = true` on `KeyCode::Char('s')`. The guard above then calls `save_config()`. Confirm these two lines are indeed present in the guard body — if the guard body only contains `return Ok(handled)` without the `pending_save` check, add it.
 
 - [ ] **Step 12: Build and verify**
   ```bash
@@ -1440,7 +1445,7 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
   git commit -m "feat(tui): Vec/groups fields open sub-popup directly from main Config screen"
   ```
 
-> **Code duplication note:** `DirectVecEditorState` / `DirectGroupPickerState` and their handlers/renderers share logic with the entry form's `VecEditorState` / `GroupPickerState`. This plan mitigates the duplication via the `apply_add_input_to_picker` helper (Task 3 Step 3) and the `input_cursor_line` helper (Task 9 Step 9). A deeper refactor into a shared trait or generic popup module can follow once all 9 fixes are stable.
+> **Code duplication mitigation:** This task reuses the field descriptor commit mechanism via `commit_direct_popup_field` (no string matching). The shared `apply_add_input_to_picker` (Task 3) and `input_cursor_line` (Step 8) helpers eliminate the worst duplication. The remaining handler/renderer code is structurally similar to the entry form's versions but distinct enough that a shared trait would over-abstract — defer to a future refactor once all 9 fixes are stable.
 
 ---
 
