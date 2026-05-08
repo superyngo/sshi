@@ -1073,7 +1073,14 @@ impl App {
             }
             if self.config_tab.pending_save {
                 self.config_tab.pending_save = false;
+                let restore = self.config_tab.pending_field_restore.take();
                 self.save_config();
+                if let Some(idx) = restore {
+                    let count = self.config_tab.current_descriptors(&self.config).len();
+                    if idx < count {
+                        self.config_tab.field_vp.selected = idx;
+                    }
+                }
             }
             return Ok(handled);
         }
@@ -1347,7 +1354,14 @@ impl App {
                 }
                 if self.config_tab.pending_save {
                     self.config_tab.pending_save = false;
+                    let restore = self.config_tab.pending_field_restore.take();
                     self.save_config();
+                    if let Some(idx) = restore {
+                        let count = self.config_tab.current_descriptors(&self.config).len();
+                        if idx < count {
+                            self.config_tab.field_vp.selected = idx;
+                        }
+                    }
                 }
                 Ok(true) // always consume — don't leak to global 'q'/etc.
             }
@@ -1378,7 +1392,14 @@ impl App {
                 }
                 if self.config_tab.pending_save {
                     self.config_tab.pending_save = false;
+                    let restore = self.config_tab.pending_field_restore.take();
                     self.save_config();
+                    if let Some(idx) = restore {
+                        let count = self.config_tab.current_descriptors(&self.config).len();
+                        if idx < count {
+                            self.config_tab.field_vp.selected = idx;
+                        }
+                    }
                 }
                 Ok(handled)
             }

@@ -317,6 +317,7 @@ pub struct ConfigTabState {
     pub pending_delete: Option<(EntryFormKind, usize)>,
     pub pending_open_editor: bool,
     pub pending_save: bool,
+    pub pending_field_restore: Option<usize>,
 }
 
 impl ConfigTabState {
@@ -343,6 +344,7 @@ impl ConfigTabState {
             pending_delete: None,
             pending_open_editor: false,
             pending_save: false,
+            pending_field_restore: None,
         }
     }
 
@@ -1057,7 +1059,7 @@ impl ConfigTabState {
                 true
             }
             KeyCode::Char('s') => {
-                self.commit_entry_form(config);
+                self.pending_field_restore = self.commit_entry_form(config);
                 self.entry_form = None;
                 self.pending_save = true;
                 true
@@ -1239,8 +1241,9 @@ impl ConfigTabState {
         }
     }
 
-    fn commit_entry_form(&mut self, config: &mut AppConfig) {
+    fn commit_entry_form(&mut self, config: &mut AppConfig) -> Option<usize> {
         let form = self.entry_form.take().unwrap();
+        let saved_sel = form.field_vp.selected;
         match form.kind {
             EntryFormKind::Host => {
                 let mut h = if let Some(idx) = form.edit_index {
@@ -1368,6 +1371,7 @@ impl ConfigTabState {
         self.sidebar_vp = Viewport::new();
         self.sidebar_vp.set_dims(self.items.len(), 0);
         self.field_vp = Viewport::new();
+        Some(saved_sel)
     }
 
     pub fn execute_delete(&mut self, config: &mut AppConfig, kind: EntryFormKind, index: usize) {
