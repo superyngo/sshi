@@ -64,7 +64,7 @@ pub enum FieldKind {
     String,
     OptionalString,
     Enum {
-        _variants: Vec<&'static str>,
+        variants: Vec<&'static str>,
     },
     VecString,
     #[allow(dead_code)]
@@ -651,6 +651,22 @@ impl ConfigTabState {
                                 self.pending_save = true;
                                 return true;
                             }
+                            FieldKind::ShellEnum => {
+                                let new_val = shell_cycle_fwd(&f.display_value);
+                                self.editing_field_index = field_idx;
+                                self.commit_inline_edit(&new_val, config);
+                                self.config_dirty = true;
+                                self.pending_save = true;
+                                return true;
+                            }
+                            FieldKind::Enum { variants } => {
+                                let new_val = enum_cycle(variants.as_slice(), &f.display_value, true);
+                                self.editing_field_index = field_idx;
+                                self.commit_inline_edit(&new_val, config);
+                                self.config_dirty = true;
+                                self.pending_save = true;
+                                return true;
+                            }
                             FieldKind::VecString | FieldKind::VecCheckPath => {
                                 // Open full entry form; vec editor handles array fields.
                                 let target_key = f.key.clone();
@@ -718,7 +734,7 @@ impl ConfigTabState {
             return false;
         }
         match &field.kind {
-            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::TriBool | FieldKind::Bool => return false,
+            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::TriBool | FieldKind::Bool | FieldKind::ShellEnum | FieldKind::Enum { .. } => return false,
             _ => {}
         }
         let raw_value = strip_unit(&field.display_value);
@@ -832,6 +848,20 @@ impl ConfigTabState {
                     form.dirty = true;
                     return true;
                 }
+                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum) {
+                    let new_val = shell_cycle_back(&form.fields[idx].display_value);
+                    form.fields[idx].display_value = new_val.to_string();
+                    form.dirty = true;
+                    return true;
+                }
+                if idx < form.fields.len() {
+                    if let FieldKind::Enum { variants } = &form.fields[idx].kind {
+                        let new_val = enum_cycle(variants.as_slice(), &form.fields[idx].display_value.clone(), false);
+                        form.fields[idx].display_value = new_val;
+                        form.dirty = true;
+                        return true;
+                    }
+                }
                 false
             }
             KeyCode::Right => {
@@ -841,6 +871,20 @@ impl ConfigTabState {
                     form.fields[idx].display_value = new_val.to_string();
                     form.dirty = true;
                     return true;
+                }
+                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum) {
+                    let new_val = shell_cycle_fwd(&form.fields[idx].display_value);
+                    form.fields[idx].display_value = new_val.to_string();
+                    form.dirty = true;
+                    return true;
+                }
+                if idx < form.fields.len() {
+                    if let FieldKind::Enum { variants } = &form.fields[idx].kind {
+                        let new_val = enum_cycle(variants.as_slice(), &form.fields[idx].display_value.clone(), true);
+                        form.fields[idx].display_value = new_val;
+                        form.dirty = true;
+                        return true;
+                    }
                 }
                 false
             }
@@ -880,6 +924,16 @@ impl ConfigTabState {
                                         "true"
                                     };
                                 form.fields[idx].display_value = toggled.to_string();
+                                form.dirty = true;
+                            }
+                            FieldKind::ShellEnum => {
+                                let new_val = shell_cycle_fwd(&form.fields[idx].display_value);
+                                form.fields[idx].display_value = new_val.to_string();
+                                form.dirty = true;
+                            }
+                            FieldKind::Enum { variants } => {
+                                let new_val = enum_cycle(variants.as_slice(), &form.fields[idx].display_value.clone(), true);
+                                form.fields[idx].display_value = new_val;
                                 form.dirty = true;
                             }
                             FieldKind::CheckEnabled => {
@@ -2014,7 +2068,7 @@ fn settings_descriptors(s: &Settings) -> Vec<FieldDescriptor> {
             "conflict_strategy",
             format!("{:?}", s.conflict_strategy).to_lowercase(),
             FieldKind::Enum {
-                _variants: vec!["newest", "skip"],
+                variants: vec!["newest", "skip"],
             },
         ),
         FieldDescriptor::scalar(
@@ -2372,6 +2426,32 @@ fn tribool_to_opt(s: &str) -> Option<bool> {
         "no" => Some(false),
         _ => None,
     }
+}
+
+fn enum_cycle(variants: &[&str], current: &str, forward: bool) -> String {
+    let pos = variants.iter().position(|&v| v == current).unwrap_or(0);
+    let next = if forward {
+        (pos + 1) % variants.len()
+    } else {
+        (pos + variants.len() - 1) % variants.len()
+    };
+    variants[next].to_string()
+}
+
+const SHELL_VARIANTS: &[&str] = &["sh", "powershell", "cmd"];
+
+fn shell_cycle_fwd(s: &str) -> String {
+    if !SHELL_VARIANTS.contains(&s) {
+        tracing::warn!(shell = s, "unknown shell value, defaulting to sh");
+    }
+    enum_cycle(SHELL_VARIANTS, s, true)
+}
+
+fn shell_cycle_back(s: &str) -> String {
+    if !SHELL_VARIANTS.contains(&s) {
+        tracing::warn!(shell = s, "unknown shell value, defaulting to sh");
+    }
+    enum_cycle(SHELL_VARIANTS, s, false)
 }
 
 pub(crate) fn trunc(s: &str, max: usize) -> String {
