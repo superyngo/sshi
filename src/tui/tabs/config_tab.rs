@@ -2333,6 +2333,11 @@ fn apply_add_input_to_picker(
         let pos = available.partition_point(|g| g.as_str() < new_group.as_str());
         available.insert(pos, new_group);
         checked.insert(pos, true);
+        // Update viewport dims first (clamps selection if needed), then set the
+        // selected index to the insertion position. Viewport::set_dims may
+        // adjust `selected` when item_count==0 or selected >= item_count, so
+        // explicitly assigning `vp.selected = pos` afterwards guarantees the
+        // desired selection.
         vp.set_dims(available.len().max(1), 0);
         vp.selected = pos;
     }
