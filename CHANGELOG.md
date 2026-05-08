@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-08 — TUI Config UX: 9 improvements
+- Fix: TriBool stale editing_field_index no longer writes to wrong field (pre-fix)
+- Bool fields now toggle with Space/Enter inline (no text input required)
+- Tab key cycles main tabs while navbar is focused (stays in navbar)
+- GroupPicker supports adding new group names with 'a' key
+- shell and conflict_strategy fields cycle with Left/Right/Enter
+- Esc on inline edit no longer shows "Config saved" banner
+- Field selection preserved after saving entry form popup
+- All global shortcuts blocked when any config popup is open
+- Vec/groups fields open sub-popup directly from main Config screen
+
+
 ### Unreleased Update — 2026-05-08
 
 #### Fixed

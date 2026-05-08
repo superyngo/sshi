@@ -175,7 +175,6 @@ pub struct DirectGroupPickerState {
     pub available: Vec<String>,
     pub checked: Vec<bool>,
     pub vp: Viewport,
-    pub closing: bool,
     pub add_input: InputField,
     pub add_input_active: bool,
 }
@@ -282,7 +281,11 @@ fn sync_form_fields(s: &SyncEntry) -> Vec<FieldDescriptor> {
             FieldKind::String,
         ));
     } else {
-        fields.push(FieldDescriptor::scalar("mode", String::new(), FieldKind::OptionalString));
+        fields.push(FieldDescriptor::scalar(
+            "mode",
+            String::new(),
+            FieldKind::OptionalString,
+        ));
     }
     fields.push(FieldDescriptor::scalar(
         "propagate_deletes",
@@ -494,32 +497,26 @@ impl ConfigTabState {
     /// Returns true when a text input is currently active in the config tab
     /// (inline scalar edit, entry form field input, or vec editor input).
     /// Used by app.rs to suspend global hotkeys.
+    #[allow(dead_code)]
     pub fn is_editing_active(&self) -> bool {
-        if let Some(ref input) = self.editing_field {
-            if input.mode == InputMode::Active {
-                return true;
-            }
+        // Previously this only checked for active text inputs. We extend it to
+        // return true whenever any popup or interactive input is present so
+        // global hotkeys are reliably blocked while config-related popups are
+        // open (even if the popup is idle).
+        if self.editing_field.is_some() {
+            return true;
         }
-        if let Some(ref form) = self.entry_form {
-            if form.active_input.is_some() {
-                return true;
-            }
-            if let Some(ref ve) = form.vec_editor {
-                if ve.input_active {
-                    return true;
-                }
-            }
-            if let Some(ref gp) = form.group_picker {
-                if gp.add_input_active {
-                    return true;
-                }
-            }
+        if self.entry_form.is_some() {
+            return true;
         }
-        if let Some(ref dve) = self.direct_vec_editor {
-            if dve.input_active { return true; }
+        if self.confirm.is_some() {
+            return true;
         }
-        if let Some(ref dgp) = self.direct_group_picker {
-            if dgp.add_input_active { return true; }
+        if self.direct_vec_editor.is_some() {
+            return true;
+        }
+        if self.direct_group_picker.is_some() {
+            return true;
         }
         false
     }
@@ -694,7 +691,11 @@ impl ConfigTabState {
                     let fields = self.current_descriptors(config);
                     if let Some(f) = fields.get(self.field_vp.selected) {
                         if matches!(f.kind, FieldKind::Bool) {
-                            let new_val = if f.display_value == "true" { "false" } else { "true" };
+                            let new_val = if f.display_value == "true" {
+                                "false"
+                            } else {
+                                "true"
+                            };
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
                             self.config_dirty = true;
@@ -718,7 +719,11 @@ impl ConfigTabState {
                                 return true;
                             }
                             FieldKind::Bool => {
-                                let new_val = if f.display_value == "true" { "false" } else { "true" };
+                                let new_val = if f.display_value == "true" {
+                                    "false"
+                                } else {
+                                    "true"
+                                };
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(new_val, config);
                                 self.config_dirty = true;
@@ -734,24 +739,29 @@ impl ConfigTabState {
                                 return true;
                             }
                             FieldKind::Enum { variants } => {
-                                let new_val = enum_cycle(variants.as_slice(), &f.display_value, true);
+                                let new_val =
+                                    enum_cycle(variants.as_slice(), &f.display_value, true);
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(&new_val, config);
                                 self.config_dirty = true;
                                 self.pending_save = true;
                                 return true;
                             }
-                            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::CheckEnabled => {
+                            FieldKind::VecString
+                            | FieldKind::VecCheckPath
+                            | FieldKind::CheckEnabled => {
                                 // New behavior: open direct sub-popup instead of full entry form (Step 5)
                                 let field_key = f.key.clone();
                                 let current_val = f.display_value.clone();
                                 let sidebar_item = self.items[self.sidebar_vp.selected].clone();
                                 let field_index = self.field_vp.selected;
                                 let use_group_picker = matches!(f.kind, FieldKind::CheckEnabled)
-                                    || (matches!(f.kind, FieldKind::VecString) && field_key == "groups");
+                                    || (matches!(f.kind, FieldKind::VecString)
+                                        && field_key == "groups");
                                 if use_group_picker {
                                     let current = parse_bracket_list(&current_val);
-                                    let (available, checked) = collect_known_groups(config, &current);
+                                    let (available, checked) =
+                                        collect_known_groups(config, &current);
                                     let mut vp = Viewport::new();
                                     vp.set_dims(available.len().max(1), 0);
                                     self.direct_group_picker = Some(DirectGroupPickerState {
@@ -761,7 +771,6 @@ impl ConfigTabState {
                                         available,
                                         checked,
                                         vp,
-                                        closing: false,
                                         add_input: InputField::new(""),
                                         add_input_active: false,
                                     });
@@ -831,7 +840,12 @@ impl ConfigTabState {
             return false;
         }
         match &field.kind {
-            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::TriBool | FieldKind::Bool | FieldKind::ShellEnum | FieldKind::Enum { .. } => return false,
+            FieldKind::VecString
+            | FieldKind::VecCheckPath
+            | FieldKind::TriBool
+            | FieldKind::Bool
+            | FieldKind::ShellEnum
+            | FieldKind::Enum { .. } => return false,
             _ => {}
         }
         let raw_value = strip_unit(&field.display_value);
@@ -945,7 +959,8 @@ impl ConfigTabState {
                     form.dirty = true;
                     return true;
                 }
-                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum) {
+                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum)
+                {
                     let new_val = shell_cycle_back(&form.fields[idx].display_value);
                     form.fields[idx].display_value = new_val.to_string();
                     form.dirty = true;
@@ -953,7 +968,11 @@ impl ConfigTabState {
                 }
                 if idx < form.fields.len() {
                     if let FieldKind::Enum { variants } = &form.fields[idx].kind {
-                        let new_val = enum_cycle(variants.as_slice(), &form.fields[idx].display_value.clone(), false);
+                        let new_val = enum_cycle(
+                            variants.as_slice(),
+                            &form.fields[idx].display_value.clone(),
+                            false,
+                        );
                         form.fields[idx].display_value = new_val;
                         form.dirty = true;
                         return true;
@@ -969,7 +988,8 @@ impl ConfigTabState {
                     form.dirty = true;
                     return true;
                 }
-                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum) {
+                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum)
+                {
                     let new_val = shell_cycle_fwd(&form.fields[idx].display_value);
                     form.fields[idx].display_value = new_val.to_string();
                     form.dirty = true;
@@ -977,7 +997,11 @@ impl ConfigTabState {
                 }
                 if idx < form.fields.len() {
                     if let FieldKind::Enum { variants } = &form.fields[idx].kind {
-                        let new_val = enum_cycle(variants.as_slice(), &form.fields[idx].display_value.clone(), true);
+                        let new_val = enum_cycle(
+                            variants.as_slice(),
+                            &form.fields[idx].display_value.clone(),
+                            true,
+                        );
                         form.fields[idx].display_value = new_val;
                         form.dirty = true;
                         return true;
@@ -1014,12 +1038,11 @@ impl ConfigTabState {
                                 form.dirty = true;
                             }
                             FieldKind::Bool => {
-                                let toggled =
-                                    if form.fields[idx].display_value == "true" {
-                                        "false"
-                                    } else {
-                                        "true"
-                                    };
+                                let toggled = if form.fields[idx].display_value == "true" {
+                                    "false"
+                                } else {
+                                    "true"
+                                };
                                 form.fields[idx].display_value = toggled.to_string();
                                 form.dirty = true;
                             }
@@ -1029,13 +1052,16 @@ impl ConfigTabState {
                                 form.dirty = true;
                             }
                             FieldKind::Enum { variants } => {
-                                let new_val = enum_cycle(variants.as_slice(), &form.fields[idx].display_value.clone(), true);
+                                let new_val = enum_cycle(
+                                    variants.as_slice(),
+                                    &form.fields[idx].display_value.clone(),
+                                    true,
+                                );
                                 form.fields[idx].display_value = new_val;
                                 form.dirty = true;
                             }
                             FieldKind::CheckEnabled => {
-                                let current =
-                                    parse_bracket_list(&form.fields[idx].display_value);
+                                let current = parse_bracket_list(&form.fields[idx].display_value);
                                 let available: Vec<String> = CHECK_ENABLED_OPTIONS
                                     .iter()
                                     .map(|(k, _)| k.to_string())
@@ -1061,8 +1087,10 @@ impl ConfigTabState {
                             }
                             FieldKind::VecString | FieldKind::VecCheckPath => {
                                 if field.key == "groups" {
-                                    let current = parse_bracket_list(&form.fields[idx].display_value);
-                                    let (available, checked) = collect_known_groups(config, &current);
+                                    let current =
+                                        parse_bracket_list(&form.fields[idx].display_value);
+                                    let (available, checked) =
+                                        collect_known_groups(config, &current);
                                     let mut vp = Viewport::new();
                                     vp.set_dims(available.len().max(1), 0);
                                     form.group_picker = Some(GroupPickerState {
@@ -1166,7 +1194,7 @@ impl ConfigTabState {
                 let display = if ve.items.is_empty() {
                     "(none)".to_string()
                 } else {
-                    if ve.items.is_empty() { "(none)".to_string() } else { format!("[{}]", ve.items.join(", ")) }
+                    format!("[{}]", ve.items.join(", "))
                 };
                 let idx = ve.field_index;
                 let form = self.entry_form.as_mut().unwrap();
@@ -1711,10 +1739,7 @@ impl ConfigTabState {
                     };
                     let desc = gp.descriptions.get(abs).map(|d| d.as_str()).unwrap_or("");
                     if desc.is_empty() {
-                        lines.push(Line::from(Span::styled(
-                            format!("  {mark} {group}"),
-                            style,
-                        )));
+                        lines.push(Line::from(Span::styled(format!("  {mark} {group}"), style)));
                     } else {
                         let dim = Style::default().fg(theme.border_inactive);
                         lines.push(Line::from(vec![
@@ -1765,7 +1790,10 @@ impl ConfigTabState {
             }
 
             if ve.items.is_empty() {
-                lines.push(Line::from(Span::styled("  (empty)", Style::default().fg(theme.inactive))));
+                lines.push(Line::from(Span::styled(
+                    "  (empty)",
+                    Style::default().fg(theme.inactive),
+                )));
             }
 
             if ve.input_active {
@@ -1773,7 +1801,11 @@ impl ConfigTabState {
                 let accent = Style::default()
                     .fg(theme.accent_config)
                     .add_modifier(Modifier::BOLD);
-                lines.push(input_cursor_line(&ve.input, Span::styled("  New: ", accent), accent));
+                lines.push(input_cursor_line(
+                    &ve.input,
+                    Span::styled("  New: ", accent),
+                    accent,
+                ));
             }
         } else {
             for rel in 0..(end - start) {
@@ -1903,7 +1935,14 @@ impl ConfigTabState {
         }
     }
 
-    fn render_sidebar(&mut self, area: Rect, frame: &mut Frame, theme: &Theme, config: &AppConfig, navbar_focused: bool) {
+    fn render_sidebar(
+        &mut self,
+        area: Rect,
+        frame: &mut Frame,
+        theme: &Theme,
+        config: &AppConfig,
+        navbar_focused: bool,
+    ) {
         let focused = !navbar_focused && self.zone == ConfigZone::Sidebar;
         let border_style = Style::default().fg(if focused {
             theme.accent_config
@@ -2158,7 +2197,15 @@ impl ConfigTabState {
             KeyCode::Char('s') => {
                 let (sidebar_item, field_index, display) = {
                     let ve = self.direct_vec_editor.as_ref().unwrap();
-                    (ve.sidebar_item.clone(), ve.field_index, if ve.items.is_empty() { "(none)".to_string() } else { format!("[{}]", ve.items.join(", ")) })
+                    (
+                        ve.sidebar_item.clone(),
+                        ve.field_index,
+                        if ve.items.is_empty() {
+                            "(none)".to_string()
+                        } else {
+                            format!("[{}]", ve.items.join(", "))
+                        },
+                    )
                 };
                 self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
                 self.direct_vec_editor = None;
@@ -2208,7 +2255,9 @@ impl ConfigTabState {
             KeyCode::Char(' ') => {
                 let gp = self.direct_group_picker.as_mut().unwrap();
                 let idx = gp.vp.selected;
-                if idx < gp.checked.len() { gp.checked[idx] = !gp.checked[idx]; }
+                if idx < gp.checked.len() {
+                    gp.checked[idx] = !gp.checked[idx];
+                }
                 true
             }
             KeyCode::Char('a') => {
@@ -2221,7 +2270,9 @@ impl ConfigTabState {
             KeyCode::Enter | KeyCode::Char('s') => {
                 let (sidebar_item, field_index, display) = {
                     let gp = self.direct_group_picker.as_ref().unwrap();
-                    let selected: Vec<String> = gp.available.iter()
+                    let selected: Vec<String> = gp
+                        .available
+                        .iter()
                         .zip(gp.checked.iter())
                         .filter(|(_, &c)| c)
                         .map(|(g, _)| g.clone())
@@ -2249,7 +2300,11 @@ impl ConfigTabState {
     // --- Rendering helpers for direct popups (Step 12)
 
     fn render_direct_vec_editor(
-        &self, area: Rect, frame: &mut Frame, theme: &Theme, dve: &DirectVecEditorState,
+        &self,
+        area: Rect,
+        frame: &mut Frame,
+        theme: &Theme,
+        dve: &DirectVecEditorState,
     ) {
         use super::super::components::popup::centered_rect;
         let popup_area = centered_rect(60, 60, area);
@@ -2278,17 +2333,26 @@ impl ConfigTabState {
             let abs = vs + rel;
             let is_sel = abs == vp.selected;
             let style = if is_sel {
-                Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD | Modifier::REVERSED)
-            } else { Style::default() };
+                Style::default()
+                    .fg(theme.accent_config)
+                    .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else {
+                Style::default()
+            };
             let prefix = if is_sel { "▶ " } else { "  " };
             lines.push(Line::from(Span::styled(format!("{prefix}{item}"), style)));
         }
         if dve.items.is_empty() {
-            lines.push(Line::from(Span::styled("  (empty)", Style::default().fg(theme.inactive))));
+            lines.push(Line::from(Span::styled(
+                "  (empty)",
+                Style::default().fg(theme.inactive),
+            )));
         }
         if dve.input_active {
             lines.push(Line::from(""));
-            let accent = Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD);
+            let accent = Style::default()
+                .fg(theme.accent_config)
+                .add_modifier(Modifier::BOLD);
             lines.push(input_cursor_line(
                 &dve.input,
                 Span::styled("  New: ", accent),
@@ -2298,7 +2362,13 @@ impl ConfigTabState {
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
-    fn render_direct_group_picker(&self, area: Rect, frame: &mut Frame, theme: &Theme, dgp: &DirectGroupPickerState) {
+    fn render_direct_group_picker(
+        &self,
+        area: Rect,
+        frame: &mut Frame,
+        theme: &Theme,
+        dgp: &DirectGroupPickerState,
+    ) {
         use super::super::components::popup::centered_rect;
         let popup_area = centered_rect(60, 70, area);
         frame.render_widget(Clear, popup_area);
@@ -2313,7 +2383,10 @@ impl ConfigTabState {
         let visible_h = inner.height as usize;
         let mut vp = dgp.vp.clone();
         let extra = if dgp.add_input_active { 4 } else { 2 };
-        vp.set_dims(dgp.available.len().max(1), visible_h.saturating_sub(extra + 2));
+        vp.set_dims(
+            dgp.available.len().max(1),
+            visible_h.saturating_sub(extra + 2),
+        );
         let (gs, ge) = vp.visible_range();
 
         let mut lines: Vec<Line> = vec![
@@ -2324,7 +2397,10 @@ impl ConfigTabState {
             Line::from(""),
         ];
         if dgp.available.is_empty() {
-            lines.push(Line::from(Span::styled("  (no known groups)", Style::default().fg(theme.inactive))));
+            lines.push(Line::from(Span::styled(
+                "  (no known groups)",
+                Style::default().fg(theme.inactive),
+            )));
         } else {
             for (rel, group) in dgp.available[gs..ge].iter().enumerate() {
                 let abs = gs + rel;
@@ -2332,14 +2408,20 @@ impl ConfigTabState {
                 let checked = dgp.checked.get(abs).copied().unwrap_or(false);
                 let mark = if checked { "◉" } else { "○" };
                 let style = if is_sel {
-                    Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD | Modifier::REVERSED)
-                } else { Style::default() };
+                    Style::default()
+                        .fg(theme.accent_config)
+                        .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
                 lines.push(Line::from(Span::styled(format!("  {mark} {group}"), style)));
             }
         }
         if dgp.add_input_active {
             lines.push(Line::from(""));
-            let accent = Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD);
+            let accent = Style::default()
+                .fg(theme.accent_config)
+                .add_modifier(Modifier::BOLD);
             lines.push(input_cursor_line(
                 &dgp.add_input,
                 Span::styled("  New group: ", accent),
@@ -2830,11 +2912,15 @@ fn parse_bracket_list(s: &str) -> Vec<String> {
 // Collect known groups across config (Step 3)
 fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>, Vec<bool>) {
     let mut known: std::collections::BTreeSet<String> = config
-        .host.iter().flat_map(|h| h.groups.iter().cloned())
+        .host
+        .iter()
+        .flat_map(|h| h.groups.iter().cloned())
         .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
         .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
         .collect();
-    for item in current { known.insert(item.clone()); }
+    for item in current {
+        known.insert(item.clone());
+    }
     let available: Vec<String> = known.into_iter().collect();
     let checked: Vec<bool> = available.iter().map(|g| current.contains(g)).collect();
     (available, checked)

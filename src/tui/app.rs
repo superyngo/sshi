@@ -285,8 +285,7 @@ impl App {
             .iter()
             .copied()
             .filter(|z| {
-                !(*z == OperateFocus::ParamPanel
-                    && self.operate_operation == OperationKind::Check)
+                !(*z == OperateFocus::ParamPanel && self.operate_operation == OperationKind::Check)
             })
             .collect();
         let pos = effective
@@ -1162,8 +1161,9 @@ impl App {
             }
             KeyCode::Char('1') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
-                    self.error =
-                        Some("Config save failed — fix the error before switching tabs.".to_string());
+                    self.error = Some(
+                        "Config save failed — fix the error before switching tabs.".to_string(),
+                    );
                     return Ok(true);
                 }
                 self.active_tab = TabId::Config;
@@ -1171,8 +1171,9 @@ impl App {
             }
             KeyCode::Char('2') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
-                    self.error =
-                        Some("Config save failed — fix the error before switching tabs.".to_string());
+                    self.error = Some(
+                        "Config save failed — fix the error before switching tabs.".to_string(),
+                    );
                     return Ok(true);
                 }
                 self.active_tab = TabId::Operate;
@@ -1180,8 +1181,9 @@ impl App {
             }
             KeyCode::Char('3') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
-                    self.error =
-                        Some("Config save failed — fix the error before switching tabs.".to_string());
+                    self.error = Some(
+                        "Config save failed — fix the error before switching tabs.".to_string(),
+                    );
                     return Ok(true);
                 }
                 self.active_tab = TabId::Checkout;
@@ -1198,56 +1200,53 @@ impl App {
                     };
                 } else {
                     match self.active_tab {
-                        TabId::Config => {
-                            match self.config_tab.zone {
-                                ConfigZone::Sidebar => {
-                                    let count = self.config_tab.items.len();
-                                    if count > 0 {
-                                        if forward {
-                                            let sel = self.config_tab.sidebar_vp.selected;
-                                            if sel + 1 >= count {
-                                                self.config_tab.sidebar_vp.home();
-                                            } else {
-                                                self.config_tab.sidebar_vp.move_down();
-                                            }
+                        TabId::Config => match self.config_tab.zone {
+                            ConfigZone::Sidebar => {
+                                let count = self.config_tab.items.len();
+                                if count > 0 {
+                                    if forward {
+                                        let sel = self.config_tab.sidebar_vp.selected;
+                                        if sel + 1 >= count {
+                                            self.config_tab.sidebar_vp.home();
                                         } else {
-                                            let sel = self.config_tab.sidebar_vp.selected;
-                                            if sel == 0 {
-                                                self.config_tab.sidebar_vp.end();
-                                            } else {
-                                                self.config_tab.sidebar_vp.move_up();
-                                            }
+                                            self.config_tab.sidebar_vp.move_down();
                                         }
-                                        self.config_tab.reset_field_vp(&self.config);
-                                    }
-                                }
-                                ConfigZone::FieldTable => {
-                                    let count =
-                                        self.config_tab.current_descriptors(&self.config).len();
-                                    if count > 0 {
-                                        if forward {
-                                            let sel = self.config_tab.field_vp.selected;
-                                            if sel + 1 >= count {
-                                                self.config_tab.field_vp.home();
-                                            } else {
-                                                self.config_tab.field_vp.move_down();
-                                            }
+                                    } else {
+                                        let sel = self.config_tab.sidebar_vp.selected;
+                                        if sel == 0 {
+                                            self.config_tab.sidebar_vp.end();
                                         } else {
-                                            let sel = self.config_tab.field_vp.selected;
-                                            if sel == 0 {
-                                                self.config_tab.field_vp.set_dims(
-                                                    count,
-                                                    self.config_tab.field_vp.visible_height,
-                                                );
-                                                self.config_tab.field_vp.end();
-                                            } else {
-                                                self.config_tab.field_vp.move_up();
-                                            }
+                                            self.config_tab.sidebar_vp.move_up();
+                                        }
+                                    }
+                                    self.config_tab.reset_field_vp(&self.config);
+                                }
+                            }
+                            ConfigZone::FieldTable => {
+                                let count = self.config_tab.current_descriptors(&self.config).len();
+                                if count > 0 {
+                                    if forward {
+                                        let sel = self.config_tab.field_vp.selected;
+                                        if sel + 1 >= count {
+                                            self.config_tab.field_vp.home();
+                                        } else {
+                                            self.config_tab.field_vp.move_down();
+                                        }
+                                    } else {
+                                        let sel = self.config_tab.field_vp.selected;
+                                        if sel == 0 {
+                                            self.config_tab.field_vp.set_dims(
+                                                count,
+                                                self.config_tab.field_vp.visible_height,
+                                            );
+                                            self.config_tab.field_vp.end();
+                                        } else {
+                                            self.config_tab.field_vp.move_up();
                                         }
                                     }
                                 }
                             }
-                        }
+                        },
                         TabId::Operate => {
                             if self.operate_focus == OperateFocus::OpRadio {
                                 self.operate_operation = if forward {
@@ -1766,8 +1765,7 @@ impl App {
         match crate::config::app::save(&self.config, path_arg) {
             Ok(()) => {
                 self.config_tab.config_dirty = false;
-                self.config_tab.reload_banner_until =
-                    Some(Instant::now() + Duration::from_secs(2));
+                self.config_tab.reload_banner_until = Some(Instant::now() + Duration::from_secs(2));
                 // Resolve the actual saved path so reload sees the correct mtime.
                 if let Ok(resolved) = crate::config::app::resolve_path(path_arg) {
                     if self.config_path.is_none() {
