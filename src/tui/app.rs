@@ -1198,7 +1198,6 @@ impl App {
                     } else {
                         self.active_tab.prev()
                     };
-                    self.navbar_focused = false;
                 } else {
                     match self.active_tab {
                         TabId::Config => {
