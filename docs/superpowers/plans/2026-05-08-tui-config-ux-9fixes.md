@@ -1030,23 +1030,43 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
 
 - [ ] **Step 3: Replace VecString/VecCheckPath Enter handler in FieldTable**
 
-  In `handle_key` `ConfigZone::FieldTable`, the `KeyCode::Char('e') | KeyCode::Enter` arm, replace the `VecString | VecCheckPath` case (line ~621-636):
+  In `handle_key` `ConfigZone::FieldTable`, the `KeyCode::Char('e') | KeyCode::Enter` arm, replace the `VecString | VecCheckPath` case (line ~621-636).
+
+  **Field kind → popup routing rules:**
+  - `FieldKind::CheckEnabled` → group picker (these fields store group membership lists)
+  - `FieldKind::VecString` with `field_key == "groups"` → group picker
+  - `FieldKind::VecString` (other keys, e.g. paths, excludes) → vec editor
+  - `FieldKind::VecCheckPath` → vec editor (stores file/directory path strings, not groups)
+
+  First, extract a helper function at module level for collecting known groups (avoids duplicating this logic from the entry form's GroupPicker opening code):
+  ```rust
+  fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>, Vec<bool>) {
+      let mut known: std::collections::BTreeSet<String> = config
+          .host.iter().flat_map(|h| h.groups.iter().cloned())
+          .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
+          .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
+          .collect();
+      for item in current { known.insert(item.clone()); }
+      let available: Vec<String> = known.into_iter().collect();
+      let checked: Vec<bool> = available.iter().map(|g| current.contains(g)).collect();
+      (available, checked)
+  }
+  ```
+
+  > **Also update the existing GroupPicker opening code** (entry form, line ~856 and ~897) to call `collect_known_groups` instead of the inline BTreeSet logic. This removes the duplication.
+
+  Then the Enter handler:
   ```rust
   FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::CheckEnabled => {
       let field_key = f.key.clone();
       let current_val = f.display_value.clone();
       let sidebar_item = self.items[self.sidebar_vp.selected].clone();
       let field_index = self.field_vp.selected;
-      if field_key == "groups" || matches!(f.kind, FieldKind::VecCheckPath | FieldKind::CheckEnabled) {
-          let mut known: std::collections::BTreeSet<String> = config
-              .host.iter().flat_map(|h| h.groups.iter().cloned())
-              .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
-              .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
-              .collect();
+      let use_group_picker = matches!(f.kind, FieldKind::CheckEnabled)
+          || (matches!(f.kind, FieldKind::VecString) && field_key == "groups");
+      if use_group_picker {
           let current = parse_bracket_list(&current_val);
-          for item in &current { known.insert(item.clone()); }
-          let available: Vec<String> = known.into_iter().collect();
-          let checked: Vec<bool> = available.iter().map(|g| current.contains(g)).collect();
+          let (available, checked) = collect_known_groups(config, &current);
           let mut vp = Viewport::new();
           vp.set_dims(available.len().max(1), 0);
           self.direct_group_picker = Some(DirectGroupPickerState {
@@ -1061,6 +1081,7 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
               add_input_active: false,
           });
       } else {
+          // VecString (non-groups) and VecCheckPath → vec editor
           let items = parse_bracket_list(&current_val);
           let mut vp = Viewport::new();
           vp.set_dims(items.len().max(1), 0);
@@ -1078,7 +1099,8 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
   }
   ```
 
-  > **CheckEnabled:** Included so `check.enabled` fields open a group-picker directly.
+  > **CheckEnabled:** Opens group picker so `check.enabled` fields get the toggle UX.
+  > **VecCheckPath:** Opens vec editor — this kind stores path strings (not group names), so group picker would be wrong.
 
 - [ ] **Step 4: Route keys to direct sub-popups in handle_key**
 
@@ -1094,23 +1116,35 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
 
 - [ ] **Step 5: Implement handle_direct_vec_editor_key**
 
+  > **Borrow checker note:** Do NOT hold a `let ve = self.direct_vec_editor.as_mut().unwrap()` binding across the entire function — the `'s'` and `Esc` arms need to call `self.commit_direct_popup_field` or set `self.direct_vec_editor = None`, which requires releasing any prior borrow of `self`. Structure each match arm with its own short-lived borrow instead.
+
   ```rust
   fn handle_direct_vec_editor_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
-      let ve = self.direct_vec_editor.as_mut().unwrap();
-      if ve.input_active {
+      // Handle input-active state first (short-lived borrow, released before match)
+      let input_active = self.direct_vec_editor.as_ref().unwrap().input_active;
+      if input_active {
+          let ve = self.direct_vec_editor.as_mut().unwrap();
           ve.input.handle_key(key);
           if ve.input.mode == InputMode::Normal {
               if !ve.input.value.is_empty() {
-                  ve.items.push(std::mem::take(&mut ve.input.value));
+                  let val = std::mem::take(&mut ve.input.value);
+                  ve.items.push(val);
                   ve.vp.set_dims(ve.items.len().max(1), 0);
               }
               ve.input_active = false;
           }
           return true;
       }
+      // Each arm takes its own short-lived borrow so 's' and Esc can mutate self freely
       match key.code {
-          KeyCode::Up | KeyCode::Char('k') => { ve.vp.move_up(); true }
-          KeyCode::Down | KeyCode::Char('j') => { ve.vp.move_down(); true }
+          KeyCode::Up | KeyCode::Char('k') => {
+              self.direct_vec_editor.as_mut().unwrap().vp.move_up();
+              true
+          }
+          KeyCode::Down | KeyCode::Char('j') => {
+              self.direct_vec_editor.as_mut().unwrap().vp.move_down();
+              true
+          }
           KeyCode::Char('a') | KeyCode::Enter => {
               let ve = self.direct_vec_editor.as_mut().unwrap();
               ve.input = InputField::new("");
@@ -1131,12 +1165,12 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
               true
           }
           KeyCode::Char('s') => {
-              self.commit_direct_popup_field(
-                  ve.sidebar_item.clone(),
-                  ve.field_index,
-                  &format!("[{}]", ve.items.join(", ")),
-                  config,
-              );
+              // Clone out data before releasing borrow so we can call self methods
+              let (sidebar_item, field_index, display) = {
+                  let ve = self.direct_vec_editor.as_ref().unwrap();
+                  (ve.sidebar_item.clone(), ve.field_index, format!("[{}]", ve.items.join(", ")))
+              };
+              self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
               self.direct_vec_editor = None;
               self.pending_save = true;
               true
@@ -1173,11 +1207,14 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
 - [ ] **Step 7: Implement handle_direct_group_picker_key**
 
   > **Uses shared helper** `apply_add_input_to_picker` defined in Task 3 Step 3.
+  > **Borrow checker note:** Same pattern as Step 5 — clone out data before `Enter`/`'s'` arm calls `self.commit_direct_popup_field` (which requires `&mut self`).
 
   ```rust
   fn handle_direct_group_picker_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
-      let gp = self.direct_group_picker.as_mut().unwrap();
-      if gp.add_input_active {
+      // Handle add-input state (short-lived borrow, released before match)
+      let add_input_active = self.direct_group_picker.as_ref().unwrap().add_input_active;
+      if add_input_active {
+          let gp = self.direct_group_picker.as_mut().unwrap();
           gp.add_input.handle_key(key);
           if gp.add_input.mode == InputMode::Normal {
               apply_add_input_to_picker(
@@ -1192,8 +1229,14 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
           return true;
       }
       match key.code {
-          KeyCode::Up | KeyCode::Char('k') => { self.direct_group_picker.as_mut().unwrap().vp.move_up(); true }
-          KeyCode::Down | KeyCode::Char('j') => { self.direct_group_picker.as_mut().unwrap().vp.move_down(); true }
+          KeyCode::Up | KeyCode::Char('k') => {
+              self.direct_group_picker.as_mut().unwrap().vp.move_up();
+              true
+          }
+          KeyCode::Down | KeyCode::Char('j') => {
+              self.direct_group_picker.as_mut().unwrap().vp.move_down();
+              true
+          }
           KeyCode::Char(' ') => {
               let gp = self.direct_group_picker.as_mut().unwrap();
               let idx = gp.vp.selected;
@@ -1208,23 +1251,22 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
               true
           }
           KeyCode::Enter | KeyCode::Char('s') => {
-              let gp = self.direct_group_picker.as_ref().unwrap();
-              let selected: Vec<String> = gp.available.iter()
-                  .zip(gp.checked.iter())
-                  .filter(|(_, &c)| c)
-                  .map(|(g, _)| g.clone())
-                  .collect();
-              let display = if selected.is_empty() {
-                  "(none)".to_string()
-              } else {
-                  format!("[{}]", selected.join(", "))
+              // Clone out data before releasing borrow so we can call self methods
+              let (sidebar_item, field_index, display) = {
+                  let gp = self.direct_group_picker.as_ref().unwrap();
+                  let selected: Vec<String> = gp.available.iter()
+                      .zip(gp.checked.iter())
+                      .filter(|(_, &c)| c)
+                      .map(|(g, _)| g.clone())
+                      .collect();
+                  let display = if selected.is_empty() {
+                      "(none)".to_string()
+                  } else {
+                      format!("[{}]", selected.join(", "))
+                  };
+                  (gp.sidebar_item.clone(), gp.field_index, display)
               };
-              self.commit_direct_popup_field(
-                  gp.sidebar_item.clone(),
-                  gp.field_index,
-                  &display,
-                  config,
-              );
+              self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
               self.direct_group_picker = None;
               self.pending_save = true;
               true
@@ -1267,6 +1309,9 @@ Currently pressing Enter on a `VecString`/`VecCheckPath` field in the FieldTable
 - [ ] **Step 9: Add rendering for direct sub-popups**
 
   In `render()` (line ~1353), before the existing `entry_form` check, add:
+
+  > **Borrow checker note:** `render_direct_vec_editor` and `render_direct_group_picker` take `&self` as receiver. Since `dve`/`dgp` are also borrowed from `self` (shared borrow), Rust's borrow checker allows passing both simultaneously — this is safe. However, some versions of the borrow checker may not split field borrows across method call boundaries. If a compile error occurs, clone the popup state before calling the render method (e.g., `let dve = self.direct_vec_editor.as_ref().unwrap().clone()`), then call `self.render_direct_vec_editor(area, frame, theme, &dve)`.
+
   ```rust
   // Direct sub-popup overlays (req 9: vec fields open sub-popup without entry form)
   if self.direct_vec_editor.is_some() || self.direct_group_picker.is_some() {
