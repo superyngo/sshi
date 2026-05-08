@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Unreleased Update — 2026-05-08
+
+#### Fixed
+- `✓ Config saved` banner unified to bottom status bar (same position as error messages)
+- Confirm dialog y/n now responds correctly when triggered from within an entry form (routing bug where keypresses were swallowed by the entry form handler)
+- Sub-popups (vec_editor, group_picker) now capture all keys, preventing global shortcuts (`q`, `?`) from firing while a sub-popup is open
+- `vec_editor`: `s` key now commits the list (previously only Esc worked)
+- `vec_editor`: cursor (yellow block) now visible in `New:` input prompt
+- Group picker and vec_editor hint text updated to show `s/Esc:done`
+
+#### Added
+- `check.enabled` field now uses a fixed 10-option multi-select picker with descriptions instead of free-text add/del editor
+- Bool fields toggle with Space bar; Enter/e also toggles; hint bar updated to show `[Space] Toggle bool`
+
 ## [v0.9.0] - 2026-05-06
 
 ### Added
