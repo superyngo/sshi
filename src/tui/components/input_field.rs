@@ -183,7 +183,7 @@ impl InputField {
             .unwrap_or(self.value.len())
     }
 
-    fn split_at_cursor(&self) -> (&str, &str) {
+    pub(crate) fn split_at_cursor(&self) -> (&str, &str) {
         let byte_pos = self.char_to_byte(self.cursor_pos);
         self.value.split_at(byte_pos)
     }

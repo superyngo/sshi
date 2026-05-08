@@ -64,13 +64,19 @@ pub struct OperateRenderData<'a> {
     pub is_running: bool,
     pub target_filter: &'a TargetFilterState,
     pub target_count: usize,
+    pub navbar_focused: bool,
 }
 
 /// Render the entire Operate tab.
 pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
+    let border_col = if data.navbar_focused {
+        data.theme.border_inactive
+    } else {
+        data.theme.border_active
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(data.theme.border_active))
+        .border_style(Style::default().fg(border_col))
         .title(" Operate ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
