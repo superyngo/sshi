@@ -685,8 +685,15 @@ impl ConfigTabState {
         config: &mut AppConfig,
     ) -> bool {
         if input.mode == InputMode::Active {
+            if key.code == KeyCode::Esc {
+                // Cancel: restore original value, do NOT save
+                input.cancel();
+                // mode is now Normal so editing_field won't be restored by caller
+                return true;
+            }
             input.handle_key(key);
             if input.mode == InputMode::Normal {
+                // Confirmed via Enter
                 self.commit_inline_edit(&input.value, config);
                 self.config_dirty = true;
                 self.pending_save = true;
