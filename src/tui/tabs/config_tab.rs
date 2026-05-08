@@ -9,7 +9,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     Frame,
@@ -44,6 +44,19 @@ pub enum SidebarItem {
 
 // ── Field type descriptors (Phase 7) ──────────────────────────────────────
 
+pub const CHECK_ENABLED_OPTIONS: &[(&str, &str)] = &[
+    ("online", "Check if host is online"),
+    ("system_info", "System info (uname / systeminfo)"),
+    ("cpu_arch", "CPU architecture"),
+    ("memory", "Memory usage"),
+    ("swap", "Swap usage"),
+    ("disk", "Disk usage"),
+    ("cpu_load", "CPU load"),
+    ("network", "Network interface info"),
+    ("battery", "Battery status"),
+    ("ip_address", "IP address"),
+];
+
 #[derive(Debug, Clone)]
 pub enum FieldKind {
     U64,
@@ -56,6 +69,7 @@ pub enum FieldKind {
     VecString,
     #[allow(dead_code)]
     VecCheckPath,
+    CheckEnabled, // fixed multi-select for check.enabled
     ShellEnum,
     TriBool, // Option<bool>: "inherit" | "yes" | "no"
 }
@@ -135,6 +149,7 @@ pub struct GroupPickerState {
     pub checked: Vec<bool>,
     pub vp: Viewport,
     pub closing: bool,
+    pub descriptions: Vec<String>, // empty = no descriptions shown
 }
 
 impl EntryFormState {
@@ -209,7 +224,7 @@ fn host_form_fields(h: &HostEntry) -> Vec<FieldDescriptor> {
 
 fn check_form_fields(c: &CheckEntry) -> Vec<FieldDescriptor> {
     let mut fields = vec![
-        FieldDescriptor::vec_field("enabled", fmt_vec(&c.enabled), FieldKind::VecString),
+        FieldDescriptor::vec_field("enabled", fmt_vec(&c.enabled), FieldKind::CheckEnabled),
         FieldDescriptor::vec_field("groups", fmt_vec(&c.groups), FieldKind::VecString),
         FieldDescriptor::scalar("enable_hosts", c.enable_hosts.to_string(), FieldKind::Bool),
         FieldDescriptor::scalar("enable_all", c.enable_all.to_string(), FieldKind::Bool),
@@ -298,6 +313,7 @@ pub struct ConfigTabState {
     pub confirm: Option<ConfirmState>,
     pub pending_delete: Option<(EntryFormKind, usize)>,
     pub pending_open_editor: bool,
+    pub pending_save: bool,
 }
 
 impl ConfigTabState {
@@ -323,6 +339,7 @@ impl ConfigTabState {
             confirm: None,
             pending_delete: None,
             pending_open_editor: false,
+            pending_save: false,
         }
     }
 
@@ -465,6 +482,12 @@ impl ConfigTabState {
         false
     }
 
+    pub fn banner_active(&self) -> bool {
+        self.reload_banner_until
+            .map(|t| std::time::Instant::now() < t)
+            .unwrap_or(false)
+    }
+
     /// Handle keypress. Returns true if dirty/redraw needed.
     /// `config` is mutable here for inline edits.
     pub fn handle_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
@@ -564,6 +587,7 @@ impl ConfigTabState {
                             let new_val = tribool_cycle_back(&f.display_value);
                             self.commit_inline_edit(new_val, config);
                             self.config_dirty = true;
+                            self.pending_save = true;
                             return true;
                         }
                     }
@@ -577,6 +601,7 @@ impl ConfigTabState {
                             let new_val = tribool_cycle_fwd(&f.display_value);
                             self.commit_inline_edit(new_val, config);
                             self.config_dirty = true;
+                            self.pending_save = true;
                         }
                     }
                     true
@@ -590,6 +615,7 @@ impl ConfigTabState {
                                 let new_val = tribool_cycle_fwd(&f.display_value);
                                 self.commit_inline_edit(new_val, config);
                                 self.config_dirty = true;
+                                self.pending_save = true;
                                 return true;
                             }
                             FieldKind::VecString | FieldKind::VecCheckPath => {
@@ -630,10 +656,12 @@ impl ConfigTabState {
             if input.mode == InputMode::Normal {
                 self.commit_inline_edit(&input.value, config);
                 self.config_dirty = true;
+                self.pending_save = true;
             }
             return true;
         }
         if key.code == KeyCode::Esc {
+            self.editing_field = None;
             return true;
         }
         false
@@ -690,6 +718,11 @@ impl ConfigTabState {
     }
 
     fn handle_entry_form_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
+        // Confirm dialog overlays the form — route to it first.
+        if self.confirm.is_some() {
+            return self.handle_confirm_key(key);
+        }
+
         if self
             .entry_form
             .as_ref()
@@ -729,11 +762,14 @@ impl ConfigTabState {
         let form = self.entry_form.as_mut().unwrap();
 
         if form.active_input.is_some() {
+            let is_cancel = key.code == KeyCode::Esc;
             form.input.handle_key(key);
             if form.input.mode == InputMode::Normal {
                 let idx = form.active_input.unwrap();
                 form.fields[idx].display_value = form.input.value.clone();
-                form.dirty = true;
+                if !is_cancel {
+                    form.dirty = true;
+                }
                 form.active_input = None;
             }
             return true;
@@ -768,6 +804,23 @@ impl ConfigTabState {
                 }
                 false
             }
+            KeyCode::Char(' ') => {
+                let idx = form.field_vp.selected;
+                if idx < form.fields.len() {
+                    let field = &form.fields[idx];
+                    if field.editable && matches!(field.kind, FieldKind::Bool) {
+                        let toggled = if form.fields[idx].display_value == "true" {
+                            "false"
+                        } else {
+                            "true"
+                        };
+                        form.fields[idx].display_value = toggled.to_string();
+                        form.dirty = true;
+                        return true;
+                    }
+                }
+                false
+            }
             KeyCode::Char('e') | KeyCode::Enter => {
                 let idx = form.field_vp.selected;
                 if idx < form.fields.len() {
@@ -778,6 +831,39 @@ impl ConfigTabState {
                                 let new_val = tribool_cycle_fwd(&form.fields[idx].display_value);
                                 form.fields[idx].display_value = new_val.to_string();
                                 form.dirty = true;
+                            }
+                            FieldKind::Bool => {
+                                let toggled =
+                                    if form.fields[idx].display_value == "true" {
+                                        "false"
+                                    } else {
+                                        "true"
+                                    };
+                                form.fields[idx].display_value = toggled.to_string();
+                                form.dirty = true;
+                            }
+                            FieldKind::CheckEnabled => {
+                                let current =
+                                    parse_bracket_list(&form.fields[idx].display_value);
+                                let available: Vec<String> = CHECK_ENABLED_OPTIONS
+                                    .iter()
+                                    .map(|(k, _)| k.to_string())
+                                    .collect();
+                                let checked: Vec<bool> =
+                                    available.iter().map(|k| current.contains(k)).collect();
+                                let mut vp = Viewport::new();
+                                vp.set_dims(available.len().max(1), 0);
+                                form.group_picker = Some(GroupPickerState {
+                                    field_index: idx,
+                                    available,
+                                    checked,
+                                    vp,
+                                    closing: false,
+                                    descriptions: CHECK_ENABLED_OPTIONS
+                                        .iter()
+                                        .map(|(_, d)| d.to_string())
+                                        .collect(),
+                                });
                             }
                             FieldKind::VecString | FieldKind::VecCheckPath => {
                                 if field.key == "groups" {
@@ -814,6 +900,7 @@ impl ConfigTabState {
                                         checked,
                                         vp,
                                         closing: false,
+                                        descriptions: vec![],
                                     });
                                 } else {
                                     let items = parse_bracket_list(&field.display_value);
@@ -842,6 +929,7 @@ impl ConfigTabState {
             KeyCode::Char('s') => {
                 self.commit_entry_form(config);
                 self.entry_form = None;
+                self.pending_save = true;
                 true
             }
             KeyCode::Esc => {
@@ -899,7 +987,8 @@ impl ConfigTabState {
                 }
                 true
             }
-            KeyCode::Esc => {
+            KeyCode::Char('s') | KeyCode::Esc => {
+                // Both 's' and Esc commit the vec_editor back to the form field.
                 let display = if ve.items.is_empty() {
                     "(none)".to_string()
                 } else {
@@ -912,7 +1001,7 @@ impl ConfigTabState {
                 form.vec_editor = None;
                 true
             }
-            _ => false,
+            _ => true, // swallow — prevent global keys (q, ?) from firing
         }
     }
 
@@ -958,7 +1047,7 @@ impl ConfigTabState {
                 gp.closing = true;
                 true
             }
-            _ => false,
+            _ => true, // swallow — prevent global keys (q, ?) from firing
         }
     }
 
@@ -1268,9 +1357,14 @@ impl ConfigTabState {
         theme: &Theme,
         config: &AppConfig,
         config_path: Option<&std::path::Path>,
+        navbar_focused: bool,
     ) {
         if let Some(ref form) = self.entry_form {
             self.render_entry_form(area, frame, theme, form);
+            // Confirm dialog overlays the form (e.g. discard prompt on ESC).
+            if let Some(ref confirm) = self.confirm {
+                self.render_confirm(area, frame, theme, confirm);
+            }
             return;
         }
         if let Some(ref confirm) = self.confirm {
@@ -1278,38 +1372,18 @@ impl ConfigTabState {
             return;
         }
 
-        let banner_active = self
-            .reload_banner_until
-            .map(|t| Instant::now() < t)
-            .unwrap_or(false);
-        let banner_h: u16 = if banner_active { 1 } else { 0 };
-
         let vert = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(banner_h),
-                Constraint::Min(0),
-                Constraint::Length(1),
-            ])
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
             .split(area);
-
-        if banner_active {
-            let p = Paragraph::new(Span::styled(
-                "  ✓ Config saved",
-                Style::default()
-                    .fg(theme.warning)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            frame.render_widget(p, vert[0]);
-        }
 
         let horiz = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(22), Constraint::Min(0)])
-            .split(vert[1]);
+            .split(vert[0]);
 
-        self.render_sidebar(horiz[0], frame, theme, config);
-        self.render_field_table(horiz[1], frame, theme, config);
+        self.render_sidebar(horiz[0], frame, theme, config, navbar_focused);
+        self.render_field_table(horiz[1], frame, theme, config, navbar_focused);
 
         let crumb = self.breadcrumb(config);
         let dirty_star = if self.config_dirty { " *" } else { "" };
@@ -1326,7 +1400,7 @@ impl ConfigTabState {
             ),
             Span::styled(path_hint, Style::default().fg(theme.border_inactive)),
         ]);
-        frame.render_widget(Paragraph::new(crumb_line), vert[2]);
+        frame.render_widget(Paragraph::new(crumb_line), vert[1]);
     }
 
     fn render_entry_form(
@@ -1361,8 +1435,16 @@ impl ConfigTabState {
         let mut lines: Vec<Line> = Vec::new();
 
         if let Some(ref gp) = form.group_picker {
+            let picker_title = if gp.descriptions.is_empty() {
+                "  Pick groups  (Space:toggle  Enter/s:apply  Esc:cancel)".to_string()
+            } else {
+                format!(
+                    "  Editing: {}  (Space:toggle  Enter/s:apply  Esc:cancel)",
+                    form.fields[gp.field_index].key
+                )
+            };
             lines.push(Line::from(Span::styled(
-                "  Pick groups  (Space:toggle  Enter:apply  Esc:cancel)",
+                picker_title,
                 Style::default().fg(theme.warning),
             )));
             lines.push(Line::from(""));
@@ -1390,13 +1472,25 @@ impl ConfigTabState {
                     } else {
                         Style::default()
                     };
-                    lines.push(Line::from(Span::styled(format!("  {mark} {group}"), style)));
+                    let desc = gp.descriptions.get(abs).map(|d| d.as_str()).unwrap_or("");
+                    if desc.is_empty() {
+                        lines.push(Line::from(Span::styled(
+                            format!("  {mark} {group}"),
+                            style,
+                        )));
+                    } else {
+                        let dim = Style::default().fg(theme.border_inactive);
+                        lines.push(Line::from(vec![
+                            Span::styled(format!("  {mark} {group}"), style),
+                            Span::styled(format!("  — {desc}"), dim),
+                        ]));
+                    }
                 }
             }
         } else if let Some(ref ve) = form.vec_editor {
             lines.push(Line::from(Span::styled(
                 format!(
-                    "  Editing: {} (a:add d:del Esc:done)",
+                    "  Editing: {} (a:add d:del s/Esc:done)",
                     form.fields[ve.field_index].key
                 ),
                 Style::default().fg(theme.warning),
@@ -1424,10 +1518,34 @@ impl ConfigTabState {
 
             if ve.input_active {
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!("  New: {}", ve.input.value),
-                    Style::default().fg(theme.accent_config),
-                )));
+                let accent = Style::default()
+                    .fg(theme.accent_config)
+                    .add_modifier(Modifier::BOLD);
+                let prefix = Span::styled("  New: ", accent);
+                let input_line =
+                    if ve.input.mode == crate::tui::components::input_field::InputMode::Active {
+                        let (before, after) = ve.input.split_at_cursor();
+                        let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
+                        let after_cursor: String = after.chars().skip(1).collect();
+                        Line::from(vec![
+                            prefix,
+                            Span::styled(before, accent),
+                            Span::styled(
+                                cursor_ch,
+                                Style::default()
+                                    .fg(Color::Black)
+                                    .bg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(after_cursor, accent),
+                        ])
+                    } else {
+                        Line::from(vec![
+                            prefix,
+                            Span::styled(ve.input.value.clone(), accent),
+                        ])
+                    };
+                lines.push(input_line);
             }
         } else {
             for rel in 0..(end - start) {
@@ -1476,7 +1594,7 @@ impl ConfigTabState {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  [Enter/e] Edit field  [s] Save  [Esc] Cancel",
+            "  [Enter/e] Edit  [Space] Toggle bool  [s] Save  [Esc] Cancel",
             Style::default().fg(theme.inactive),
         )));
 
@@ -1557,8 +1675,8 @@ impl ConfigTabState {
         }
     }
 
-    fn render_sidebar(&mut self, area: Rect, frame: &mut Frame, theme: &Theme, config: &AppConfig) {
-        let focused = self.zone == ConfigZone::Sidebar;
+    fn render_sidebar(&mut self, area: Rect, frame: &mut Frame, theme: &Theme, config: &AppConfig, navbar_focused: bool) {
+        let focused = !navbar_focused && self.zone == ConfigZone::Sidebar;
         let border_style = Style::default().fg(if focused {
             theme.accent_config
         } else {
@@ -1619,8 +1737,9 @@ impl ConfigTabState {
         frame: &mut Frame,
         theme: &Theme,
         config: &AppConfig,
+        navbar_focused: bool,
     ) {
-        let focused = self.zone == ConfigZone::FieldTable;
+        let focused = !navbar_focused && self.zone == ConfigZone::FieldTable;
         let border_style = Style::default().fg(if focused {
             theme.accent_config
         } else {
@@ -1685,18 +1804,31 @@ impl ConfigTabState {
 
                 if is_editing {
                     if let Some(ref input) = self.editing_field {
-                        let val = if input.mode == InputMode::Active {
-                            format!("{}▏", input.value)
-                        } else {
-                            input.value.clone()
-                        };
-                        let val_style = Style::default()
+                        let accent = Style::default()
                             .fg(theme.accent_config)
                             .add_modifier(Modifier::BOLD);
+                        let val_cell = if input.mode == InputMode::Active {
+                            let (before, after) = input.split_at_cursor();
+                            let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
+                            let after_cursor: String = after.chars().skip(1).collect();
+                            Cell::from(Line::from(vec![
+                                Span::styled(before, accent),
+                                Span::styled(
+                                    cursor_ch,
+                                    Style::default()
+                                        .fg(Color::Black)
+                                        .bg(Color::Yellow)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(after_cursor, accent),
+                            ]))
+                        } else {
+                            Cell::from(input.value.clone()).style(accent)
+                        };
                         return Row::new(vec![
                             Cell::from(f.key.as_str()).style(key_style),
                             Cell::from(" = ").style(Style::default().fg(theme.warning)),
-                            Cell::from(val).style(val_style),
+                            val_cell,
                         ]);
                     }
                 }

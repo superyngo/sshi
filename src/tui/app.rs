@@ -1071,6 +1071,10 @@ impl App {
                 self.config_tab
                     .execute_delete(&mut self.config, kind, index);
             }
+            if self.config_tab.pending_save {
+                self.config_tab.pending_save = false;
+                self.save_config();
+            }
             return Ok(handled);
         }
 
@@ -1161,7 +1165,7 @@ impl App {
             KeyCode::Char('1') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
                     self.error =
-                        Some("Unsaved config changes — press S to save or fix first.".to_string());
+                        Some("Config save failed — fix the error before switching tabs.".to_string());
                     return Ok(true);
                 }
                 self.active_tab = TabId::Config;
@@ -1170,7 +1174,7 @@ impl App {
             KeyCode::Char('2') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
                     self.error =
-                        Some("Unsaved config changes — press S to save or fix first.".to_string());
+                        Some("Config save failed — fix the error before switching tabs.".to_string());
                     return Ok(true);
                 }
                 self.active_tab = TabId::Operate;
@@ -1179,7 +1183,7 @@ impl App {
             KeyCode::Char('3') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
                     self.error =
-                        Some("Unsaved config changes — press S to save or fix first.".to_string());
+                        Some("Config save failed — fix the error before switching tabs.".to_string());
                     return Ok(true);
                 }
                 self.active_tab = TabId::Checkout;
@@ -1300,8 +1304,6 @@ impl App {
                 if self.running_op.is_some() {
                     self.error =
                         Some("Cannot edit config while an operation is running.".to_string());
-                } else if self.config_path.is_none() {
-                    self.error = Some("No config path set — cannot open editor.".to_string());
                 } else if self.config_tab.config_dirty {
                     use crate::tui::tabs::config_tab::{ConfirmAction, ConfirmState};
                     self.config_tab.confirm = Some(ConfirmState {
@@ -1312,11 +1314,6 @@ impl App {
                 } else {
                     self.needs_editor_open = true;
                 }
-                Ok(true)
-            }
-            // S saves config with toml_edit round-trip (Phase 7).
-            KeyCode::Char('S') if self.active_tab == TabId::Config => {
-                self.save_config();
                 Ok(true)
             }
             // 'a' adds a new entry (Phase 7 Case B).
@@ -1349,6 +1346,10 @@ impl App {
                 if let Some((kind, index)) = self.config_tab.pending_delete.take() {
                     self.config_tab.execute_delete(&mut self.config, kind, index);
                 }
+                if self.config_tab.pending_save {
+                    self.config_tab.pending_save = false;
+                    self.save_config();
+                }
                 Ok(true) // always consume — don't leak to global 'q'/etc.
             }
             // Up at top of Config Sidebar escapes to NavBar.
@@ -1375,6 +1376,10 @@ impl App {
                 if let Some((kind, index)) = self.config_tab.pending_delete.take() {
                     self.config_tab
                         .execute_delete(&mut self.config, kind, index);
+                }
+                if self.config_tab.pending_save {
+                    self.config_tab.pending_save = false;
+                    self.save_config();
                 }
                 Ok(handled)
             }
@@ -1762,24 +1767,31 @@ impl App {
             &self.theme,
             &self.config,
             self.config_path.as_deref(),
+            self.navbar_focused,
         );
     }
 
     fn save_config(&mut self) {
-        if let Some(path) = &self.config_path {
-            match crate::config::app::save(&self.config, Some(path)) {
-                Ok(()) => {
-                    self.config_tab.config_dirty = false;
-                    self.config_tab.reload_banner_until =
-                        Some(Instant::now() + Duration::from_secs(2));
-                    self.config_tab.reload(&self.config, Some(path));
-                }
-                Err(e) => {
-                    self.error = Some(format!("Config save failed: {e}"));
+        let explicit_path = self.config_path.clone();
+        let path_arg = explicit_path.as_deref();
+        match crate::config::app::save(&self.config, path_arg) {
+            Ok(()) => {
+                self.config_tab.config_dirty = false;
+                self.config_tab.reload_banner_until =
+                    Some(Instant::now() + Duration::from_secs(2));
+                // Resolve the actual saved path so reload sees the correct mtime.
+                if let Ok(resolved) = crate::config::app::resolve_path(path_arg) {
+                    if self.config_path.is_none() {
+                        self.config_path = Some(resolved.clone());
+                    }
+                    self.config_tab.reload(&self.config, Some(&resolved));
+                } else {
+                    self.config_tab.reload(&self.config, path_arg);
                 }
             }
-        } else {
-            self.error = Some("No config path set — cannot save.".to_string());
+            Err(e) => {
+                self.error = Some(format!("Config save failed: {e}"));
+            }
         }
     }
 
@@ -1962,7 +1974,13 @@ impl App {
     ) -> Result<()> {
         let path = match &self.config_path {
             Some(p) => p.clone(),
-            None => return Ok(()),
+            None => match crate::config::app::resolve_path(None) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.error = Some(format!("Cannot resolve config path: {e}"));
+                    return Ok(());
+                }
+            },
         };
 
         // Resolve editor: $VISUAL → $EDITOR → platform default.
@@ -2051,6 +2069,7 @@ impl App {
             is_running: self.running_op.is_some(),
             target_filter: &self.target_filter,
             target_count,
+            navbar_focused: self.navbar_focused,
         };
         operate_tab::render_operate(&data, area, frame);
     }
@@ -2275,9 +2294,14 @@ impl App {
     }
 
     fn render_checkout(&mut self, area: Rect, frame: &mut ratatui::Frame) {
+        let border_col = if self.navbar_focused {
+            self.theme.border_inactive
+        } else {
+            self.theme.border_active
+        };
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.border_active))
+            .border_style(Style::default().fg(border_col))
             .title(" Checkout (latest snapshots) ");
         let inner = block.inner(area);
         frame.render_widget(block, area);
@@ -2356,14 +2380,21 @@ impl App {
             .constraints([Constraint::Length(1), Constraint::Length(1)])
             .split(area);
 
-        if let Some(err) = &self.error {
+        if self.active_tab == TabId::Config && self.config_tab.banner_active() {
+            let p = Paragraph::new("  ✓ Config saved").style(
+                Style::default()
+                    .fg(self.theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            );
+            frame.render_widget(p, chunks[0]);
+        } else if let Some(err) = &self.error {
             let p = Paragraph::new(err.as_str()).style(Style::default().fg(self.theme.error));
             frame.render_widget(p, chunks[0]);
         }
 
         let hints = match self.active_tab {
             TabId::Config => {
-                "↑↓:Rows ←→:Zones e:Edit E:Editor S:Save a:Add d:Del L:Log i:Info ?:Help q:Quit"
+                "↑↓:Rows ←→:Zones e:Edit E:Editor a:Add d:Del L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => "↑↓:Zones ←→:OpType f:Filter L:Log i:Info ?:Help q:Quit",
             TabId::Checkout => "↑↓/jk:Rows PgUp/PgDn Home/End f:Filter L:Log i:Info ?:Help q:Quit",
