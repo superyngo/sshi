@@ -608,6 +608,20 @@ impl ConfigTabState {
                     }
                     true
                 }
+                KeyCode::Char(' ') => {
+                    let fields = self.current_descriptors(config);
+                    if let Some(f) = fields.get(self.field_vp.selected) {
+                        if matches!(f.kind, FieldKind::Bool) {
+                            let new_val = if f.display_value == "true" { "false" } else { "true" };
+                            self.editing_field_index = self.field_vp.selected;
+                            self.commit_inline_edit(new_val, config);
+                            self.config_dirty = true;
+                            self.pending_save = true;
+                            return true;
+                        }
+                    }
+                    false
+                }
                 KeyCode::Char('e') | KeyCode::Enter => {
                     let field_idx = self.field_vp.selected;
                     let fields = self.current_descriptors(config);
@@ -615,6 +629,14 @@ impl ConfigTabState {
                         match &f.kind {
                             FieldKind::TriBool => {
                                 let new_val = tribool_cycle_fwd(&f.display_value);
+                                self.editing_field_index = field_idx;
+                                self.commit_inline_edit(new_val, config);
+                                self.config_dirty = true;
+                                self.pending_save = true;
+                                return true;
+                            }
+                            FieldKind::Bool => {
+                                let new_val = if f.display_value == "true" { "false" } else { "true" };
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(new_val, config);
                                 self.config_dirty = true;
@@ -681,7 +703,7 @@ impl ConfigTabState {
             return false;
         }
         match &field.kind {
-            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::TriBool => return false,
+            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::TriBool | FieldKind::Bool => return false,
             _ => {}
         }
         let raw_value = strip_unit(&field.display_value);
