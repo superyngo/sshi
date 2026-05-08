@@ -585,6 +585,7 @@ impl ConfigTabState {
                     if let Some(f) = fields.get(self.field_vp.selected) {
                         if matches!(f.kind, FieldKind::TriBool) {
                             let new_val = tribool_cycle_back(&f.display_value);
+                            self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
                             self.config_dirty = true;
                             self.pending_save = true;
@@ -599,6 +600,7 @@ impl ConfigTabState {
                     if let Some(f) = fields.get(self.field_vp.selected) {
                         if matches!(f.kind, FieldKind::TriBool) {
                             let new_val = tribool_cycle_fwd(&f.display_value);
+                            self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
                             self.config_dirty = true;
                             self.pending_save = true;
@@ -613,6 +615,7 @@ impl ConfigTabState {
                         match &f.kind {
                             FieldKind::TriBool => {
                                 let new_val = tribool_cycle_fwd(&f.display_value);
+                                self.editing_field_index = field_idx;
                                 self.commit_inline_edit(new_val, config);
                                 self.config_dirty = true;
                                 self.pending_save = true;
