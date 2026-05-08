@@ -31,7 +31,7 @@ pub enum ConfigZone {
     FieldTable,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SidebarItem {
     SectionSettings,
     SectionHosts,
@@ -2091,11 +2091,16 @@ impl ConfigTabState {
 
     fn commit_direct_popup_field(
         &mut self,
-        _item: SidebarItem,
+        item: SidebarItem,
         field_index: usize,
         display_value: &str,
         config: &mut AppConfig,
     ) {
+        // `item` identifies the sidebar entry being edited. Since is_any_popup_open()
+        // blocks sidebar navigation while this popup is open, self.sidebar_vp.selected
+        // always points to the same entry as `item`. commit_inline_edit uses the
+        // viewport selection, so both paths are consistent.
+        let _ = item; // documented invariant — not needed at runtime
         self.editing_field_index = field_index;
         self.commit_inline_edit(display_value, config);
         self.config_dirty = true;
