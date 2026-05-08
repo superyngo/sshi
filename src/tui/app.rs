@@ -1063,9 +1063,8 @@ impl App {
             }
         }
 
-        // §edit-guard: while config tab has an active text input, suspend all
-        // global shortcuts and route directly to the config tab.
-        if self.active_tab == TabId::Config && self.config_tab.is_editing_active() {
+        // §popup-guard: while any config popup is open, suspend all global shortcuts.
+        if self.active_tab == TabId::Config && self.config_tab.is_any_popup_open() {
             let handled = self.config_tab.handle_key(key, &mut self.config);
             if let Some((kind, index)) = self.config_tab.pending_delete.take() {
                 self.config_tab
@@ -1153,14 +1152,6 @@ impl App {
                 if self.error.is_some() {
                     self.error = None;
                     return Ok(true);
-                }
-                // Entry form must handle Esc before the global NavBar escape below.
-                if self.active_tab == TabId::Config
-                    && (self.config_tab.entry_form.is_some()
-                        || self.config_tab.confirm.is_some())
-                {
-                    let handled = self.config_tab.handle_key(key, &mut self.config);
-                    return Ok(handled);
                 }
                 // Any other position: Esc jumps focus to NavBar.
                 if !self.navbar_focused {
@@ -1342,28 +1333,6 @@ impl App {
             {
                 self.config_tab.request_delete();
                 Ok(true)
-            }
-            // Absorb all keys while entry form or confirm dialog is open.
-            _ if self.active_tab == TabId::Config
-                && (self.config_tab.entry_form.is_some()
-                    || self.config_tab.confirm.is_some()) =>
-            {
-                self.config_tab.handle_key(key, &mut self.config);
-                if let Some((kind, index)) = self.config_tab.pending_delete.take() {
-                    self.config_tab.execute_delete(&mut self.config, kind, index);
-                }
-                if self.config_tab.pending_save {
-                    self.config_tab.pending_save = false;
-                    let restore = self.config_tab.pending_field_restore.take();
-                    self.save_config();
-                    if let Some(idx) = restore {
-                        let count = self.config_tab.current_descriptors(&self.config).len();
-                        if idx < count {
-                            self.config_tab.field_vp.selected = idx;
-                        }
-                    }
-                }
-                Ok(true) // always consume — don't leak to global 'q'/etc.
             }
             // Up at top of Config Sidebar escapes to NavBar.
             KeyCode::Up | KeyCode::Char('k')

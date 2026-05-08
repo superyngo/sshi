@@ -492,6 +492,10 @@ impl ConfigTabState {
         false
     }
 
+    pub fn is_any_popup_open(&self) -> bool {
+        self.entry_form.is_some() || self.confirm.is_some() || self.editing_field.is_some()
+    }
+
     pub fn banner_active(&self) -> bool {
         self.reload_banner_until
             .map(|t| std::time::Instant::now() < t)
