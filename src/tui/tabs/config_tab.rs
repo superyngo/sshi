@@ -1047,10 +1047,19 @@ impl ConfigTabState {
     fn handle_group_picker_key(&mut self, key: KeyEvent, gp: &mut GroupPickerState) -> bool {
         // If add-input is active, route keys to it first
         if gp.add_input_active {
+            // If the add-input is active, handle Esc as an explicit cancel before
+            // routing the key to the input field. This avoids treating Esc the
+            // same as Enter (both flip mode -> Normal) and accidentally applying
+            // the pending value when the user intended to cancel.
+            if key.code == KeyCode::Esc {
+                gp.add_input = InputField::new("");
+                gp.add_input_active = false;
+                return true;
+            }
             gp.add_input.handle_key(key);
             if gp.add_input.mode == InputMode::Normal {
                 apply_add_input_to_picker(
-                    &gp.add_input.value.clone(),
+                    &gp.add_input.value,
                     &mut gp.available,
                     &mut gp.checked,
                     &mut gp.vp,
