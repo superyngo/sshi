@@ -599,6 +599,22 @@ impl ConfigTabState {
                             self.pending_save = true;
                             return true;
                         }
+                        if matches!(f.kind, FieldKind::ShellEnum) {
+                            let new_val = shell_cycle_back(&f.display_value);
+                            self.editing_field_index = self.field_vp.selected;
+                            self.commit_inline_edit(&new_val, config);
+                            self.config_dirty = true;
+                            self.pending_save = true;
+                            return true;
+                        }
+                        if let FieldKind::Enum { variants } = &f.kind {
+                            let new_val = enum_cycle(variants, &f.display_value, false);
+                            self.editing_field_index = self.field_vp.selected;
+                            self.commit_inline_edit(&new_val, config);
+                            self.config_dirty = true;
+                            self.pending_save = true;
+                            return true;
+                        }
                     }
                     self.zone = ConfigZone::Sidebar;
                     true
@@ -610,6 +626,20 @@ impl ConfigTabState {
                             let new_val = tribool_cycle_fwd(&f.display_value);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
+                            self.config_dirty = true;
+                            self.pending_save = true;
+                        }
+                        if matches!(f.kind, FieldKind::ShellEnum) {
+                            let new_val = shell_cycle_fwd(&f.display_value);
+                            self.editing_field_index = self.field_vp.selected;
+                            self.commit_inline_edit(&new_val, config);
+                            self.config_dirty = true;
+                            self.pending_save = true;
+                        }
+                        if let FieldKind::Enum { variants } = &f.kind {
+                            let new_val = enum_cycle(variants, &f.display_value, true);
+                            self.editing_field_index = self.field_vp.selected;
+                            self.commit_inline_edit(&new_val, config);
                             self.config_dirty = true;
                             self.pending_save = true;
                         }
@@ -2528,4 +2558,3 @@ mod tests {
         assert_eq!(shell_cycle_back("powershell"), "sh");
     }
 }
-
