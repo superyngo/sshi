@@ -155,6 +155,31 @@ pub struct GroupPickerState {
     pub add_input_active: bool,
 }
 
+// New direct sub-popup states (Step 1)
+#[derive(Debug, Clone)]
+pub struct DirectVecEditorState {
+    pub field_index: usize,
+    pub sidebar_item: SidebarItem,
+    pub field_key: String,
+    pub items: Vec<String>,
+    pub vp: Viewport,
+    pub input: InputField,
+    pub input_active: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DirectGroupPickerState {
+    pub field_index: usize,
+    pub sidebar_item: SidebarItem,
+    pub field_key: String,
+    pub available: Vec<String>,
+    pub checked: Vec<bool>,
+    pub vp: Viewport,
+    pub closing: bool,
+    pub add_input: InputField,
+    pub add_input_active: bool,
+}
+
 impl EntryFormState {
     pub fn new_host(template: &HostEntry) -> Self {
         let fields = host_form_fields(template);
@@ -257,11 +282,7 @@ fn sync_form_fields(s: &SyncEntry) -> Vec<FieldDescriptor> {
             FieldKind::String,
         ));
     } else {
-        fields.push(FieldDescriptor::scalar(
-            "mode",
-            String::new(),
-            FieldKind::OptionalString,
-        ));
+        fields.push(FieldDescriptor::scalar("mode", String::new(), FieldKind::OptionalString));
     }
     fields.push(FieldDescriptor::scalar(
         "propagate_deletes",
@@ -318,6 +339,9 @@ pub struct ConfigTabState {
     pub pending_open_editor: bool,
     pub pending_save: bool,
     pub pending_field_restore: Option<usize>,
+    // direct popups
+    pub direct_vec_editor: Option<DirectVecEditorState>,
+    pub direct_group_picker: Option<DirectGroupPickerState>,
 }
 
 impl ConfigTabState {
@@ -345,6 +369,8 @@ impl ConfigTabState {
             pending_open_editor: false,
             pending_save: false,
             pending_field_restore: None,
+            direct_vec_editor: None,
+            direct_group_picker: None,
         }
     }
 
@@ -489,22 +515,34 @@ impl ConfigTabState {
                 }
             }
         }
+        if let Some(ref dve) = self.direct_vec_editor {
+            if dve.input_active { return true; }
+        }
+        if let Some(ref dgp) = self.direct_group_picker {
+            if dgp.add_input_active { return true; }
+        }
         false
     }
 
     pub fn is_any_popup_open(&self) -> bool {
-        self.entry_form.is_some() || self.confirm.is_some() || self.editing_field.is_some()
-    }
-
-    pub fn banner_active(&self) -> bool {
-        self.reload_banner_until
-            .map(|t| std::time::Instant::now() < t)
-            .unwrap_or(false)
+        self.entry_form.is_some()
+            || self.confirm.is_some()
+            || self.editing_field.is_some()
+            || self.direct_vec_editor.is_some()
+            || self.direct_group_picker.is_some()
     }
 
     /// Handle keypress. Returns true if dirty/redraw needed.
     /// `config` is mutable here for inline edits.
     pub fn handle_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
+        // Route direct sub-popups first (Step 6)
+        if self.direct_group_picker.is_some() {
+            return self.handle_direct_group_picker_key(key, config);
+        }
+        if self.direct_vec_editor.is_some() {
+            return self.handle_direct_vec_editor_key(key, config);
+        }
+
         if self.entry_form.is_some() {
             return self.handle_entry_form_key(key, config);
         }
@@ -703,20 +741,43 @@ impl ConfigTabState {
                                 self.pending_save = true;
                                 return true;
                             }
-                            FieldKind::VecString | FieldKind::VecCheckPath => {
-                                // Open full entry form; vec editor handles array fields.
-                                let target_key = f.key.clone();
-                                self.start_edit_entry(config);
-                                if let Some(ref mut form) = self.entry_form {
-                                    let target =
-                                        form.fields.iter().position(|fd| fd.key == target_key);
-                                    if let Some(pos) = target {
-                                        form.field_vp = Viewport::new();
-                                        form.field_vp.set_dims(form.fields.len().max(1), 0);
-                                        for _ in 0..pos {
-                                            form.field_vp.move_down();
-                                        }
-                                    }
+                            FieldKind::VecString | FieldKind::VecCheckPath | FieldKind::CheckEnabled => {
+                                // New behavior: open direct sub-popup instead of full entry form (Step 5)
+                                let field_key = f.key.clone();
+                                let current_val = f.display_value.clone();
+                                let sidebar_item = self.items[self.sidebar_vp.selected].clone();
+                                let field_index = self.field_vp.selected;
+                                let use_group_picker = matches!(f.kind, FieldKind::CheckEnabled)
+                                    || (matches!(f.kind, FieldKind::VecString) && field_key == "groups");
+                                if use_group_picker {
+                                    let current = parse_bracket_list(&current_val);
+                                    let (available, checked) = collect_known_groups(config, &current);
+                                    let mut vp = Viewport::new();
+                                    vp.set_dims(available.len().max(1), 0);
+                                    self.direct_group_picker = Some(DirectGroupPickerState {
+                                        field_index,
+                                        sidebar_item,
+                                        field_key,
+                                        available,
+                                        checked,
+                                        vp,
+                                        closing: false,
+                                        add_input: InputField::new(""),
+                                        add_input_active: false,
+                                    });
+                                } else {
+                                    let items = parse_bracket_list(&current_val);
+                                    let mut vp = Viewport::new();
+                                    vp.set_dims(items.len().max(1), 0);
+                                    self.direct_vec_editor = Some(DirectVecEditorState {
+                                        field_index,
+                                        sidebar_item,
+                                        field_key,
+                                        items,
+                                        vp,
+                                        input: InputField::new(""),
+                                        input_active: false,
+                                    });
                                 }
                                 return true;
                             }
@@ -1000,31 +1061,8 @@ impl ConfigTabState {
                             }
                             FieldKind::VecString | FieldKind::VecCheckPath => {
                                 if field.key == "groups" {
-                                    let mut known: std::collections::BTreeSet<String> = config
-                                        .host
-                                        .iter()
-                                        .flat_map(|h| h.groups.iter().cloned())
-                                        .chain(
-                                            config
-                                                .check
-                                                .iter()
-                                                .flat_map(|c| c.groups.iter().cloned()),
-                                        )
-                                        .chain(
-                                            config
-                                                .sync
-                                                .iter()
-                                                .flat_map(|s| s.groups.iter().cloned()),
-                                        )
-                                        .collect();
-                                    let current =
-                                        parse_bracket_list(&form.fields[idx].display_value);
-                                    for item in &current {
-                                        known.insert(item.clone());
-                                    }
-                                    let available: Vec<String> = known.into_iter().collect();
-                                    let checked: Vec<bool> =
-                                        available.iter().map(|g| current.contains(g)).collect();
+                                    let current = parse_bracket_list(&form.fields[idx].display_value);
+                                    let (available, checked) = collect_known_groups(config, &current);
                                     let mut vp = Viewport::new();
                                     vp.set_dims(available.len().max(1), 0);
                                     form.group_picker = Some(GroupPickerState {
@@ -1527,6 +1565,31 @@ impl ConfigTabState {
         config_path: Option<&std::path::Path>,
         navbar_focused: bool,
     ) {
+        // If direct sub-popups are open, render base screen + direct popup (Step 11)
+        if self.direct_vec_editor.is_some() || self.direct_group_picker.is_some() {
+            let vert = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(area);
+            let horiz = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Length(22), Constraint::Min(0)])
+                .split(vert[0]);
+            self.render_sidebar(horiz[0], frame, theme, config, false);
+            self.render_field_table(horiz[1], frame, theme, config, false);
+            let crumb = self.breadcrumb(config);
+            frame.render_widget(
+                Paragraph::new(Span::styled(crumb, Style::default().fg(theme.inactive))),
+                vert[1],
+            );
+            if let Some(ref dve) = self.direct_vec_editor {
+                self.render_direct_vec_editor(area, frame, theme, dve);
+            } else if let Some(ref dgp) = self.direct_group_picker {
+                self.render_direct_group_picker(area, frame, theme, dgp);
+            }
+            return;
+        }
+
         if let Some(ref form) = self.entry_form {
             self.render_entry_form(area, frame, theme, form);
             // Confirm dialog overlays the form (e.g. discard prompt on ESC).
@@ -1569,6 +1632,12 @@ impl ConfigTabState {
             Span::styled(path_hint, Style::default().fg(theme.border_inactive)),
         ]);
         frame.render_widget(Paragraph::new(crumb_line), vert[1]);
+    }
+
+    pub fn banner_active(&self) -> bool {
+        self.reload_banner_until
+            .map(|t| std::time::Instant::now() < t)
+            .unwrap_or(false)
     }
 
     fn render_entry_form(
@@ -1660,27 +1729,11 @@ impl ConfigTabState {
                 let accent = Style::default()
                     .fg(theme.accent_config)
                     .add_modifier(Modifier::BOLD);
-                let prefix = Span::styled("  New group: ", accent);
-                let input_line = if gp.add_input.mode == InputMode::Active {
-                    let (before, after) = gp.add_input.split_at_cursor();
-                    let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-                    let after_cursor: String = after.chars().skip(1).collect();
-                    Line::from(vec![
-                        prefix,
-                        Span::styled(before, accent),
-                        Span::styled(
-                            cursor_ch,
-                            Style::default()
-                                .fg(Color::Black)
-                                .bg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(after_cursor, accent),
-                    ])
-                } else {
-                    Line::from(vec![prefix, Span::styled(gp.add_input.value.clone(), accent)])
-                };
-                lines.push(input_line);
+                lines.push(input_cursor_line(
+                    &gp.add_input,
+                    Span::styled("  New group: ", accent),
+                    accent,
+                ));
             }
         } else if let Some(ref ve) = form.vec_editor {
             lines.push(Line::from(Span::styled(
@@ -1711,36 +1764,16 @@ impl ConfigTabState {
                 lines.push(Line::from(Span::styled(format!("{prefix}{item}"), style)));
             }
 
+            if ve.items.is_empty() {
+                lines.push(Line::from(Span::styled("  (empty)", Style::default().fg(theme.inactive))));
+            }
+
             if ve.input_active {
                 lines.push(Line::from(""));
                 let accent = Style::default()
                     .fg(theme.accent_config)
                     .add_modifier(Modifier::BOLD);
-                let prefix = Span::styled("  New: ", accent);
-                let input_line =
-                    if ve.input.mode == crate::tui::components::input_field::InputMode::Active {
-                        let (before, after) = ve.input.split_at_cursor();
-                        let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-                        let after_cursor: String = after.chars().skip(1).collect();
-                        Line::from(vec![
-                            prefix,
-                            Span::styled(before, accent),
-                            Span::styled(
-                                cursor_ch,
-                                Style::default()
-                                    .fg(Color::Black)
-                                    .bg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(after_cursor, accent),
-                        ])
-                    } else {
-                        Line::from(vec![
-                            prefix,
-                            Span::styled(ve.input.value.clone(), accent),
-                        ])
-                    };
-                lines.push(input_line);
+                lines.push(input_cursor_line(&ve.input, Span::styled("  New: ", accent), accent));
             }
         } else {
             for rel in 0..(end - start) {
@@ -2052,6 +2085,263 @@ impl ConfigTabState {
             ],
         );
         frame.render_widget(table, inner);
+    }
+
+    // --- Direct popup handlers (Step 7-9)
+
+    fn commit_direct_popup_field(
+        &mut self,
+        _item: SidebarItem,
+        field_index: usize,
+        display_value: &str,
+        config: &mut AppConfig,
+    ) {
+        self.editing_field_index = field_index;
+        self.commit_inline_edit(display_value, config);
+        self.config_dirty = true;
+    }
+
+    fn handle_direct_vec_editor_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
+        let input_active = self.direct_vec_editor.as_ref().unwrap().input_active;
+        if input_active {
+            if key.code == KeyCode::Esc {
+                let ve = self.direct_vec_editor.as_mut().unwrap();
+                ve.input = InputField::new("");
+                ve.input_active = false;
+                return true;
+            }
+            let ve = self.direct_vec_editor.as_mut().unwrap();
+            ve.input.handle_key(key);
+            if ve.input.mode == InputMode::Normal {
+                if !ve.input.value.is_empty() {
+                    let val = std::mem::take(&mut ve.input.value);
+                    ve.items.push(val);
+                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                }
+                ve.input_active = false;
+            }
+            return true;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.direct_vec_editor.as_mut().unwrap().vp.move_up();
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.direct_vec_editor.as_mut().unwrap().vp.move_down();
+                true
+            }
+            KeyCode::Char('a') | KeyCode::Enter => {
+                let ve = self.direct_vec_editor.as_mut().unwrap();
+                ve.input = InputField::new("");
+                ve.input.activate();
+                ve.input_active = true;
+                true
+            }
+            KeyCode::Char('d') => {
+                let ve = self.direct_vec_editor.as_mut().unwrap();
+                let idx = ve.vp.selected;
+                if idx < ve.items.len() {
+                    ve.items.remove(idx);
+                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                    if ve.vp.selected >= ve.items.len() && ve.vp.selected > 0 {
+                        ve.vp.move_up();
+                    }
+                }
+                true
+            }
+            KeyCode::Char('s') => {
+                let (sidebar_item, field_index, display) = {
+                    let ve = self.direct_vec_editor.as_ref().unwrap();
+                    (ve.sidebar_item.clone(), ve.field_index, format!("[{}]", ve.items.join(", ")))
+                };
+                self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
+                self.direct_vec_editor = None;
+                self.pending_save = true;
+                true
+            }
+            KeyCode::Esc => {
+                self.direct_vec_editor = None;
+                true
+            }
+            _ => true,
+        }
+    }
+
+    fn handle_direct_group_picker_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
+        let add_input_active = self.direct_group_picker.as_ref().unwrap().add_input_active;
+        if add_input_active {
+            if key.code == KeyCode::Esc {
+                let gp = self.direct_group_picker.as_mut().unwrap();
+                gp.add_input = InputField::new("");
+                gp.add_input_active = false;
+                return true;
+            }
+            let gp = self.direct_group_picker.as_mut().unwrap();
+            gp.add_input.handle_key(key);
+            if gp.add_input.mode == InputMode::Normal {
+                apply_add_input_to_picker(
+                    &gp.add_input.value,
+                    &mut gp.available,
+                    &mut gp.checked,
+                    &mut gp.vp,
+                );
+                gp.add_input = InputField::new("");
+                gp.add_input_active = false;
+            }
+            return true;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.direct_group_picker.as_mut().unwrap().vp.move_up();
+                true
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.direct_group_picker.as_mut().unwrap().vp.move_down();
+                true
+            }
+            KeyCode::Char(' ') => {
+                let gp = self.direct_group_picker.as_mut().unwrap();
+                let idx = gp.vp.selected;
+                if idx < gp.checked.len() { gp.checked[idx] = !gp.checked[idx]; }
+                true
+            }
+            KeyCode::Char('a') => {
+                let gp = self.direct_group_picker.as_mut().unwrap();
+                gp.add_input = InputField::new("");
+                gp.add_input.activate();
+                gp.add_input_active = true;
+                true
+            }
+            KeyCode::Enter | KeyCode::Char('s') => {
+                let (sidebar_item, field_index, display) = {
+                    let gp = self.direct_group_picker.as_ref().unwrap();
+                    let selected: Vec<String> = gp.available.iter()
+                        .zip(gp.checked.iter())
+                        .filter(|(_, &c)| c)
+                        .map(|(g, _)| g.clone())
+                        .collect();
+                    let display = if selected.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        format!("[{}]", selected.join(", "))
+                    };
+                    (gp.sidebar_item.clone(), gp.field_index, display)
+                };
+                self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
+                self.direct_group_picker = None;
+                self.pending_save = true;
+                true
+            }
+            KeyCode::Esc => {
+                self.direct_group_picker = None;
+                true
+            }
+            _ => true,
+        }
+    }
+
+    // --- Rendering helpers for direct popups (Step 12)
+
+    fn render_direct_vec_editor(
+        &self, area: Rect, frame: &mut Frame, theme: &Theme, dve: &DirectVecEditorState,
+    ) {
+        use super::super::components::popup::centered_rect;
+        let popup_area = centered_rect(60, 60, area);
+        frame.render_widget(Clear, popup_area);
+        let title = format!(" Edit: {} ", dve.field_key);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.accent_config))
+            .title(title.as_str());
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let visible_h = inner.height as usize;
+        let mut vp = dve.vp.clone();
+        vp.set_dims(dve.items.len().max(1), visible_h.saturating_sub(3));
+        let (vs, ve_end) = vp.visible_range();
+
+        let mut lines: Vec<Line> = vec![
+            Line::from(Span::styled(
+                "  (a:add  d:del  s:save  Esc:cancel)",
+                Style::default().fg(theme.warning),
+            )),
+            Line::from(""),
+        ];
+        for (rel, item) in dve.items[vs..ve_end].iter().enumerate() {
+            let abs = vs + rel;
+            let is_sel = abs == vp.selected;
+            let style = if is_sel {
+                Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD | Modifier::REVERSED)
+            } else { Style::default() };
+            let prefix = if is_sel { "▶ " } else { "  " };
+            lines.push(Line::from(Span::styled(format!("{prefix}{item}"), style)));
+        }
+        if dve.items.is_empty() {
+            lines.push(Line::from(Span::styled("  (empty)", Style::default().fg(theme.inactive))));
+        }
+        if dve.input_active {
+            lines.push(Line::from(""));
+            let accent = Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD);
+            lines.push(input_cursor_line(
+                &dve.input,
+                Span::styled("  New: ", accent),
+                accent,
+            ));
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
+    fn render_direct_group_picker(&self, area: Rect, frame: &mut Frame, theme: &Theme, dgp: &DirectGroupPickerState) {
+        use super::super::components::popup::centered_rect;
+        let popup_area = centered_rect(60, 70, area);
+        frame.render_widget(Clear, popup_area);
+        let title = format!(" Pick groups: {} ", dgp.field_key);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme.accent_config))
+            .title(title.as_str());
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let visible_h = inner.height as usize;
+        let mut vp = dgp.vp.clone();
+        let extra = if dgp.add_input_active { 4 } else { 2 };
+        vp.set_dims(dgp.available.len().max(1), visible_h.saturating_sub(extra + 2));
+        let (gs, ge) = vp.visible_range();
+
+        let mut lines: Vec<Line> = vec![
+            Line::from(Span::styled(
+                "  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)",
+                Style::default().fg(theme.warning),
+            )),
+            Line::from(""),
+        ];
+        if dgp.available.is_empty() {
+            lines.push(Line::from(Span::styled("  (no known groups)", Style::default().fg(theme.inactive))));
+        } else {
+            for (rel, group) in dgp.available[gs..ge].iter().enumerate() {
+                let abs = gs + rel;
+                let is_sel = abs == vp.selected;
+                let checked = dgp.checked.get(abs).copied().unwrap_or(false);
+                let mark = if checked { "◉" } else { "○" };
+                let style = if is_sel {
+                    Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD | Modifier::REVERSED)
+                } else { Style::default() };
+                lines.push(Line::from(Span::styled(format!("  {mark} {group}"), style)));
+            }
+        }
+        if dgp.add_input_active {
+            lines.push(Line::from(""));
+            let accent = Style::default().fg(theme.accent_config).add_modifier(Modifier::BOLD);
+            lines.push(input_cursor_line(
+                &dgp.add_input,
+                Span::styled("  New group: ", accent),
+                accent,
+            ));
+        }
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
@@ -2530,6 +2820,38 @@ fn parse_bracket_list(s: &str) -> Vec<String> {
         .map(|item| item.trim().to_string())
         .filter(|item| !item.is_empty())
         .collect()
+}
+
+// Collect known groups across config (Step 3)
+fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>, Vec<bool>) {
+    let mut known: std::collections::BTreeSet<String> = config
+        .host.iter().flat_map(|h| h.groups.iter().cloned())
+        .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
+        .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
+        .collect();
+    for item in current { known.insert(item.clone()); }
+    let available: Vec<String> = known.into_iter().collect();
+    let checked: Vec<bool> = available.iter().map(|g| current.contains(g)).collect();
+    (available, checked)
+}
+
+// input cursor helper for rendering (Step 10)
+fn input_cursor_line<'a>(input: &'a InputField, prefix: Span<'a>, style: Style) -> Line<'a> {
+    let (before, after) = input.split_at_cursor();
+    let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
+    let after_cursor: String = after.chars().skip(1).collect();
+    Line::from(vec![
+        prefix,
+        Span::styled(before, style),
+        Span::styled(
+            cursor_ch,
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(after_cursor, style),
+    ])
 }
 
 use super::super::components::popup::centered_rect;
