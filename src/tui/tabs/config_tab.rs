@@ -2492,3 +2492,40 @@ fn parse_bracket_list(s: &str) -> Vec<String> {
 }
 
 use super::super::components::popup::centered_rect;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_enum_cycle_forward() {
+        assert_eq!(enum_cycle(&["a", "b", "c"], "a", true), "b");
+        assert_eq!(enum_cycle(&["a", "b", "c"], "c", true), "a");
+    }
+
+    #[test]
+    fn test_enum_cycle_backward() {
+        assert_eq!(enum_cycle(&["a", "b", "c"], "c", false), "b");
+        assert_eq!(enum_cycle(&["a", "b", "c"], "a", false), "c");
+    }
+
+    #[test]
+    fn test_enum_cycle_unknown_defaults_to_first() {
+        assert_eq!(enum_cycle(&["a", "b"], "z", true), "b");
+    }
+
+    #[test]
+    fn test_shell_cycle_fwd() {
+        assert_eq!(shell_cycle_fwd("sh"), "powershell");
+        assert_eq!(shell_cycle_fwd("powershell"), "cmd");
+        assert_eq!(shell_cycle_fwd("cmd"), "sh");
+    }
+
+    #[test]
+    fn test_shell_cycle_back() {
+        assert_eq!(shell_cycle_back("sh"), "cmd");
+        assert_eq!(shell_cycle_back("cmd"), "powershell");
+        assert_eq!(shell_cycle_back("powershell"), "sh");
+    }
+}
+
