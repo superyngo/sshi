@@ -53,6 +53,27 @@ use super::theme::Theme;
 use crate::host::auth::{SshAuthRequest, SshAuthSender};
 use operate_tab::truncate;
 
+/// Persist `config` to `path` if `dirty` is set; clear `dirty` on success.
+/// On failure prints to stderr — the caller is presumed to be the shutdown
+/// path where no UI is available to display errors.
+fn flush_config_if_dirty(
+    dirty: &mut bool,
+    config: &AppConfig,
+    path: Option<&std::path::Path>,
+) {
+    if !*dirty {
+        return;
+    }
+    match crate::config::app::save(config, path) {
+        Ok(()) => {
+            *dirty = false;
+        }
+        Err(e) => {
+            eprintln!("ssync: failed to save config on quit: {e}");
+        }
+    }
+}
+
 const MIN_COLS: u16 = 80;
 const MIN_ROWS: u16 = 24;
 const POLL_INTERVAL_MS: u64 = 50;
@@ -355,6 +376,7 @@ impl App {
         loop {
             if self.should_quit {
                 self.save_state();
+                self.flush_dirty_config_to_disk();
                 break;
             }
 
@@ -1782,6 +1804,20 @@ impl App {
         }
     }
 
+    /// Best-effort flush of dirty config to disk during shutdown.
+    ///
+    /// Unlike `save_config()`, this does NOT trigger reload, banner state, or
+    /// selection-snapshot bookkeeping — the UI is tearing down. Delegates to
+    /// the free function `flush_config_if_dirty` so the persistence logic
+    /// is unit-testable without constructing a full `App`.
+    fn flush_dirty_config_to_disk(&mut self) {
+        flush_config_if_dirty(
+            &mut self.config_tab.config_dirty,
+            &self.config,
+            self.config_path.as_deref(),
+        );
+    }
+
     fn config_add_kind(&self) -> Option<super::tabs::config_tab::EntryFormKind> {
         use super::tabs::config_tab::EntryFormKind;
         let item = self
@@ -2564,5 +2600,49 @@ fn spawn_signal_listener(tx: tokio::sync::mpsc::Sender<()>) {
                 }
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod flush_tests {
+    use super::flush_config_if_dirty;
+    use crate::config::app as cfg_app;
+    use crate::config::schema::AppConfig;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn flush_writes_when_dirty_and_clears_flag() {
+        let mut config = AppConfig::default();
+        config.settings.skipped_hosts = vec!["host-a".to_string(), "host-b".to_string()];
+        let tmp = NamedTempFile::new().expect("temp file");
+        let path = tmp.path().to_path_buf();
+
+        let mut dirty = true;
+        flush_config_if_dirty(&mut dirty, &config, Some(&path));
+
+        assert!(!dirty, "dirty flag must be cleared on successful save");
+        let loaded = cfg_app::load(Some(&path))
+            .expect("load")
+            .expect("config should exist");
+        assert_eq!(loaded.settings.skipped_hosts, vec!["host-a", "host-b"]);
+    }
+
+    #[test]
+    fn flush_is_noop_when_not_dirty() {
+        let config = AppConfig::default();
+        let tmp = NamedTempFile::new().expect("temp file");
+        let path = tmp.path().to_path_buf();
+        std::fs::write(&path, b"# pre-existing\n").unwrap();
+        let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let mut dirty = false;
+        flush_config_if_dirty(&mut dirty, &config, Some(&path));
+
+        assert!(!dirty);
+        let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(
+            mtime_before, mtime_after,
+            "file must not be touched when not dirty"
+        );
     }
 }
