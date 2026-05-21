@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-21 — Config-tab crash fixes, autosave-on-quit, cursor preservation
+- fix(tui): eliminate three render-time panics when editing empty
+  vec fields (Sync.paths, Settings.skipped_hosts, Check.enabled).
+  Root cause: viewport set_dims callers passed len().max(1) on empty
+  lists, then render hand-sliced items[vs..ve_end]. Fixed by adding
+  Viewport::visible_slice and removing the .max(1) lie everywhere.
+- feat(tui): autosave dirty config on quit and before opening the
+  external editor (E). Closes a persistence gap for Hosts/Checks/Syncs.
+- refactor(tui): preserve cursor position across save+reload via
+  ConfigSelectionSnapshot (subsumes pending_field_restore).
+- docs(audit): TUI audit results at docs/superpowers/audits/2026-05-21-tui-audit.md.
+
 ### 2026-05-08 — TUI Config UX: 9 improvements
 - Fix: TriBool stale editing_field_index no longer writes to wrong field (pre-fix)
 - Bool fields now toggle with Space/Enter inline (no text input required)
