@@ -441,7 +441,7 @@ in direct vec editor."
 
 The autosave block goes inside the quit path (`if self.should_quit { ... break; }` at `app.rs:356`) and explicitly bypasses `self.save_config()` because the latter triggers a reload/banner that the dying UI cannot show.
 
-- [ ] **Step 5.1: Add the helper method**
+- [ ] **Step 5.1: Add the testable free function + thin method wrapper**
 
 Edit `src/tui/app.rs`. Find an appropriate spot — adjacent to `save_config()` at `app.rs:1762`. Insert immediately after the closing brace of `save_config()`:
 
@@ -449,24 +449,44 @@ Edit `src/tui/app.rs`. Find an appropriate spot — adjacent to `save_config()` 
     /// Best-effort flush of dirty config to disk during shutdown.
     ///
     /// Unlike `save_config()`, this does NOT trigger reload, banner state, or
-    /// selection-snapshot bookkeeping — the UI is tearing down. On failure it
-    /// prints to stderr (after terminal restore the message will be visible).
+    /// selection-snapshot bookkeeping — the UI is tearing down. Delegates to
+    /// the free function `flush_config_if_dirty` so the persistence logic
+    /// is unit-testable without constructing a full `App`.
     fn flush_dirty_config_to_disk(&mut self) {
-        if !self.config_tab.config_dirty {
-            return;
-        }
-        match crate::config::app::save(&self.config, self.config_path.as_deref()) {
-            Ok(()) => {
-                self.config_tab.config_dirty = false;
-            }
-            Err(e) => {
-                eprintln!("ssync: failed to save config on quit: {e}");
-            }
-        }
+        flush_config_if_dirty(
+            &mut self.config_tab.config_dirty,
+            &self.config,
+            self.config_path.as_deref(),
+        );
     }
 ```
 
-If `crate::config::app::save` is not the correct path, verify with `rg -n 'pub fn save\b' src/config/app.rs`. The function signature observed during spec review is `pub fn save(config: &AppConfig, path: Option<&Path>) -> Result<()>` (atomic via tempfile + persist at lines 117–130). Adjust if it differs.
+Then add the free function near the top of `app.rs` (module-private), just below the `use` block:
+
+```rust
+/// Persist `config` to `path` if `dirty` is set; clear `dirty` on success.
+/// On failure prints to stderr — the caller is presumed to be the shutdown
+/// path where no UI is available to display errors.
+fn flush_config_if_dirty(
+    dirty: &mut bool,
+    config: &crate::config::types::AppConfig,
+    path: Option<&std::path::Path>,
+) {
+    if !*dirty {
+        return;
+    }
+    match crate::config::app::save(config, path) {
+        Ok(()) => {
+            *dirty = false;
+        }
+        Err(e) => {
+            eprintln!("ssync: failed to save config on quit: {e}");
+        }
+    }
+}
+```
+
+If the `AppConfig` path differs, verify with `rg -nP 'pub struct AppConfig\b' src/`. The function signature observed during spec review is `pub fn save(config: &AppConfig, path: Option<&Path>) -> Result<()>` (atomic via tempfile + persist at `src/config/app.rs:117–130`).
 
 - [ ] **Step 5.2: Call the helper in the quit path**
 
@@ -491,53 +511,81 @@ Replace with:
 
 `save_state` first (it persists TUI state which is unrelated to config); `flush_dirty_config_to_disk` second.
 
-- [ ] **Step 5.3: Add a unit test for the helper**
+- [ ] **Step 5.3: Add tests that exercise the autosave function the quit path calls**
 
 In `src/tui/app.rs`, locate or create a `#[cfg(test)] mod tests` block at the bottom of the file. If one exists, append; if not, create:
 
 ```rust
 #[cfg(test)]
 mod flush_tests {
-    // Test the autosave helper in isolation by exercising save() directly,
-    // since constructing a full App requires a real terminal backend.
+    // These tests cover the persistence logic invoked by the quit-path
+    // wiring in `App::run` (Step 5.2). `App::flush_dirty_config_to_disk`
+    // delegates 1-for-1 to the free function `flush_config_if_dirty`, so
+    // testing the free function gives us the same coverage without
+    // constructing a full App (which requires a real terminal backend).
     //
-    // The helper's logic is straightforward (dirty + save success → clear
-    // flag); the harder claim — that crate::config::app::save writes
-    // atomically — is already exercised by tests in src/config/app.rs.
-    //
-    // Therefore this test verifies the round-trip: write a config to a
-    // temp path, dirty in-memory, save, re-read, assert.
+    // The wiring itself (calling flush_dirty_config_to_disk from the
+    // should_quit branch in App::run) is two lines and reviewed by eye;
+    // the substantive behavior — flag + save + flag-clear on success — is
+    // exhaustively covered here.
 
+    use super::flush_config_if_dirty;
     use crate::config::app as cfg_app;
     use crate::config::types::AppConfig;
     use tempfile::NamedTempFile;
 
     #[test]
-    fn save_round_trips_dirty_config() {
+    fn flush_writes_when_dirty_and_clears_flag() {
         let mut config = AppConfig::default();
         config.settings.skipped_hosts = vec!["host-a".to_string(), "host-b".to_string()];
         let tmp = NamedTempFile::new().expect("temp file");
         let path = tmp.path().to_path_buf();
-        cfg_app::save(&config, Some(&path)).expect("save");
-        // Re-read and confirm.
+
+        let mut dirty = true;
+        flush_config_if_dirty(&mut dirty, &config, Some(&path));
+
+        assert!(!dirty, "dirty flag must be cleared on successful save");
         let loaded = cfg_app::load(Some(&path)).expect("load");
         assert_eq!(loaded.settings.skipped_hosts, vec!["host-a", "host-b"]);
+    }
+
+    #[test]
+    fn flush_is_noop_when_not_dirty() {
+        let config = AppConfig::default();
+        let tmp = NamedTempFile::new().expect("temp file");
+        let path = tmp.path().to_path_buf();
+        // Pre-write a marker; the no-op call must not overwrite it.
+        std::fs::write(&path, b"# pre-existing\n").unwrap();
+        let mtime_before = std::fs::metadata(&path).unwrap().modified().unwrap();
+
+        let mut dirty = false;
+        flush_config_if_dirty(&mut dirty, &config, Some(&path));
+
+        assert!(!dirty);
+        let mtime_after = std::fs::metadata(&path).unwrap().modified().unwrap();
+        assert_eq!(mtime_before, mtime_after, "file must not be touched when not dirty");
     }
 }
 ```
 
 **Verify before running:**
-- `cargo.toml` lists `tempfile` as a dev-dependency. If not, the test cannot use it — replace `NamedTempFile` with `std::env::temp_dir().join(format!("ssync-test-{}.toml", std::process::id()))` and clean up at the end.
+- `Cargo.toml` lists `tempfile` (any section is fine — the helper crate is used widely in tests). If absent, add to `[dev-dependencies]` in this same step:
 
-Run: `grep -E '^tempfile' Cargo.toml` — if it appears under `[dev-dependencies]` or `[dependencies]`, the test compiles.
+  ```toml
+  [dev-dependencies]
+  tempfile = "3"
+  ```
 
-- Adjust `cfg_app::load` and `AppConfig::default` to actual API names if they differ (verified via `rg -n 'pub fn load|pub fn save' src/config/app.rs`).
+  Run `grep -E '^tempfile' Cargo.toml` to check.
 
-- [ ] **Step 5.4: Run the new test**
+- Adjust `cfg_app::load` and `AppConfig::default` to actual API names if they differ (verified via `rg -n 'pub fn load|pub fn save' src/config/app.rs` and `rg -nP 'impl Default for AppConfig|AppConfig\s*\{' src/`).
+- If `AppConfig::default()` does not exist, replace with whichever zero-value constructor the codebase exposes (e.g. `AppConfig::empty()`), or build by literal: `AppConfig { host: vec![], check: vec![], sync: vec![], settings: Default::default() }` (verify the field list with `rg -nA10 'pub struct AppConfig' src/config/types.rs`).
 
-Run: `cargo test --features tui -p ssync --lib save_round_trips_dirty_config -- --nocapture`
+- [ ] **Step 5.4: Run the new tests**
 
-Expected: passes.
+Run: `cargo test --features tui -p ssync --lib flush_tests -- --nocapture`
+
+Expected: both tests pass.
 
 - [ ] **Step 5.5: Run the full suite**
 
@@ -1239,5 +1287,9 @@ git commit -m "docs(changelog): unreleased entry for config-tab fixes + TUI audi
 | §10 Risks: hidden render sites | Task 3 Step 3.4 explicitly checks the candidate sites |
 
 **Naming reconciliation:** the spec's snapshot fields `section_idx + entry_idx` are collapsed in the plan to a single `sidebar_idx` because the real state has one `sidebar_vp`. Behavior is equivalent; this is a verified deviation worth flagging in code review.
+
+**Integration-test reasoning (Task 5):** Spec §6.3 asks for an "integration test that constructs an App, marks dirty, drives shutdown, asserts on-disk file reflects edits." Constructing a real `App` requires a terminal backend and event channel, which is expensive and brittle for unit tests. The plan instead extracts the persistence logic into a free function `flush_config_if_dirty` (Step 5.1) that the `App::flush_dirty_config_to_disk` method delegates to 1-for-1, then tests that function with both dirty and not-dirty paths (Step 5.3). The quit-path wiring (Step 5.2) is two lines and is reviewed by eye. This covers §6.4 acceptance — "After any edit followed by `q`, the on-disk file reflects the edit" — via Step 5.3's dirty test plus the wiring inspection.
+
+**Spec §5.5 count typo:** Spec §5.5 was corrected from "15" to "14" `.max(1)` sites during plan-verify R1 (the verified count is 14, consistent with §5.3's list and the grep output the plan uses throughout).
 
 **Placeholder scan:** no TBDs, every code step has the exact code, every command has expected output. The single `TBD` text appears in Task 10's Files line and is intentional — Task 10 is a per-finding placeholder; if Task 9 produces zero blockers, Task 10 is skipped.

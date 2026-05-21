@@ -110,7 +110,7 @@ If `Viewport` does not already expose `scroll_y` publicly, add a getter (`pub fn
 
 ### 5.5 Acceptance
 
-- All 15 `.max(1)` sites removed.
+- All 14 `.max(1)` sites removed.
 - All confirmed render sites use `visible_slice`.
 - New tests pass; existing tests unaffected.
 - Manual reproduction of all three crashes in section 1 no longer panics.
