@@ -346,6 +346,18 @@ pub struct ConfigTabState {
     pub direct_group_picker: Option<DirectGroupPickerState>,
 }
 
+/// Cursor-position snapshot captured before save+reload, restored after.
+/// Each field is clamped against the post-reload state in `restore_selection`.
+#[derive(Default, Clone, Debug)]
+pub struct ConfigSelectionSnapshot {
+    sidebar_idx: usize,
+    field_idx: Option<usize>,
+    entry_form_open: bool,
+    vec_editor_idx: Option<usize>,
+    vec_editor_field_index: Option<usize>,
+    direct_vec_idx: Option<usize>,
+}
+
 impl ConfigTabState {
     pub fn new(config: &AppConfig, config_path: Option<&std::path::Path>) -> Self {
         let items = build_sidebar_items(config);
@@ -373,6 +385,57 @@ impl ConfigTabState {
             pending_field_restore: None,
             direct_vec_editor: None,
             direct_group_picker: None,
+        }
+    }
+
+    pub fn capture_selection(&self) -> ConfigSelectionSnapshot {
+        let mut snap = ConfigSelectionSnapshot {
+            sidebar_idx: self.sidebar_vp.selected,
+            ..Default::default()
+        };
+        if let Some(form) = self.entry_form.as_ref() {
+            snap.entry_form_open = true;
+            snap.field_idx = Some(form.field_vp.selected);
+            if let Some(ve) = form.vec_editor.as_ref() {
+                snap.vec_editor_field_index = Some(ve.field_index);
+                snap.vec_editor_idx = Some(ve.vp.selected);
+            }
+        }
+        if let Some(dve) = self.direct_vec_editor.as_ref() {
+            snap.direct_vec_idx = Some(dve.vp.selected);
+        }
+        snap
+    }
+
+    pub fn restore_selection(&mut self, snap: ConfigSelectionSnapshot, _config: &AppConfig) {
+        let clamp = |idx: usize, len: usize| -> usize {
+            if len == 0 { 0 } else { idx.min(len - 1) }
+        };
+        let sidebar_len = self.items.len();
+        self.sidebar_vp.selected = clamp(snap.sidebar_idx, sidebar_len);
+        self.sidebar_vp.set_dims(sidebar_len, self.sidebar_vp.visible_height);
+        if snap.entry_form_open {
+            if let (Some(form), Some(fi)) = (self.entry_form.as_mut(), snap.field_idx) {
+                let flen = form.fields.len();
+                form.field_vp.selected = clamp(fi, flen);
+                form.field_vp.set_dims(flen, form.field_vp.visible_height);
+                if let (Some(ve), Some(target_field), Some(vidx)) = (
+                    form.vec_editor.as_mut(),
+                    snap.vec_editor_field_index,
+                    snap.vec_editor_idx,
+                ) {
+                    if ve.field_index == target_field {
+                        let ilen = ve.items.len();
+                        ve.vp.selected = clamp(vidx, ilen);
+                        ve.vp.set_dims(ilen, ve.vp.visible_height);
+                    }
+                }
+            }
+        }
+        if let (Some(dve), Some(didx)) = (self.direct_vec_editor.as_mut(), snap.direct_vec_idx) {
+            let ilen = dve.items.len();
+            dve.vp.selected = clamp(didx, ilen);
+            dve.vp.set_dims(ilen, dve.vp.visible_height);
         }
     }
 
@@ -3077,5 +3140,60 @@ mod tests {
             input_active: false,
         });
         render_once(&mut state, &config);
+    }
+
+    #[test]
+    fn snapshot_round_trip_no_form_no_popup() {
+        let mut config = AppConfig::default();
+        config.host.push(HostEntry {
+            name: "h1".to_string(),
+            ssh_host: "1.1.1.1".to_string(),
+            shell: ShellType::Sh,
+            groups: vec![],
+            proxy_jump: None,
+        });
+        config.host.push(HostEntry {
+            name: "h2".to_string(),
+            ssh_host: "2.2.2.2".to_string(),
+            shell: ShellType::Sh,
+            groups: vec![],
+            proxy_jump: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        state.sidebar_vp.move_down();
+        state.sidebar_vp.move_down();
+        let captured_sidebar = state.sidebar_vp.selected;
+        let snap = state.capture_selection();
+        state.sidebar_vp = Viewport::new();
+        state.sidebar_vp.set_dims(state.items.len(), 0);
+        state.restore_selection(snap, &config);
+        assert_eq!(state.sidebar_vp.selected, captured_sidebar);
+    }
+
+    #[test]
+    fn snapshot_clamps_when_entry_deleted() {
+        let mut config = AppConfig::default();
+        for i in 0..3 {
+            config.host.push(HostEntry {
+                name: format!("h{i}"),
+                ssh_host: format!("{i}.{i}.{i}.{i}"),
+                shell: ShellType::Sh,
+                groups: vec![],
+                proxy_jump: None,
+            });
+        }
+        let mut state = ConfigTabState::new(&config, None);
+        let last = state.items.len() - 1;
+        for _ in 0..last {
+            state.sidebar_vp.move_down();
+        }
+        let snap = state.capture_selection();
+        config.host.pop();
+        state.items = build_sidebar_items(&config);
+        state.sidebar_vp = Viewport::new();
+        state.sidebar_vp.set_dims(state.items.len(), 0);
+        state.restore_selection(snap, &config);
+        let expected = state.items.len().saturating_sub(1);
+        assert_eq!(state.sidebar_vp.selected, expected);
     }
 }
