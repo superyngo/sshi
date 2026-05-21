@@ -1380,7 +1380,6 @@ impl ConfigTabState {
 
     fn commit_entry_form(&mut self, config: &mut AppConfig) {
         let form = self.entry_form.take().unwrap();
-        let saved_sel = form.field_vp.selected;
         match form.kind {
             EntryFormKind::Host => {
                 let mut h = if let Some(idx) = form.edit_index {
