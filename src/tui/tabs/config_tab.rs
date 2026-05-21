@@ -1717,16 +1717,14 @@ impl ConfigTabState {
             let gp_visible_h = visible_h.saturating_sub(5);
             let mut gp_vp = gp.vp.clone();
             gp_vp.set_dims(gp.available.len(), gp_visible_h);
-            let (gs, ge) = gp_vp.visible_range();
-
             if gp.available.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  (no known groups — define groups on hosts first)",
                     Style::default().fg(theme.inactive),
                 )));
             } else {
-                for (rel, group) in gp.available[gs..ge].iter().enumerate() {
-                    let abs = gs + rel;
+                for (rel, group) in gp_vp.visible_slice(&gp.available).iter().enumerate() {
+                    let abs = gp_vp.scroll_y + rel;
                     let is_sel = abs == gp_vp.selected;
                     let checked = gp.checked.get(abs).copied().unwrap_or(false);
                     let mark = if checked { "◉" } else { "○" };
@@ -1773,10 +1771,9 @@ impl ConfigTabState {
             let ve_visible_h = visible_h.saturating_sub(6);
             let mut ve_vp = ve.vp.clone();
             ve_vp.set_dims(ve.items.len(), ve_visible_h);
-            let (vs, ve_end) = ve_vp.visible_range();
-
-            for (rel, item) in ve.items[vs..ve_end].iter().enumerate() {
-                let abs = vs + rel;
+            let scroll_y = ve_vp.scroll_y;
+            for (rel, item) in ve_vp.visible_slice(&ve.items).iter().enumerate() {
+                let abs = scroll_y + rel;
                 let is_sel = abs == ve_vp.selected;
                 let style = if is_sel {
                     Style::default()
@@ -2320,8 +2317,6 @@ impl ConfigTabState {
         let visible_h = inner.height as usize;
         let mut vp = dve.vp.clone();
         vp.set_dims(dve.items.len(), visible_h.saturating_sub(3));
-        let (vs, ve_end) = vp.visible_range();
-
         let mut lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 "  (a:add  d:del  s:save  Esc:cancel)",
@@ -2329,8 +2324,8 @@ impl ConfigTabState {
             )),
             Line::from(""),
         ];
-        for (rel, item) in dve.items[vs..ve_end].iter().enumerate() {
-            let abs = vs + rel;
+        for (rel, item) in vp.visible_slice(&dve.items).iter().enumerate() {
+            let abs = vp.scroll_y + rel;
             let is_sel = abs == vp.selected;
             let style = if is_sel {
                 Style::default()
@@ -2387,8 +2382,6 @@ impl ConfigTabState {
             dgp.available.len(),
             visible_h.saturating_sub(extra + 2),
         );
-        let (gs, ge) = vp.visible_range();
-
         let mut lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 "  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)",
@@ -2402,8 +2395,8 @@ impl ConfigTabState {
                 Style::default().fg(theme.inactive),
             )));
         } else {
-            for (rel, group) in dgp.available[gs..ge].iter().enumerate() {
-                let abs = gs + rel;
+            for (rel, group) in vp.visible_slice(&dgp.available).iter().enumerate() {
+                let abs = vp.scroll_y + rel;
                 let is_sel = abs == vp.selected;
                 let checked = dgp.checked.get(abs).copied().unwrap_or(false);
                 let mark = if checked { "◉" } else { "○" };
