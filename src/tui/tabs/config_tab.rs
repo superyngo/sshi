@@ -340,7 +340,6 @@ pub struct ConfigTabState {
     pub pending_delete: Option<(EntryFormKind, usize)>,
     pub pending_open_editor: bool,
     pub pending_save: bool,
-    pub pending_field_restore: Option<usize>,
     // direct popups
     pub direct_vec_editor: Option<DirectVecEditorState>,
     pub direct_group_picker: Option<DirectGroupPickerState>,
@@ -392,7 +391,6 @@ impl ConfigTabState {
             pending_delete: None,
             pending_open_editor: false,
             pending_save: false,
-            pending_field_restore: None,
             direct_vec_editor: None,
             direct_group_picker: None,
         }
@@ -1201,7 +1199,7 @@ impl ConfigTabState {
                 true
             }
             KeyCode::Char('s') => {
-                self.pending_field_restore = self.commit_entry_form(config);
+                self.commit_entry_form(config);
                 self.entry_form = None;
                 self.pending_save = true;
                 true
@@ -1380,7 +1378,7 @@ impl ConfigTabState {
         }
     }
 
-    fn commit_entry_form(&mut self, config: &mut AppConfig) -> Option<usize> {
+    fn commit_entry_form(&mut self, config: &mut AppConfig) {
         let form = self.entry_form.take().unwrap();
         let saved_sel = form.field_vp.selected;
         match form.kind {
@@ -1510,7 +1508,7 @@ impl ConfigTabState {
         self.sidebar_vp = Viewport::new();
         self.sidebar_vp.set_dims(self.items.len(), 0);
         self.field_vp = Viewport::new();
-        Some(saved_sel)
+        ()
     }
 
     pub fn execute_delete(&mut self, config: &mut AppConfig, kind: EntryFormKind, index: usize) {

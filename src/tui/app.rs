@@ -1093,14 +1093,7 @@ impl App {
             }
             if self.config_tab.pending_save {
                 self.config_tab.pending_save = false;
-                let restore = self.config_tab.pending_field_restore.take();
                 self.save_config();
-                if let Some(idx) = restore {
-                    let count = self.config_tab.current_descriptors(&self.config).len();
-                    if idx < count {
-                        self.config_tab.field_vp.selected = idx;
-                    }
-                }
             }
             return Ok(handled);
         }
@@ -1383,14 +1376,7 @@ impl App {
                 }
                 if self.config_tab.pending_save {
                     self.config_tab.pending_save = false;
-                    let restore = self.config_tab.pending_field_restore.take();
                     self.save_config();
-                    if let Some(idx) = restore {
-                        let count = self.config_tab.current_descriptors(&self.config).len();
-                        if idx < count {
-                            self.config_tab.field_vp.selected = idx;
-                        }
-                    }
                 }
                 Ok(handled)
             }
@@ -1783,6 +1769,7 @@ impl App {
     }
 
     fn save_config(&mut self) {
+        let snap = self.config_tab.capture_selection();
         let explicit_path = self.config_path.clone();
         let path_arg = explicit_path.as_deref();
         match crate::config::app::save(&self.config, path_arg) {
@@ -1795,8 +1782,10 @@ impl App {
                         self.config_path = Some(resolved.clone());
                     }
                     self.config_tab.reload(&self.config, Some(&resolved));
+                    self.config_tab.restore_selection(snap, &self.config);
                 } else {
                     self.config_tab.reload(&self.config, path_arg);
+                    self.config_tab.restore_selection(snap, &self.config);
                 }
             }
             Err(e) => {
