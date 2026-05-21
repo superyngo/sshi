@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-21
 **Status:** Draft (pending review)
-**Scope:** `src/tui/`, plus `src/tui/components/viewport.rs` and one verified write to `src/config/app.rs` (atomic-save check).
+**Scope:** `src/tui/` only. (Atomic save in `src/config/app.rs` was checked during review and is already implemented — no change needed there.)
 
 ---
 
@@ -18,7 +18,7 @@ Four issues reported against the Config tab:
    - `config_tab.rs:2332` — editing a Check's `enabled` field via the direct vec editor.
 4. **Whole-TUI audit** to find other latent issues.
 
-Root cause for items 3 is shared and visible: 15 call sites pass `items.len().max(1)` to `Viewport::set_dims`, lying about an empty vec. `visible_range()` then returns a non-empty range while the underlying slice has length 0, and the render loop's `items[vs..ve_end]` panics.
+Root cause for items 3 is shared and visible: 14 call sites pass `items.len().max(1)` to `Viewport::set_dims`, lying about an empty vec. `visible_range()` then returns a non-empty range while the underlying slice has length 0, and the render loop's `items[vs..ve_end]` panics.
 
 For item 2, the save plumbing exists (`save_config()` → `crate::config::app::save`) and is wired to a `pending_save` flag and the explicit `s` key. Symptom evidence (in-session UI reflects edits; on-disk file does not) suggests not every section's edit path triggers the save, or commit-vs-save is inconsistent. The chosen remediation does not depend on identifying the exact gap — it replaces the per-section trigger with autosave-on-quit + an explicit-save affordance, eliminating the gap by construction.
 
@@ -33,7 +33,7 @@ For item 1, the current `pending_field_restore: Option<usize>` only restores the
 
 ## 3. Non-Goals
 
-- Changes to anything outside `src/tui/` (one verified write to `src/config/app.rs` for atomic-save is the only exception, and only if absent).
+- Changes to anything outside `src/tui/`.
 - Refactoring unrelated to the four deliverables.
 - New features.
 - Fixing audit findings classified Major or Minor — those are deferred.
@@ -75,7 +75,7 @@ impl Viewport {
 
 ### 5.3 Caller migration
 
-All 15 occurrences of `vp.set_dims(<expr>.len().max(1), <h>)` change to `vp.set_dims(<expr>.len(), <h>)`. Locations (from `rg -n "len\\(\\)\\.max\\(1\\)" src/tui/tabs/config_tab.rs`):
+All 14 occurrences of `vp.set_dims(<expr>.len().max(1), <h>)` change to `vp.set_dims(<expr>.len(), <h>)`. Locations (from `rg -n "len\\(\\)\\.max\\(1\\)" src/tui/tabs/config_tab.rs`):
 
 `766, 780, 1072, 1095, 1116, 1159, 1185, 1719, 1775, 2163, 2190, 2322, 2387, 2817`. (Note: `766`/`780`/`1072`/`1095` etc. occur in event handlers with `visible_height = 0` and never reach a panicking render slice, but are corrected for consistency.)
 
@@ -168,7 +168,7 @@ If `Viewport` does not already expose `scroll_y` publicly, add a getter (`pub fn
   }
   ```
 - Delete `ConfirmAction::OpenEditorDirty` and any unreachable code that handled it.
-- Verify `crate::config::app::save` writes via temp-file + atomic rename. If not, add it (small change; one of the two non-`src/tui/` writes this spec allows).
+- `crate::config::app::save` already writes atomically (`tempfile::Builder` + `persist()`, confirmed at `src/config/app.rs:117–130`). No change needed.
 
 ### 6.3 Tests
 
@@ -295,7 +295,6 @@ Targeted reads: `app.rs`, all `tabs/*.rs`, `widgets/`, `components/`, `state/per
 
 ## 10. Risks & open questions
 
-- **Atomic save verification.** If `crate::config::app::save` does not already use temp + rename, this spec adds it. The change is small and well-scoped, but is the only write outside `src/tui/`.
 - **Signal handling.** The exact signal-routing behavior is unverified; the audit (§8) confirms it. If `Ctrl-C` currently bypasses graceful shutdown, the fix is in scope; it is not pre-specified here.
 - **`scroll_y` getter on `Viewport`.** Spec assumes it can be added if missing; trivial.
 - **Hidden render sites.** The five candidate render sites (1719, 1778, 2332, 2387, 2817) are confirmed from grep; if implementation finds additional render paths that hand-slice without `visible_slice`, they are converted in scope.
