@@ -1288,7 +1288,13 @@ git commit -m "docs(changelog): unreleased entry for config-tab fixes + TUI audi
 
 **Naming reconciliation:** the spec's snapshot fields `section_idx + entry_idx` are collapsed in the plan to a single `sidebar_idx` because the real state has one `sidebar_vp`. Behavior is equivalent; this is a verified deviation worth flagging in code review.
 
-**Integration-test reasoning (Task 5):** Spec §6.3 asks for an "integration test that constructs an App, marks dirty, drives shutdown, asserts on-disk file reflects edits." Constructing a real `App` requires a terminal backend and event channel, which is expensive and brittle for unit tests. The plan instead extracts the persistence logic into a free function `flush_config_if_dirty` (Step 5.1) that the `App::flush_dirty_config_to_disk` method delegates to 1-for-1, then tests that function with both dirty and not-dirty paths (Step 5.3). The quit-path wiring (Step 5.2) is two lines and is reviewed by eye. This covers §6.4 acceptance — "After any edit followed by `q`, the on-disk file reflects the edit" — via Step 5.3's dirty test plus the wiring inspection.
+**Integration-test scope (Task 5) — intentional gap.** Spec §6.3 (as updated post-plan-verify R2) explicitly scopes the autosave persistence test to the free-function level. Rationale: constructing a real `App` requires a terminal backend and event channel; building a synthetic-backend harness for one end-to-end test is more work than the rest of this PR. Mitigations:
+
+1. The persistence behavior is exhaustively tested at the free-function level (Step 5.3 covers dirty→write→clear-flag and not-dirty→no-op).
+2. The method-to-function delegation in `App::flush_dirty_config_to_disk` is a single `flush_config_if_dirty(...)` call — no logic to bug.
+3. The quit-path wiring (Step 5.2) is two lines inserted into `App::run`'s `should_quit` branch — reviewed by eye and validated by Step 11.4's manual reproduction (edit → `q` → restart → assert on-disk content).
+
+§6.4 acceptance ("After any edit followed by `q`, the on-disk file reflects the edit") is covered by (1) + (3). The end-to-end automated coverage gap is an accepted risk, called out here and in spec §6.3.
 
 **Spec §5.5 count typo:** Spec §5.5 was corrected from "15" to "14" `.max(1)` sites during plan-verify R1 (the verified count is 14, consistent with §5.3's list and the grep output the plan uses throughout).
 

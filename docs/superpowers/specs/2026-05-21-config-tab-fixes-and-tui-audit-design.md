@@ -54,7 +54,7 @@ Ordering during implementation: deliverables 1 → 2 → 3 → 4. Audit runs aft
 ### 5.1 Files touched
 
 - `src/tui/components/viewport.rs` — add helper, no behavior change to existing methods.
-- `src/tui/tabs/config_tab.rs` — 15 call sites updated, ~4 render sites switch to helper.
+- `src/tui/tabs/config_tab.rs` — 14 call sites updated, ~4 render sites switch to helper.
 
 ### 5.2 Helper added
 
@@ -172,7 +172,7 @@ If `Viewport` does not already expose `scroll_y` publicly, add a getter (`pub fn
 
 ### 6.3 Tests
 
-- Integration test: construct an `App`, mark `config_dirty = true`, drive shutdown, assert the on-disk file reflects edits.
+- Persistence test (free-function level): exercise the autosave logic the quit path calls. Constructing a full `App` requires a terminal backend; instead the autosave logic is extracted into a free function `flush_config_if_dirty(dirty, config, path)` that the `App::flush_dirty_config_to_disk` method delegates to 1-for-1. Tests cover the dirty→write→clear-flag path and the not-dirty no-op path against a temp-file config. The quit-path *wiring* (two lines inserting `flush_dirty_config_to_disk` into the `should_quit` branch) is reviewed by eye and covered by `cargo check`; an automated end-to-end `App::run` driver is intentionally deferred to avoid building a synthetic terminal-backend harness.
 - Behavior test for `E` key: with `config_dirty = true`, simulate `E`, assert `save_config` was called and `needs_editor_open` is true.
 
 ### 6.4 Acceptance
