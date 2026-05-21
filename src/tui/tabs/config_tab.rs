@@ -347,6 +347,16 @@ pub struct ConfigTabState {
 }
 
 /// Cursor-position snapshot captured before save+reload, restored after.
+///
+/// `sidebar_idx` covers what spec §7.2 calls `section_idx + entry_idx`: the real
+/// state uses a single flat `sidebar_vp` over `Vec<SidebarItem>` (which interleaves
+/// section headers and entries), so one index suffices — clamping against
+/// `self.items.len()` is equivalent to per-section clamping in the spec's model.
+///
+/// `entry_form_open` and `vec_editor_field_index` are defensive guards: a save+reload
+/// may close the entry form or invalidate the in-form vec editor, in which case the
+/// captured indices must NOT be reapplied to a different form.
+///
 /// Each field is clamped against the post-reload state in `restore_selection`.
 #[derive(Default, Clone, Debug)]
 pub struct ConfigSelectionSnapshot {
@@ -3195,5 +3205,28 @@ mod tests {
         state.restore_selection(snap, &config);
         let expected = state.items.len().saturating_sub(1);
         assert_eq!(state.sidebar_vp.selected, expected);
+    }
+
+    #[test]
+    fn snapshot_clamps_on_empty_list() {
+        // Spec §7.4 empty-list edge case: post-reload length 0 → cursor at 0, no panic.
+        let mut config = AppConfig::default();
+        config.host.push(HostEntry {
+            name: "h1".to_string(),
+            ssh_host: "1.1.1.1".to_string(),
+            shell: ShellType::Sh,
+            groups: vec![],
+            proxy_jump: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        // Move cursor off zero.
+        state.sidebar_vp.move_down();
+        let snap = state.capture_selection();
+        // Simulate a reload that ends up with zero items.
+        state.items = vec![];
+        state.sidebar_vp = Viewport::new();
+        state.sidebar_vp.set_dims(0, 0);
+        state.restore_selection(snap, &config);
+        assert_eq!(state.sidebar_vp.selected, 0);
     }
 }
