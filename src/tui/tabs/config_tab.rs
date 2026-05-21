@@ -763,7 +763,7 @@ impl ConfigTabState {
                                     let (available, checked) =
                                         collect_known_groups(config, &current);
                                     let mut vp = Viewport::new();
-                                    vp.set_dims(available.len().max(1), 0);
+                                    vp.set_dims(available.len(), 0);
                                     self.direct_group_picker = Some(DirectGroupPickerState {
                                         field_index,
                                         sidebar_item,
@@ -777,7 +777,7 @@ impl ConfigTabState {
                                 } else {
                                     let items = parse_bracket_list(&current_val);
                                     let mut vp = Viewport::new();
-                                    vp.set_dims(items.len().max(1), 0);
+                                    vp.set_dims(items.len(), 0);
                                     self.direct_vec_editor = Some(DirectVecEditorState {
                                         field_index,
                                         sidebar_item,
@@ -1069,7 +1069,7 @@ impl ConfigTabState {
                                 let checked: Vec<bool> =
                                     available.iter().map(|k| current.contains(k)).collect();
                                 let mut vp = Viewport::new();
-                                vp.set_dims(available.len().max(1), 0);
+                                vp.set_dims(available.len(), 0);
                                 form.group_picker = Some(GroupPickerState {
                                     field_index: idx,
                                     available,
@@ -1092,7 +1092,7 @@ impl ConfigTabState {
                                     let (available, checked) =
                                         collect_known_groups(config, &current);
                                     let mut vp = Viewport::new();
-                                    vp.set_dims(available.len().max(1), 0);
+                                    vp.set_dims(available.len(), 0);
                                     form.group_picker = Some(GroupPickerState {
                                         field_index: idx,
                                         available,
@@ -1113,7 +1113,7 @@ impl ConfigTabState {
                                         input: InputField::new(""),
                                         input_active: false,
                                     };
-                                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                                    ve.vp.set_dims(ve.items.len(), 0);
                                     form.vec_editor = Some(ve);
                                 }
                             }
@@ -1156,7 +1156,7 @@ impl ConfigTabState {
             if ve.input.mode == InputMode::Normal {
                 if !ve.input.value.is_empty() {
                     ve.items.push(std::mem::take(&mut ve.input.value));
-                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                    ve.vp.set_dims(ve.items.len(), 0);
                 }
                 ve.input_active = false;
             }
@@ -1182,7 +1182,7 @@ impl ConfigTabState {
                 let idx = ve.vp.selected;
                 if idx < ve.items.len() {
                     ve.items.remove(idx);
-                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                    ve.vp.set_dims(ve.items.len(), 0);
                     if ve.vp.selected >= ve.items.len() && ve.vp.selected > 0 {
                         ve.vp.move_up();
                     }
@@ -1716,7 +1716,7 @@ impl ConfigTabState {
 
             let gp_visible_h = visible_h.saturating_sub(5);
             let mut gp_vp = gp.vp.clone();
-            gp_vp.set_dims(gp.available.len().max(1), gp_visible_h);
+            gp_vp.set_dims(gp.available.len(), gp_visible_h);
             let (gs, ge) = gp_vp.visible_range();
 
             if gp.available.is_empty() {
@@ -1772,7 +1772,7 @@ impl ConfigTabState {
 
             let ve_visible_h = visible_h.saturating_sub(6);
             let mut ve_vp = ve.vp.clone();
-            ve_vp.set_dims(ve.items.len().max(1), ve_visible_h);
+            ve_vp.set_dims(ve.items.len(), ve_visible_h);
             let (vs, ve_end) = ve_vp.visible_range();
 
             for (rel, item) in ve.items[vs..ve_end].iter().enumerate() {
@@ -2160,7 +2160,7 @@ impl ConfigTabState {
                 if !ve.input.value.is_empty() {
                     let val = std::mem::take(&mut ve.input.value);
                     ve.items.push(val);
-                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                    ve.vp.set_dims(ve.items.len(), 0);
                 }
                 ve.input_active = false;
             }
@@ -2187,7 +2187,7 @@ impl ConfigTabState {
                 let idx = ve.vp.selected;
                 if idx < ve.items.len() {
                     ve.items.remove(idx);
-                    ve.vp.set_dims(ve.items.len().max(1), 0);
+                    ve.vp.set_dims(ve.items.len(), 0);
                     if ve.vp.selected >= ve.items.len() && ve.vp.selected > 0 {
                         ve.vp.move_up();
                     }
@@ -2319,7 +2319,7 @@ impl ConfigTabState {
 
         let visible_h = inner.height as usize;
         let mut vp = dve.vp.clone();
-        vp.set_dims(dve.items.len().max(1), visible_h.saturating_sub(3));
+        vp.set_dims(dve.items.len(), visible_h.saturating_sub(3));
         let (vs, ve_end) = vp.visible_range();
 
         let mut lines: Vec<Line> = vec![
@@ -2384,7 +2384,7 @@ impl ConfigTabState {
         let mut vp = dgp.vp.clone();
         let extra = if dgp.add_input_active { 4 } else { 2 };
         vp.set_dims(
-            dgp.available.len().max(1),
+            dgp.available.len(),
             visible_h.saturating_sub(extra + 2),
         );
         let (gs, ge) = vp.visible_range();
@@ -2814,7 +2814,7 @@ fn apply_add_input_to_picker(
         // adjust `selected` when item_count==0 or selected >= item_count, so
         // explicitly assigning `vp.selected = pos` afterwards guarantees the
         // desired selection.
-        vp.set_dims(available.len().max(1), 0);
+        vp.set_dims(available.len(), 0);
         vp.selected = pos;
     }
 }
