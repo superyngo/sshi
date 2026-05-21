@@ -211,7 +211,15 @@ impl ConfigTabState {
 }
 ```
 
-The clamping in `restore_selection` references the post-reload `config` (and `self`'s reloaded descriptors) to compute valid bounds.
+Clamping rules in `restore_selection`:
+
+- `section_idx` — clamped against the static section list (always valid; defensive `min(section_count - 1)`).
+- `entry_idx` — clamped against `config.host.len()` / `config.check.len()` / `config.sync.len()` for the restored section. If the restored section has no entries, the field becomes `None`.
+- `field_idx` — clamped against the post-reload `entry_form.fields.len()` if the form is still open; ignored otherwise.
+- `vec_editor_idx` — clamped against `entry_form.vec_editor.items.len()` if a vec editor is still open in the same field; ignored otherwise.
+- `direct_vec_idx` — clamped against `direct_vec_editor.items.len()` if open; ignored otherwise.
+
+Any `idx` exceeding the new length falls back to `len - 1` (or 0 if `len == 0`).
 
 ### 7.3 Call site changes
 
