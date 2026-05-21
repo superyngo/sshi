@@ -1322,15 +1322,16 @@ impl App {
                 if self.running_op.is_some() {
                     self.error =
                         Some("Cannot edit config while an operation is running.".to_string());
-                } else if self.config_tab.config_dirty {
-                    use crate::tui::tabs::config_tab::{ConfirmAction, ConfirmState};
-                    self.config_tab.confirm = Some(ConfirmState {
-                        prompt: "Unsaved changes will be lost.".to_string(),
-                        action: ConfirmAction::OpenEditorDirty,
-                        hints: "  [y/Enter] Open editor   [Esc] Cancel",
-                    });
                 } else {
-                    self.needs_editor_open = true;
+                    if self.config_tab.config_dirty {
+                        self.save_config();
+                    }
+                    // Skip editor open if save failed: config_dirty stays true
+                    // and self.error is set by save_config(); the user sees
+                    // the error and can react.
+                    if !self.config_tab.config_dirty {
+                        self.needs_editor_open = true;
+                    }
                 }
                 Ok(true)
             }

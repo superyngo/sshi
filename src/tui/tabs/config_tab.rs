@@ -321,7 +321,6 @@ pub struct ConfirmState {
 pub enum ConfirmAction {
     DeleteEntry { kind: EntryFormKind, index: usize },
     DiscardDirty,
-    OpenEditorDirty,
 }
 
 // ── Config tab state ──────────────────────────────────────────────────────
@@ -1296,9 +1295,6 @@ impl ConfigTabState {
                     ConfirmAction::DiscardDirty => {
                         self.entry_form = None;
                         self.editing_field = None;
-                    }
-                    ConfirmAction::OpenEditorDirty => {
-                        self.pending_open_editor = true;
                     }
                 }
                 true
