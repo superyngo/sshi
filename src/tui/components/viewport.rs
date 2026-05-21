@@ -95,6 +95,16 @@ impl Viewport {
         (self.scroll_y, end)
     }
 
+    /// Safe-slice helper: returns the visible window of `items`, clamped to the
+    /// actual slice length. Never panics, even if `set_dims` was called with a
+    /// stale length.
+    pub fn visible_slice<'a, T>(&self, items: &'a [T]) -> &'a [T] {
+        let (start, end) = self.visible_range();
+        let end = end.min(items.len());
+        let start = start.min(end);
+        &items[start..end]
+    }
+
     #[allow(dead_code)]
     pub fn at_top(&self) -> bool {
         self.selected == 0
@@ -141,5 +151,31 @@ mod tests {
         v.page_down();
         v.end();
         assert_eq!(v.visible_range(), (0, 0));
+    }
+
+    #[test]
+    fn visible_slice_returns_empty_for_empty_list() {
+        let mut v = Viewport::new();
+        v.set_dims(0, 5);
+        let items: Vec<i32> = vec![];
+        assert!(v.visible_slice(&items).is_empty());
+    }
+
+    #[test]
+    fn visible_slice_clamps_when_caller_lies_about_length() {
+        let mut v = Viewport::new();
+        // Caller lies: claims 10 items, but the real slice has 0.
+        v.set_dims(10, 5);
+        let items: Vec<i32> = vec![];
+        assert!(v.visible_slice(&items).is_empty());
+    }
+
+    #[test]
+    fn visible_slice_returns_window_when_caller_truthful() {
+        let mut v = Viewport::new();
+        v.set_dims(10, 3);
+        let items: Vec<i32> = (0..10).collect();
+        let slice = v.visible_slice(&items);
+        assert_eq!(slice, &[0, 1, 2]);
     }
 }
