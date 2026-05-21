@@ -2943,6 +2943,18 @@ use super::super::components::popup::centered_rect;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::layout::Rect;
+
+    fn render_once(state: &mut ConfigTabState, config: &AppConfig) {
+        // Create a 80x24 test terminal and render one frame.
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let theme = Theme::default_palette();
+        terminal
+            .draw(|f| state.render(Rect::new(0, 0, 80, 24), f, &theme, config, None, false))
+            .unwrap();
+    }
 
     #[test]
     fn test_enum_cycle_forward() {
@@ -2978,5 +2990,96 @@ mod tests {
         assert_eq!(shell_cycle_back("sh"), "cmd");
         assert_eq!(shell_cycle_back("cmd"), "powershell");
         assert_eq!(shell_cycle_back("powershell"), "sh");
+    }
+
+    #[test]
+    fn render_does_not_panic_empty_sync_paths() {
+        let mut config = AppConfig::default();
+        config.sync.push(SyncEntry {
+            name: None,
+            id: generate_entry_id("sync"),
+            paths: vec![],
+            groups: vec![],
+            enable_hosts: true,
+            enable_all: true,
+            recursive: false,
+            mode: None,
+            propagate_deletes: None,
+            source: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Sync(_)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        state.start_edit_entry(&config);
+        if let Some(ref mut form) = state.entry_form {
+            let fi = form.fields.iter().position(|f| f.key == "paths").unwrap();
+            form.vec_editor = Some(VecEditorState {
+                field_index: fi,
+                items: vec![],
+                vp: Viewport::new(),
+                input: InputField::new(""),
+                input_active: false,
+            });
+        } else {
+            panic!("entry_form not set");
+        }
+        render_once(&mut state, &config);
+    }
+
+    #[test]
+    fn render_does_not_panic_empty_skipped_hosts_direct_vec() {
+        let config = AppConfig::default();
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::SectionSettings))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        state.direct_vec_editor = Some(DirectVecEditorState {
+            field_index: 0,
+            sidebar_item: SidebarItem::SectionSettings,
+            field_key: "skipped_hosts".to_string(),
+            items: vec![],
+            vp: Viewport::new(),
+            input: InputField::new(""),
+            input_active: false,
+        });
+        render_once(&mut state, &config);
+    }
+
+    #[test]
+    fn render_does_not_panic_empty_check_enabled_direct_vec() {
+        let mut config = AppConfig::default();
+        config.check.push(CheckEntry {
+            name: None,
+            id: generate_entry_id("check"),
+            enabled: vec![],
+            path: vec![],
+            groups: vec![],
+            enable_hosts: true,
+            enable_all: true,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Check(_)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        state.direct_vec_editor = Some(DirectVecEditorState {
+            field_index: 0,
+            sidebar_item: state.items[sid].clone(),
+            field_key: "enabled".to_string(),
+            items: vec![],
+            vp: Viewport::new(),
+            input: InputField::new(""),
+            input_active: false,
+        });
+        render_once(&mut state, &config);
     }
 }

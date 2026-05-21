@@ -16,3 +16,4 @@ Thumbs.db
 
 # Build
 dist/
+docs/tmp/
