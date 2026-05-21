@@ -3229,4 +3229,211 @@ mod tests {
         state.restore_selection(snap, &config);
         assert_eq!(state.sidebar_vp.selected, 0);
     }
+
+    #[test]
+    fn snapshot_restores_entry_form_field_cursor() {
+        let mut config = AppConfig::default();
+        config.host.push(crate::config::schema::HostEntry {
+            name: "h1".to_string(),
+            ssh_host: "1.1.1.1".to_string(),
+            shell: crate::config::schema::ShellType::Sh,
+            groups: vec![],
+            proxy_jump: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let form = EntryFormState::new_host(&config.host[0]);
+        state.entry_form = Some(form);
+        // Move the field cursor inside the form to a non-zero position.
+        if let Some(form) = state.entry_form.as_mut() {
+            assert!(form.fields.len() >= 2, "host form should have multiple fields");
+            form.field_vp.set_dims(form.fields.len(), 0);
+            form.field_vp.move_down();
+            form.field_vp.move_down();
+        }
+        let captured_field = state
+            .entry_form
+            .as_ref()
+            .map(|f| f.field_vp.selected)
+            .unwrap();
+        let snap = state.capture_selection();
+        // Simulate reload that resets the form's field cursor to 0.
+        if let Some(form) = state.entry_form.as_mut() {
+            form.field_vp = Viewport::new();
+            form.field_vp.set_dims(form.fields.len(), 0);
+        }
+        state.restore_selection(snap, &config);
+        let restored_field = state
+            .entry_form
+            .as_ref()
+            .map(|f| f.field_vp.selected)
+            .unwrap();
+        assert_eq!(restored_field, captured_field);
+    }
+
+    #[test]
+    fn snapshot_restores_in_form_vec_editor_cursor() {
+        let mut config = AppConfig::default();
+        config.sync.push(crate::config::schema::SyncEntry {
+            name: Some("test".to_string()),
+            id: "sync-test".to_string(),
+            paths: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            groups: vec![],
+            enable_hosts: true,
+            enable_all: true,
+            recursive: false,
+            mode: None,
+            propagate_deletes: None,
+            source: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let form = EntryFormState::new_sync(&config.sync[0]);
+        state.entry_form = Some(form);
+        let paths_field_idx = state
+            .entry_form
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .position(|f| f.key == "paths")
+            .expect("paths field must exist");
+        if let Some(form) = state.entry_form.as_mut() {
+            form.field_vp.selected = paths_field_idx;
+            let mut ve = VecEditorState {
+                field_index: paths_field_idx,
+                items: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                vp: Viewport::new(),
+                input_active: false,
+                input: InputField::new(""),
+            };
+            ve.vp.set_dims(3, 0);
+            ve.vp.move_down();
+            ve.vp.move_down();
+            form.vec_editor = Some(ve);
+        }
+        let captured_ve = state
+            .entry_form
+            .as_ref()
+            .and_then(|f| f.vec_editor.as_ref())
+            .map(|ve| ve.vp.selected)
+            .unwrap();
+        assert_eq!(captured_ve, 2);
+        let snap = state.capture_selection();
+        // Reset the vec editor's cursor to 0.
+        if let Some(form) = state.entry_form.as_mut() {
+            if let Some(ve) = form.vec_editor.as_mut() {
+                ve.vp = Viewport::new();
+                ve.vp.set_dims(ve.items.len(), 0);
+            }
+        }
+        state.restore_selection(snap, &config);
+        let restored_ve = state
+            .entry_form
+            .as_ref()
+            .and_then(|f| f.vec_editor.as_ref())
+            .map(|ve| ve.vp.selected)
+            .unwrap();
+        assert_eq!(restored_ve, captured_ve);
+    }
+
+    #[test]
+    fn snapshot_vec_editor_field_index_guard_prevents_wrong_apply() {
+        let mut config = AppConfig::default();
+        config.sync.push(crate::config::schema::SyncEntry {
+            name: Some("test".to_string()),
+            id: "sync-test".to_string(),
+            paths: vec!["a".to_string(), "b".to_string()],
+            groups: vec!["g1".to_string(), "g2".to_string()],
+            enable_hosts: true,
+            enable_all: true,
+            recursive: false,
+            mode: None,
+            propagate_deletes: None,
+            source: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let form = EntryFormState::new_sync(&config.sync[0]);
+        state.entry_form = Some(form);
+        let paths_idx = state
+            .entry_form
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .position(|f| f.key == "paths")
+            .unwrap();
+        let groups_idx = state
+            .entry_form
+            .as_ref()
+            .unwrap()
+            .fields
+            .iter()
+            .position(|f| f.key == "groups")
+            .unwrap();
+        assert_ne!(paths_idx, groups_idx);
+        // Capture with vec_editor on `paths` at cursor 1.
+        if let Some(form) = state.entry_form.as_mut() {
+            let mut ve = VecEditorState {
+                field_index: paths_idx,
+                items: vec!["a".to_string(), "b".to_string()],
+                vp: Viewport::new(),
+                input_active: false,
+                input: InputField::new(""),
+            };
+            ve.vp.set_dims(2, 0);
+            ve.vp.move_down();
+            form.vec_editor = Some(ve);
+        }
+        let snap = state.capture_selection();
+        // Between capture and restore, the form's vec_editor switches to `groups`.
+        if let Some(form) = state.entry_form.as_mut() {
+            form.vec_editor = Some(VecEditorState {
+                field_index: groups_idx,
+                items: vec!["g1".to_string(), "g2".to_string()],
+                vp: Viewport::new(),
+                input_active: false,
+                input: InputField::new(""),
+            });
+        }
+        state.restore_selection(snap, &config);
+        // Restored cursor must remain 0 — guard rejected the cross-field apply.
+        let ve_sel = state
+            .entry_form
+            .as_ref()
+            .and_then(|f| f.vec_editor.as_ref())
+            .map(|ve| ve.vp.selected)
+            .unwrap();
+        assert_eq!(ve_sel, 0, "guard must prevent cross-field cursor apply");
+    }
+
+    #[test]
+    fn snapshot_restores_direct_vec_editor_cursor() {
+        let mut config = AppConfig::default();
+        config.settings.skipped_hosts = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+        let mut state = ConfigTabState::new(&config, None);
+        let mut dve = DirectVecEditorState {
+            field_index: 0,
+            sidebar_item: SidebarItem::SectionSettings,
+            field_key: "skipped_hosts".to_string(),
+            items: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+            vp: Viewport::new(),
+            input: InputField::new(""),
+            input_active: false,
+        };
+        dve.vp.set_dims(3, 0);
+        dve.vp.move_down();
+        dve.vp.move_down();
+        state.direct_vec_editor = Some(dve);
+        let snap = state.capture_selection();
+        if let Some(dve) = state.direct_vec_editor.as_mut() {
+            dve.vp = Viewport::new();
+            dve.vp.set_dims(dve.items.len(), 0);
+        }
+        state.restore_selection(snap, &config);
+        let restored = state
+            .direct_vec_editor
+            .as_ref()
+            .map(|d| d.vp.selected)
+            .unwrap();
+        assert_eq!(restored, 2);
+    }
 }
