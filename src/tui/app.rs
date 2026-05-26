@@ -1033,7 +1033,7 @@ impl App {
                     return Ok(true);
                 }
                 KeyCode::Char('3') => {
-                    self.active_tab = TabId::Checkout;
+                    self.active_tab = TabId::View;
                     return Ok(true);
                 }
                 KeyCode::Tab => {
@@ -1124,7 +1124,7 @@ impl App {
                     return Ok(true);
                 }
                 KeyCode::Char('3') => {
-                    self.active_tab = TabId::Checkout;
+                    self.active_tab = TabId::View;
                     self.navbar_focused = false;
                     return Ok(true);
                 }
@@ -1201,7 +1201,7 @@ impl App {
                     );
                     return Ok(true);
                 }
-                self.active_tab = TabId::Checkout;
+                self.active_tab = TabId::View;
                 Ok(true)
             }
             // Tab/BackTab: context-aware cycling within the focused layer.
@@ -1284,7 +1284,7 @@ impl App {
                                 self.tab_cycle_operate(forward);
                             }
                         }
-                        TabId::Checkout => {
+                        TabId::View => {
                             let count = self.checkout_viewport.item_count;
                             if count > 0 {
                                 if forward {
@@ -1621,39 +1621,39 @@ impl App {
             }
 
             // ── Checkout tab ───────────────────────────────────────────────
-            KeyCode::Char('f') if self.active_tab == TabId::Checkout => {
+            KeyCode::Char('f') if self.active_tab == TabId::View => {
                 let popup = FilterPopup::new(self.target_filter.clone(), false, &self.config);
                 self.filter_popup = Some(popup);
                 Ok(true)
             }
             // Up at top of Checkout list escapes to NavBar.
             KeyCode::Up | KeyCode::Char('k')
-                if self.active_tab == TabId::Checkout && self.checkout_viewport.selected == 0 =>
+                if self.active_tab == TabId::View && self.checkout_viewport.selected == 0 =>
             {
                 self.navbar_focused = true;
                 Ok(true)
             }
-            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::Checkout => {
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::View => {
                 self.checkout_viewport.move_up();
                 Ok(true)
             }
-            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::Checkout => {
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::View => {
                 self.checkout_viewport.move_down();
                 Ok(true)
             }
-            KeyCode::PageUp if self.active_tab == TabId::Checkout => {
+            KeyCode::PageUp if self.active_tab == TabId::View => {
                 self.checkout_viewport.page_up();
                 Ok(true)
             }
-            KeyCode::PageDown if self.active_tab == TabId::Checkout => {
+            KeyCode::PageDown if self.active_tab == TabId::View => {
                 self.checkout_viewport.page_down();
                 Ok(true)
             }
-            KeyCode::Home if self.active_tab == TabId::Checkout => {
+            KeyCode::Home if self.active_tab == TabId::View => {
                 self.checkout_viewport.home();
                 Ok(true)
             }
-            KeyCode::End if self.active_tab == TabId::Checkout => {
+            KeyCode::End if self.active_tab == TabId::View => {
                 self.checkout_viewport.end();
                 Ok(true)
             }
@@ -1689,7 +1689,7 @@ impl App {
         match self.active_tab {
             TabId::Config => self.render_config(chunks[1], frame),
             TabId::Operate => self.render_operate(chunks[1], frame),
-            TabId::Checkout => {
+            TabId::View => {
                 self.maybe_reload_checkout();
                 self.render_checkout(chunks[1], frame);
             }
@@ -1728,7 +1728,7 @@ impl App {
         let accent = match self.active_tab {
             TabId::Config => self.theme.accent_config,
             TabId::Operate => self.theme.accent_operate,
-            TabId::Checkout => self.theme.accent_checkout,
+            TabId::View => self.theme.accent_checkout,
         };
         let highlight = if self.navbar_focused {
             Style::default()
@@ -2288,7 +2288,7 @@ impl App {
                 "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts (Phase 6).\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nEsc cancels a running operation (may take up to {}s per host).\n\nResults appear in a popup when the operation completes.",
                 self.last_timeout_secs
             ),
-            TabId::Checkout => "Checkout tab\n\nLatest snapshot per host. Use ↑↓/jk/PgUp/PgDn/Home/End to scroll.\nData refreshes automatically after each `check` run from Operate.".to_string(),
+            TabId::View => "Checkout tab\n\nLatest snapshot per host. Use ↑↓/jk/PgUp/PgDn/Home/End to scroll.\nData refreshes automatically after each `check` run from Operate.".to_string(),
             TabId::Config => format!(
                 "Config tab (read-only browser)\n\n\
                  Sidebar: ↑↓ / jk to move between sections and entries.\n\
@@ -2415,7 +2415,7 @@ impl App {
                 "↑↓:Rows ←→:Zones e:Edit E:Editor s:Save a:Add d:Del L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => "↑↓:Zones ←→:OpType f:Filter L:Log i:Info ?:Help q:Quit",
-            TabId::Checkout => "↑↓/jk:Rows PgUp/PgDn Home/End f:Filter L:Log i:Info ?:Help q:Quit",
+            TabId::View => "↑↓/jk:Rows PgUp/PgDn Home/End f:Filter L:Log i:Info ?:Help q:Quit",
         };
         let p = Paragraph::new(Line::from(vec![Span::styled(
             hints,

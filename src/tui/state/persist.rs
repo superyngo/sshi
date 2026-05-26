@@ -39,7 +39,8 @@ pub enum ActiveTab {
     Config,
     Operate,
     #[default]
-    Checkout,
+    #[serde(alias = "Checkout")]
+    View,
 }
 
 impl ActiveTab {
@@ -47,7 +48,7 @@ impl ActiveTab {
         match t {
             crate::tui::tabs::TabId::Config => ActiveTab::Config,
             crate::tui::tabs::TabId::Operate => ActiveTab::Operate,
-            crate::tui::tabs::TabId::Checkout => ActiveTab::Checkout,
+            crate::tui::tabs::TabId::View => ActiveTab::View,
         }
     }
 
@@ -55,7 +56,7 @@ impl ActiveTab {
         match self {
             ActiveTab::Config => crate::tui::tabs::TabId::Config,
             ActiveTab::Operate => crate::tui::tabs::TabId::Operate,
-            ActiveTab::Checkout => crate::tui::tabs::TabId::Checkout,
+            ActiveTab::View => crate::tui::tabs::TabId::View,
         }
     }
 }
@@ -281,7 +282,7 @@ mod tests {
     #[test]
     fn empty_string_loads_as_default() {
         let s: TuiPersistedState = toml::from_str("").unwrap();
-        assert_eq!(s.tui_state.active_tab, ActiveTab::Checkout);
+        assert_eq!(s.tui_state.active_tab, ActiveTab::View);
         assert_eq!(s.target_filter.mode, TargetFilterMode::All);
         assert_eq!(s.operate.operation, OperationKind::Check);
     }
@@ -320,7 +321,7 @@ active_tab = "Config"
         std::fs::write(tmp.path(), "this = is not valid [toml").unwrap();
         let s = load(tmp.path());
         // Default values, not panic.
-        assert_eq!(s.tui_state.active_tab, ActiveTab::Checkout);
+        assert_eq!(s.tui_state.active_tab, ActiveTab::View);
     }
 
     #[test]
@@ -328,7 +329,7 @@ active_tab = "Config"
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("no-such-file.toml");
         let s = load(&path);
-        assert_eq!(s.tui_state.active_tab, ActiveTab::Checkout);
+        assert_eq!(s.tui_state.active_tab, ActiveTab::View);
     }
 
     #[test]
@@ -412,6 +413,18 @@ active_tab = "Config"
         let a = config_hash(Some(std::path::Path::new("/tmp/a.toml")));
         let b = config_hash(Some(std::path::Path::new("/tmp/b.toml")));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn legacy_checkout_tab_loads_as_view() {
+        let s: TuiPersistedState = toml::from_str(
+            r#"
+[tui_state]
+active_tab = "Checkout"
+"#,
+        )
+        .unwrap();
+        assert_eq!(s.tui_state.active_tab, ActiveTab::View);
     }
 
     #[test]

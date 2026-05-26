@@ -83,7 +83,7 @@ impl FocusZone {
         match tab {
             TabId::Config => FocusZone::ConfigPlaceholder,
             TabId::Operate => FocusZone::OperatePlaceholder,
-            TabId::Checkout => FocusZone::CheckoutHostTable,
+            TabId::View => FocusZone::CheckoutHostTable,
         }
     }
 
@@ -117,10 +117,10 @@ pub enum EscapeOutcome {
 pub fn escape_to_parent(tab: TabId, from: FocusZone, dir: Direction) -> EscapeOutcome {
     match (tab, from, dir) {
         // Checkout tab: Controls ↔ HostTable on ↑↓.
-        (TabId::Checkout, FocusZone::CheckoutControls, Direction::Down) => {
+        (TabId::View, FocusZone::CheckoutControls, Direction::Down) => {
             EscapeOutcome::SwitchZone(FocusZone::CheckoutHostTable)
         }
-        (TabId::Checkout, FocusZone::CheckoutHostTable, Direction::Up) => {
+        (TabId::View, FocusZone::CheckoutHostTable, Direction::Up) => {
             EscapeOutcome::SwitchZone(FocusZone::CheckoutControls)
         }
         // All other arrows in Checkout zones are sealed.
@@ -321,12 +321,12 @@ mod tests {
     fn escape_to_parent_checkout_table() {
         // Checkout tab: HostTable + Up → Controls; HostTable + Down → Stop.
         assert_eq!(
-            escape_to_parent(TabId::Checkout, FocusZone::CheckoutHostTable, Direction::Up),
+            escape_to_parent(TabId::View, FocusZone::CheckoutHostTable, Direction::Up),
             EscapeOutcome::SwitchZone(FocusZone::CheckoutControls),
         );
         assert_eq!(
             escape_to_parent(
-                TabId::Checkout,
+                TabId::View,
                 FocusZone::CheckoutHostTable,
                 Direction::Down
             ),
@@ -334,7 +334,7 @@ mod tests {
         );
         assert_eq!(
             escape_to_parent(
-                TabId::Checkout,
+                TabId::View,
                 FocusZone::CheckoutHostTable,
                 Direction::Left
             ),
@@ -342,23 +342,23 @@ mod tests {
         );
         assert_eq!(
             escape_to_parent(
-                TabId::Checkout,
+                TabId::View,
                 FocusZone::CheckoutControls,
                 Direction::Down
             ),
             EscapeOutcome::SwitchZone(FocusZone::CheckoutHostTable),
         );
         assert_eq!(
-            escape_to_parent(TabId::Checkout, FocusZone::CheckoutControls, Direction::Up),
+            escape_to_parent(TabId::View, FocusZone::CheckoutControls, Direction::Up),
             EscapeOutcome::Stop,
         );
     }
 
     #[test]
     fn breadcrumb_updates_on_zone_change() {
-        let mut fp = FocusPath::for_tab(TabId::Checkout);
+        let mut fp = FocusPath::for_tab(TabId::View);
         let initial = fp.breadcrumb.clone();
-        fp.switch_zone(TabId::Checkout, FocusZone::CheckoutControls);
+        fp.switch_zone(TabId::View, FocusZone::CheckoutControls);
         assert_ne!(initial, fp.breadcrumb);
         assert_eq!(fp.breadcrumb.last().unwrap(), "Controls");
     }
