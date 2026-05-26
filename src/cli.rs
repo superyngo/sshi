@@ -16,7 +16,7 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Path to config file (default: ~/.config/sshi/config.toml)
-    #[arg(short = 'c', long, global = true)]
+    #[arg(short = 'c', long, global = true, display_order = 9)]
     pub config: Option<PathBuf>,
 
     #[command(subcommand)]
@@ -27,35 +27,35 @@ pub struct Cli {
 #[derive(Args, Clone, Debug)]
 pub struct TargetArgs {
     /// Specify groups (comma-separated)
-    #[arg(short, long, value_delimiter = ',')]
+    #[arg(short, long, value_delimiter = ',', display_order = 1)]
     pub group: Vec<String>,
 
     /// Specify hosts (comma-separated)
-    #[arg(short, long, value_delimiter = ',')]
+    #[arg(short, long, value_delimiter = ',', display_order = 2)]
     pub host: Vec<String>,
 
     /// Target all hosts
-    #[arg(short, long)]
+    #[arg(short, long, display_order = 3)]
     pub all: bool,
 
     /// Filter by remote shell type (comma-separated: sh, powershell, cmd)
-    #[arg(short = 's', long, value_delimiter = ',')]
+    #[arg(short = 's', long, value_delimiter = ',', display_order = 4)]
     pub shell: Vec<crate::config::schema::ShellType>,
 
     /// Skip specific hosts (comma-separated)
-    #[arg(long, value_delimiter = ',')]
+    #[arg(long, value_delimiter = ',', display_order = 5)]
     pub skip: Vec<String>,
 
     /// Execute sequentially instead of in parallel
-    #[arg(long)]
+    #[arg(long, display_order = 6)]
     pub serial: bool,
 
     /// Connection timeout in seconds (overrides config)
-    #[arg(long)]
+    #[arg(long, display_order = 7)]
     pub timeout: Option<u64>,
 
     /// Print help
-    #[arg(short = 'H', long, action = clap::ArgAction::HelpLong)]
+    #[arg(short = 'H', long, action = clap::ArgAction::HelpLong, display_order = 8)]
     pub help: Option<bool>,
 }
 
@@ -65,7 +65,7 @@ pub struct OutputArgs {
     /// Write structured report to file (.json or .html).
     /// Omit path for auto-named file: sshi-{command}-{YYYYMMDD-HHmmss}.json
     /// Examples: --out  |  --out report.json  |  --out report.html
-    #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "")]
+    #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "", display_order = 50)]
     pub out: Option<String>,
 }
 
@@ -102,7 +102,7 @@ pub enum Commands {
         target: TargetArgs,
 
         /// Preview which hosts/checks would run without collecting or writing
-        #[arg(long)]
+        #[arg(long, display_order = 20)]
         dry_run: bool,
 
         #[command(flatten)]
@@ -116,11 +116,11 @@ pub enum Commands {
         target: TargetArgs,
 
         /// Show trend history
-        #[arg(long)]
+        #[arg(long, display_order = 20)]
         history: bool,
 
         /// History start point (e.g. "2025-01-01" or "7d")
-        #[arg(long)]
+        #[arg(long, display_order = 21)]
         since: Option<String>,
 
         #[command(flatten)]
@@ -134,15 +134,15 @@ pub enum Commands {
         target: TargetArgs,
 
         /// Preview sync decisions without making changes
-        #[arg(long)]
+        #[arg(long, display_order = 20)]
         dry_run: bool,
 
         /// Ad-hoc file paths to sync (comma-separated)
-        #[arg(short = 'f', long, value_delimiter = ',')]
+        #[arg(short = 'f', long, value_delimiter = ',', display_order = 21)]
         files: Vec<String>,
 
         /// Use a specific host as file source (bypasses auto-detection)
-        #[arg(short = 'S', long)]
+        #[arg(short = 'S', long, display_order = 22)]
         source: Option<String>,
 
         #[command(flatten)]
@@ -159,11 +159,11 @@ pub enum Commands {
         command: String,
 
         /// Run with sudo
-        #[arg(short = 'S', long)]
+        #[arg(short = 'S', long, display_order = 20)]
         sudo: bool,
 
         /// Preview without executing
-        #[arg(long)]
+        #[arg(long, display_order = 21)]
         dry_run: bool,
 
         #[command(flatten)]
@@ -180,15 +180,15 @@ pub enum Commands {
         script: String,
 
         /// Run with sudo
-        #[arg(short = 'S', long)]
+        #[arg(short = 'S', long, display_order = 20)]
         sudo: bool,
 
         /// Keep remote temp script after execution
-        #[arg(long)]
+        #[arg(long, display_order = 21)]
         keep: bool,
 
         /// Preview without executing
-        #[arg(long)]
+        #[arg(long, display_order = 22)]
         dry_run: bool,
 
         #[command(flatten)]

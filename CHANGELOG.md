@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-26 — TUI navbar quit fix + CLI help ordering
+- fix(tui): pressing `q` while the top navigation bar has focus now quits
+  (state saved). Previously the navbar key handler's catch-all swallowed `q`,
+  so it was a no-op until you left the navbar. `src/tui/app.rs` navbar block.
+- change(cli): per-subcommand help now displays options in a consistent
+  grouped order via clap `display_order` — grouping flags (`-g/-h/-a/-s`),
+  then common flags (`--skip/--serial/--timeout/-H/-c`), then command-specific
+  flags (`--sudo`, `--dry-run`, …), and `-o/--out` last. Applied to the
+  host-operating commands (`check`, `checkout`, `sync`, `run`, `exec`, `list`);
+  `init`/`log`/`config` keep their existing order.
+
 ### 2026-05-26 — Rename project ssync → sshi
 - **BREAKING:** the project, crate, and binary are renamed from `ssync` to
   `sshi`. Invoke the CLI as `sshi`; `cargo install sshi`; repo is now

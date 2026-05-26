@@ -1128,6 +1128,10 @@ impl App {
                     self.navbar_focused = false;
                     return Ok(true);
                 }
+                KeyCode::Char('q') => {
+                    self.should_quit = true;
+                    return Ok(true);
+                }
                 _ => return Ok(false),
             }
         }
