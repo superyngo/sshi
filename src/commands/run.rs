@@ -20,7 +20,6 @@ pub async fn run_core(
     ctx: &Context,
     command: &str,
     sudo: bool,
-    _yes: bool,
     progress: Option<&dyn ProgressSink>,
 ) -> Result<CommandReport> {
     let hosts = ctx.resolve_hosts()?;
@@ -170,11 +169,10 @@ pub async fn run(
     ctx: &Context,
     command: &str,
     sudo: bool,
-    yes: bool,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
     let sink = PrinterSink;
-    let CommandReport::Run(report) = run_core(ctx, command, sudo, yes, Some(&sink)).await? else {
+    let CommandReport::Run(report) = run_core(ctx, command, sudo, Some(&sink)).await? else {
         unreachable!("run_core always returns CommandReport::Run")
     };
 

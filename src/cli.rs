@@ -157,10 +157,6 @@ pub enum Commands {
         #[arg(short = 'S', long)]
         sudo: bool,
 
-        /// Auto-respond yes to interactive prompts (serial mode only)
-        #[arg(short, long)]
-        yes: bool,
-
         #[command(flatten)]
         output: OutputArgs,
     },
@@ -177,10 +173,6 @@ pub enum Commands {
         /// Run with sudo
         #[arg(short = 'S', long)]
         sudo: bool,
-
-        /// Auto-respond yes to interactive prompts (serial mode only)
-        #[arg(short, long)]
-        yes: bool,
 
         /// Keep remote temp script after execution
         #[arg(long)]
@@ -264,6 +256,17 @@ mod tests {
     fn sync_still_parses_without_removed_flag() {
         let cli = Cli::try_parse_from(["ssync", "sync", "--all"]).unwrap();
         assert!(matches!(cli.command.unwrap(), Commands::Sync { .. }));
+    }
+
+    #[test]
+    fn run_rejects_yes() {
+        assert!(Cli::try_parse_from(["ssync", "run", "--all", "--yes", "echo hi"]).is_err());
+        assert!(Cli::try_parse_from(["ssync", "run", "--all", "-y", "echo hi"]).is_err());
+    }
+
+    #[test]
+    fn exec_rejects_yes() {
+        assert!(Cli::try_parse_from(["ssync", "exec", "--all", "--yes", "s.sh"]).is_err());
     }
 }
 

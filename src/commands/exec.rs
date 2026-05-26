@@ -21,7 +21,6 @@ pub async fn exec_core(
     ctx: &Context,
     script: &str,
     sudo: bool,
-    _yes: bool,
     keep: bool,
     progress: Option<&dyn ProgressSink>,
 ) -> Result<CommandReport> {
@@ -186,7 +185,6 @@ pub async fn run(
     ctx: &Context,
     script: &str,
     sudo: bool,
-    yes: bool,
     keep: bool,
     dry_run: bool,
     output: &crate::cli::OutputArgs,
@@ -223,7 +221,7 @@ pub async fn run(
     }
 
     let sink = PrinterSink;
-    let CommandReport::Exec(report) = exec_core(ctx, script, sudo, yes, keep, Some(&sink)).await?
+    let CommandReport::Exec(report) = exec_core(ctx, script, sudo, keep, Some(&sink)).await?
     else {
         unreachable!("exec_core always returns CommandReport::Exec")
     };

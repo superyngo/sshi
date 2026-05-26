@@ -599,7 +599,6 @@ impl App {
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
         let sudo = self.run_sudo;
-        let yes = self.run_yes;
 
         let _ = std::thread::Builder::new()
             .name("ssync-op".to_string())
@@ -626,7 +625,7 @@ impl App {
                     };
                     let sink = EventSender::new(event_tx.clone());
                     let outcome = tokio::select! {
-                        res = crate::commands::run::run_core(&ctx, &command, sudo, yes, Some(&sink)) => res,
+                        res = crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink)) => res,
                         _ = cancel_for_task.cancelled() => {
                             let _ = event_tx.send(TuiEvent::OperationCancelled);
                             return;
@@ -712,7 +711,7 @@ impl App {
                     };
                     let sink = EventSender::new(event_tx.clone());
                     let outcome = tokio::select! {
-                        res = crate::commands::exec::exec_core(&ctx, &script, sudo, false, keep, Some(&sink)) => res,
+                        res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res,
                         _ = cancel_for_task.cancelled() => {
                             let _ = event_tx.send(TuiEvent::OperationCancelled);
                             return;

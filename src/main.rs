@@ -175,23 +175,21 @@ async fn main() -> Result<()> {
             target,
             command,
             sudo,
-            yes,
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::run::run(&ctx, &command, sudo, yes, &output).await
+            commands::run::run(&ctx, &command, sudo, &output).await
         }
         Commands::Exec {
             target,
             script,
             sudo,
-            yes,
             keep,
             dry_run,
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::exec::run(&ctx, &script, sudo, yes, keep, dry_run, &output).await
+            commands::exec::run(&ctx, &script, sudo, keep, dry_run, &output).await
         }
         Commands::Log {
             last,
