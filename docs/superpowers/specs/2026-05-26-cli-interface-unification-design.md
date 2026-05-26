@@ -124,14 +124,34 @@ core that performs side effects is never reached).
    (`src/commands/exec.rs:24`), plus the `main.rs` wiring. No behavior change
    (the flag was a no-op).
 
+   **TUI call sites (must update or it won't compile):** `src/tui/app.rs` calls
+   both core fns — `run_core(&ctx, &command, sudo, yes, …)` at `app.rs:629` and
+   `exec_core(&ctx, &script, sudo, false, keep, …)` at `app.rs:715`. Drop the
+   `yes`/`false` positional arg from both. The local `let yes = self.run_yes;`
+   (`app.rs:602`) becomes orphaned — remove it.
+
+   **Deferred to #4 (TUI Operate), not this spec:** the TUI Operate tab keeps a
+   `run_yes` state field + a visible "yes" checkbox (`app.rs:139`, render +
+   persistence per AD-12, help text `app.rs:2442`). Since `_yes` was always a
+   no-op, that checkbox **already does nothing** — leaving it inert is not a
+   regression. Removing the `run_yes` field, its checkbox, and the help text is
+   left for the #4 Operate refactor. This spec only stops passing the argument.
+
 ### `--skip` semantics & placement
 
 Apply `--skip` centrally in `Context::resolve_hosts`
 (`src/commands/mod.rs:117`): after the target mode produces a host list, drop
-any host whose `name` is in the skip list. Carry the skip list alongside the
-resolved `TargetMode` (set when `TargetArgs` is resolved via
-`resolve_target_mode`). Because all five commands resolve hosts through this
-one method, they inherit `--skip` uniformly.
+any host whose `name` is in the skip list. Because all five commands resolve
+hosts through this one method, they inherit `--skip` uniformly.
+
+**Data flow (concrete):** `Context` (`src/commands/mod.rs:34`) has no `skip`
+field today — add `skip: Vec<String>`. All three constructors must set it:
+- `Context::new` (`mod.rs:46`, receives `TargetArgs`) → `skip: target.skip.clone()`.
+- `Context::new_without_targets` (`mod.rs:95`, no `TargetArgs`) → `skip: vec![]`.
+- `Context::from_tui_parts` (`mod.rs:74`, TUI constructor, no `TargetArgs`) → `skip: vec![]`.
+
+`resolve_hosts` then filters the resolved list with
+`!self.skip.contains(&h.name)`.
 
 Edge cases:
 - A `--skip` name that matches no resolved host is a silent no-op (consistent
@@ -146,8 +166,12 @@ Edge cases:
   remove `no_push_missing` from `sync`; remove `yes` from `run`/`exec`.
 - `src/main.rs` — update the match arms / call sites for the four commands
   (drop `no_push_missing`/`yes`, pass new `dry_run`, pass `skip`).
-- `src/commands/mod.rs` — thread `skip` into target resolution; filter in
-  `resolve_hosts`.
+- `src/commands/mod.rs` — add `skip` field to `Context`; set it in `new`,
+  `new_without_targets`, and `from_tui_parts`; filter in `resolve_hosts`.
+- `src/tui/app.rs` — drop the `yes`/`false` arg from the `run_core`
+  (`app.rs:629`) and `exec_core` (`app.rs:715`) call sites; remove the orphaned
+  `let yes = self.run_yes;` (`app.rs:602`). Leave the `run_yes` field/checkbox
+  for #4.
 - `src/commands/sync.rs` — hardwire `push_missing = true`; drop param.
 - `src/commands/run.rs` — drop `_yes`; honor `dry_run` (preview path).
 - `src/commands/exec.rs` — drop `_yes` (dry_run already handled).
