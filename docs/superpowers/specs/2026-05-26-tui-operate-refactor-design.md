@@ -1,7 +1,8 @@
 # TUI Operate Refactor (Operate / View split, unified field interface)
 
 - **Date:** 2026-05-26
-- **Status:** Draft (brainstorming output, grilled against `tui_reconstruct_plan.md`)
+- **Status:** Draft (brainstorming output, grilled against `tui_reconstruct_plan.md`;
+  revised to exclude `init` after the stdin-prompt finding — see "init excluded")
 - **Scope:** Requirement #4 of the sshi modernization batch. This spec covers
   the **interactive TUI** surface for launching subcommands. It depends on the
   CLI surface defined in `2026-05-26-cli-interface-unification-design.md`
@@ -13,8 +14,9 @@
 The Operate tab today hosts only `check / run / exec / sync` and diverges from
 the rest of the TUI:
 
-- It cannot launch `init`, `list`, `log`, or `checkout` (the latter lives in a
-  separate, hand-rolled Checkout tab).
+- It cannot launch `list`, `log`, or `checkout` (the latter lives in a
+  separate, hand-rolled Checkout tab). (`init` stays CLI-only — see "init
+  excluded".)
 - Its parameter widgets are bespoke (`ParamPanelField` enum, manual rendering)
   rather than the unified `FieldDescriptor`/`FieldKind` schema the Config tab
   uses — so editing an Operate param feels different from editing a Config
@@ -25,8 +27,9 @@ the rest of the TUI:
 
 ## Goals
 
-1. Make Operate the single launcher for **all non-Config subcommands**, split
-   by result type into two tabs that share one UI grammar.
+1. Make Operate the single launcher for the host-operating and view subcommands
+   (every non-Config subcommand **except `init`**), split by result type into two
+   tabs that share one UI grammar.
 2. Reuse the Config tab's field interface (`FieldDescriptor`, `FieldKind`,
    `cycle_option_value`, `InputField`, vec/multi-select editors) for **every**
    operation-specific parameter.
@@ -40,19 +43,21 @@ the rest of the TUI:
 - No changes to the Config tab internals or its schema.
 - No **semantic** changes to existing command behavior, **target-resolution
   semantics**, or output/report formats. (Extracting new `*_core` data-returning
-  entry points for `checkout`/`list`/`log` is acknowledged prerequisite work —
-  see "Prerequisite: View command cores".)
+  entry points for `list`/`log` is acknowledged prerequisite work — see
+  "Prerequisite: View command cores".)
 - No combinable target model. TUI targets stay mutually exclusive (see
   "Target model" below) — this is an intentional, documented divergence from
   the CLI's combinable `TargetArgs`.
 - No editable config-path field (`-c/--config` is fixed at TUI launch).
+- **No TUI `init`.** `init` stays CLI-only this cycle (see "init excluded");
+  CLI `init` is untouched.
 
 ## Tab structure
 
 | Tab | Operations | Result model |
 |---|---|---|
 | `1: Config` | *(unchanged)* | config editor |
-| `2: Operate` | `check, run, exec, sync, init` | explicit Execute → per-host progress popup |
+| `2: Operate` | `check, run, exec, sync` | explicit Execute → per-host progress popup |
 | `3: View` | `checkout, list, log` | live auto-refresh → rendered result area |
 
 The `View` tab **absorbs and replaces** the current Checkout tab. The
@@ -80,9 +85,9 @@ Trigger / result area
   (matches `§8.4` radio/toggle priority — no new horizontal zone navigation).
 - **Target summary line**: a read-only summary of the current exclusive target
   + modifiers (e.g. `Target: groups:[web,db] · skip:[h9] · serial · 30s`).
-  `f`/Enter opens the **popup picker** to edit it. For ops where targeting is
-  inert (`init`, `log`) the line renders **greyed** and the popup is **not
-  openable** (`f` disabled).
+  `f`/Enter opens the **popup picker** to edit it. For `log` (which has no target
+  concept) the line renders **greyed** and the popup is **not openable**
+  (`f` disabled).
 - **Specific-params block**: the active op's unique fields, edited inline via
   the Config field interface. Collapses to a one-line placeholder when an op
   has none (`list`).
@@ -142,15 +147,11 @@ Esc-to-cancel — is identical to the Config tab.
 | **run** | target + skip + serial + timeout | `command`*, `sudo`, `dry_run`, `out` |
 | **exec** | target + skip + serial + timeout | `script`*, `sudo`, `keep`, `dry_run`, `out` |
 | **sync** | target + skip + serial + timeout | `mode`(config/adhoc), `files`(adhoc), `source`, `dry_run`, `out` |
-| **init** | **inert** (greyed, popup not openable) | `update`, `dry_run`, `skip`†, `timeout`† |
 | **checkout** | target + skip (serial/timeout greyed) | `history`, `since`, `out` |
 | **list** | target + skip (serial/timeout greyed) | *(none)* |
 | **log** | **inert** (greyed, popup not openable) | `last`, `since`, `host`(filter)‡, `action`(enum), `errors` |
 
 \* `command`/`script` are required text fields.
-† `init`'s `skip`/`timeout` are **specific** fields, independent of the common
-  popup — different host universe (ssh-config import vs. configured hosts) and
-  intent (skip-import vs. skip-target). Not shared.
 ‡ `log --host` is a single substring filter on log entries, distinct from the
   common `host` target.
 
@@ -161,23 +162,28 @@ Notes:
 - sync `source` activates the existing dormant `_sync_source_input: InputField`
   in `App` (currently underscore-prefixed and not surfaced in the param panel).
 
-## init in Operate — deliberate grammar break (documented trade-off)
+## init excluded from Operate (CLI-only)
 
-`init` is kept in Operate per the chosen scope, but it shares **none** of the
-common target model: it imports from `~/.ssh/config` and always acts on that
-universe. To make the break intentional rather than accidental:
+An earlier draft kept `init` in Operate with an inert target area. Planning
+surfaced a blocking finding that flipped this decision:
 
-- **Keep-in (chosen):** `init` lives in Operate for one launcher surface.
-  Its target/common summary is **inert** — greyed line, `f` keybind disabled,
-  popup not openable — and its `update/dry_run/skip/timeout` are specific fields.
-  Execution reuses the per-host progress popup (init connects per-host for shell
-  detection).
-- **Alternative (rejected): CLI-only.** Leaving `init` out of the TUI would keep
-  the Operate grammar uniform (every op targets hosts), at the cost of a missing
-  launcher for a command users do run interactively after first setup.
+- **`init::run` blocks on interactive `stdin` prompts** — stale-host removal
+  (`init.rs:204`, "Remove these N host(s)? [y/N]") and host-key acceptance
+  (`init.rs:302`, "Add to known_hosts and retry? [y/N]"). Inside the TUI the
+  terminal is in raw mode and ratatui owns the screen, so a blocking
+  `stdin().read_line()` cannot work.
+- Making `init` work in the TUI therefore requires a non-interactive `init_core`
+  **plus** dedicated confirmation popups for both prompts — one of which
+  (host-key acceptance) is **security-sensitive**. That is a feature in its own
+  right, not a slot-in.
 
-The keep-in choice accepts a localized grammar break (inert common area) in
-exchange for completeness. This is intentional and isolated to `init`/`log`.
+**Decision: `init` stays CLI-only this cycle.** This keeps the Operate grammar
+uniform (every Operate op targets hosts) and keeps this refactor scoped. CLI
+`init` is untouched.
+
+> **Deferred:** "TUI `init`" is a separate future feature. It must carry its own
+> ADR covering the interactive host-key-acceptance decision (security-sensitive,
+> hard to reverse, a real trade-off) before implementation.
 
 ## Focus / navigation
 
@@ -191,40 +197,42 @@ OpSelector → TargetSummary → SpecificPanel → Trigger(Operate only)
 - ←/→ on `OpSelector` cycle the operation.
 - ↑/↓ move between zones / within the specific field list, skipping greyed
   fields.
-- `f`/Enter on `TargetSummary` opens the popup (disabled for `init`/`log`).
+- `f`/Enter on `TargetSummary` opens the popup (disabled for `log`).
 - Editing specific fields uses the Config model (`InputField`,
   `cycle_option_value`, Esc).
 - Enter on `Trigger` executes (Operate). View has no Trigger zone — it
   auto-refreshes.
 
-## Prerequisite: command cores for init + view ops
+## Prerequisite: View command cores
 
 `check`/`run`/`exec`/`sync` already expose `*_core` functions returning
 structured data with a progress sink, and the TUI already has `execute_*` paths
-for them. Two gaps must be closed first:
+for them. For the View ops:
 
-- **`init`** exposes only `commands::init::run(ctx, update, dry_run, skip)` — no
-  `init_core` and no TUI `execute_init`. Needs an `init_core` (per-host progress
-  sink, structured return) plus a new `execute_init` wiring it to the progress
-  popup.
-- **View ops** expose `commands::list::run(ctx)`, `commands::log::run(ctx, last,
-  since, host, action, errors)`, and `commands::checkout::run(...)`, each
-  printing to stdout via the printer. The TUI result area needs **structured
-  return values**, not stdout — so extract `checkout_core`/`list_core`/`log_core`
-  returning data with no printer side effects.
+- **`checkout`** already exposes `pub(crate)` data helpers
+  (`fetch_latest_snapshots`, `DisplayColumns`, `extract_metric_value`,
+  `metric_header`/`metric_width`, `format_relative_time`) — the current Checkout
+  tab already uses them. **No new core needed**; the View tab reuses these
+  directly. Only the table-rendering currently in `checkout::print_table_report`
+  (stdout) is reproduced as a ratatui renderer.
+- **`list`** exposes only `commands::list::run(ctx)` (prints to stdout). Extract
+  `list_core(ctx) -> ListData { hosts, checks, syncs }` (structured) and make
+  `run` a thin printing wrapper.
+- **`log`** exposes only `commands::log::run(ctx, last, since, host, action,
+  errors)` (prints to stdout). Extract `log_core(ctx, last, since, host, action,
+  errors) -> Vec<LogRow>` and make `run` a thin printing wrapper.
 
-In all cases the existing `run()` functions become thin wrappers that call the
-new core and print. This is a pure refactor of plumbing, not a behavior change
-(acknowledged in Non-Goals).
+The extracted `run()` wrappers preserve current stdout behavior exactly — a pure
+plumbing refactor, no behavior change (acknowledged in Non-Goals).
 
 ## Execution & results
 
-- **Operate ops** reuse the existing `execute_*` path (new `execute_init` for
-  init): build `Context`, resolve targets, call
-  `commands::{check,run,exec,sync,init}::*_core` with the progress sink →
-  per-host **progress popup**.
-- **View ops** call the new `commands::{checkout,list,log}::*_core` and render
-  returned data in the **result area**, refreshed live on op/param change. A minimal
+- **Operate ops** reuse the existing `execute_*` path unchanged: build
+  `Context`, resolve targets, call `commands::{check,run,exec,sync}::*_core` with
+  the progress sink → per-host **progress popup**.
+- **View ops** read via the checkout helpers / new `list_core`/`log_core` and
+  render returned data in the **result area**, refreshed live on op/param change.
+  A minimal
   debounce and a simple "loading…" indicator are sufficient — no elaborate
   async state machine. Scrolling reuses the existing viewport handling.
 - The current Checkout-tab rendering is extracted into a reusable result
@@ -233,11 +241,11 @@ new core and print. This is a pure refactor of plumbing, not a behavior change
 ## State & persistence
 
 - `TargetFilterState` gains `skip: Vec<String>` (exclusive `mode` unchanged).
-- `OperateState` gains per-op specific values: `init` (`update`/`dry_run`/`skip`/
-  `timeout`), `log` (`last`/`since`/`host`/`action`/`errors`), `checkout`
-  (`history`/`since`), plus existing `run`/`exec`/`sync` fields (minus `run_yes`).
-- `OperationKind` extends with `Init`; View ops use a `ViewOperationKind`
-  (`Checkout`/`List`/`Log`) tagged by tab.
+- `OperateState` gains per-op specific values: `log` (`last`/`since`/`host`/
+  `action`/`errors`), `checkout` (`history`/`since`), plus existing
+  `run`/`exec`/`sync` fields (minus `run_yes`).
+- `OperationKind` is unchanged (`Check`/`Run`/`Exec`/`Sync`); View ops use a
+  `ViewOperationKind` (`Checkout`/`List`/`Log`) tagged by tab.
 - `ActiveTab::Checkout` → `ActiveTab::View`, with `#[serde(alias = "Checkout")]`
   so existing state files load without resetting (per the existing "never crash
   on persistence read" contract). The non-persisted `TabId::Checkout` variant
@@ -251,13 +259,12 @@ Unit:
 - `operate_schema` round-trips: `specific_fields` ↔ `apply_specific` for every
   op and field kind.
 - `skip` subtraction applied to the resolved target set.
-- Greyed-field traversal: ↑/↓ skip disabled fields; `f` is inert for
-  `init`/`log`.
+- Greyed-field traversal: ↑/↓ skip disabled fields; `f` is inert for `log`.
 - Persistence: `OperateState`/`TargetFilterState` round-trip; a legacy state
   file with `active_tab = "Checkout"` loads as `View` (alias) without reset.
 
 Manual (real binary, per bug-fix protocol):
-- Launch each of the 8 ops; confirm correct field set, greying/inert behavior,
+- Launch each of the 7 ops; confirm correct field set, greying/inert behavior,
   execution vs. live-refresh, popup open/disabled state, and that target +
   modifiers persist across op **and** tab switches.
 
