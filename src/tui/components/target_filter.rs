@@ -39,6 +39,7 @@ use super::popup::centered_rect;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Field {
     Mode(TargetFilterMode),
+    Skip,
     SerialToggle,
     Apply,
     Cancel,
@@ -125,6 +126,7 @@ impl FilterPopup {
         if self.allow_shell {
             v.push(Field::Mode(TargetFilterMode::Shell));
         }
+        v.push(Field::Skip);
         v.push(Field::SerialToggle);
         v.push(Field::Apply);
         v.push(Field::Cancel);
@@ -147,6 +149,7 @@ impl FilterPopup {
             Field::SerialToggle => {
                 self.state.serial = !self.state.serial;
             }
+            Field::Skip => {}
             _ => {}
         }
     }
@@ -163,6 +166,7 @@ impl FilterPopup {
                 self.state.serial = !self.state.serial;
                 FilterPopupResult::Continue
             }
+            Field::Skip => FilterPopupResult::Continue,
         }
     }
 
@@ -188,6 +192,13 @@ impl FilterPopup {
                     }
                 }
             }
+            Field::Skip => {
+                if self.state.skip.is_empty() {
+                    if let Some(first) = self.available_hosts.first() {
+                        self.state.skip.push(first.clone());
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -202,10 +213,11 @@ impl FilterPopup {
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
 
-        // Vertical layout: mode rows, gap, options row, gap, buttons row.
+        // Vertical layout: mode rows, gap, skip row, options row, gap, buttons row.
         let mode_count = if self.allow_shell { 4 } else { 3 };
         let mut constraints = vec![Constraint::Length(1); mode_count];
         constraints.push(Constraint::Length(1));
+        constraints.push(Constraint::Length(1)); // skip
         constraints.push(Constraint::Length(1)); // serial
         constraints.push(Constraint::Length(1));
         constraints.push(Constraint::Length(1)); // buttons
@@ -245,6 +257,13 @@ impl FilterPopup {
         }
 
         // gap row already counted into constraints
+        row += 1;
+        let skip_focused = self.field == Field::Skip;
+        let skip_text = format!(" Skip: {}", format_chips(&self.state.skip, "none"));
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(skip_text, focus_style(skip_focused, theme)))),
+            chunks[row],
+        );
         row += 1;
         let serial_glyph = if self.state.serial { "☑" } else { "☐" };
         let serial_text = format!(
