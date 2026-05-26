@@ -15,7 +15,7 @@ pub struct SshHostEntry {
 /// Fully resolved SSH connection parameters for a host alias.
 #[derive(Debug, Clone)]
 pub struct ResolvedHostConfig {
-    /// The alias as stored in ssync config (used for display/lookup)
+    /// The alias as stored in sshi config (used for display/lookup)
     pub alias: String,
     /// Actual DNS name or IP to connect to
     pub hostname: String,

@@ -60,8 +60,8 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_hosts: Vec<String>,
 
-    /// Override the state directory (where ssync.db is stored).
-    /// Default: ~/.local/state/ssync (Linux/macOS) or %LOCALAPPDATA%/ssync (Windows)
+    /// Override the state directory (where sshi.db is stored).
+    /// Default: ~/.local/state/sshi (Linux/macOS) or %LOCALAPPDATA%/sshi (Windows)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_dir: Option<PathBuf>,
 

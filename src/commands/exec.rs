@@ -320,9 +320,9 @@ async fn exec_on_host_pooled(
     let script_name = script_path
         .file_name()
         .and_then(|n| n.to_str())
-        .unwrap_or("ssync_script");
+        .unwrap_or("sshi_script");
 
-    let suffix = format!("ssync_{}_{}", std::process::id(), script_name);
+    let suffix = format!("sshi_{}_{}", std::process::id(), script_name);
 
     // Upload — for Sh shells, try /tmp first then fall back to ~/ (like scp_probe)
     let remote_path = if host.shell == ShellType::Sh {

@@ -6,17 +6,17 @@ use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, Value};
 
 use super::schema::{AppConfig, CheckEntry, HostEntry, SyncEntry};
 
-/// Returns the platform-appropriate config directory for ssync.
+/// Returns the platform-appropriate config directory for sshi.
 pub fn config_dir() -> Result<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".config").join("ssync"))
+        Ok(home.join(".config").join("sshi"))
     }
     #[cfg(target_os = "windows")]
     {
         let base = dirs::config_dir().context("Cannot determine config directory")?;
-        Ok(base.join("ssync"))
+        Ok(base.join("sshi"))
     }
 }
 
@@ -115,7 +115,7 @@ pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
 
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let mut tmp = tempfile::Builder::new()
-        .prefix(".ssync-config-")
+        .prefix(".sshi-config-")
         .suffix(".tmp")
         .tempfile_in(parent)
         .with_context(|| format!("Failed to create temp file in {}", parent.display()))?;
@@ -347,8 +347,8 @@ fn inject_config_comments(toml_str: &str) -> String {
     let settings_comment = "\
 # [settings] Global settings:
 #   state_dir = \"/custom/path/to/state\"  # Custom DB storage location
-#                                          # Default: ~/.local/state/ssync (Linux/macOS)
-#                                          #          %LOCALAPPDATA%/ssync (Windows)
+#                                          # Default: ~/.local/state/sshi (Linux/macOS)
+#                                          #          %LOCALAPPDATA%/sshi (Windows)
 ";
 
     let check_comment = "\
@@ -476,7 +476,7 @@ mod tests {
 
     fn write_tmp(content: &str) -> tempfile::NamedTempFile {
         let mut f = tempfile::Builder::new()
-            .prefix("ssync-cfg-test-")
+            .prefix("sshi-cfg-test-")
             .suffix(".toml")
             .tempfile()
             .unwrap();

@@ -63,7 +63,7 @@ pub struct ReportSummary {
 }
 
 /// Write `report` to a file. Path semantics:
-/// - `""` → auto-generate `ssync-{command}-{YYYYMMDD-HHmmss}.{fmt}` in CWD
+/// - `""` → auto-generate `sshi-{command}-{YYYYMMDD-HHmmss}.{fmt}` in CWD
 /// - `*.json` → JSON
 /// - `*.html` → HTML
 /// - other extension → error
@@ -84,7 +84,7 @@ pub fn write_report(
 
     let path = if auto_generated {
         let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        format!("ssync-{}-{}.{}", command, ts, auto_ext)
+        format!("sshi-{}-{}.{}", command, ts, auto_ext)
     } else {
         out.to_string()
     };
@@ -180,7 +180,7 @@ fn render_html_report(report: &OperationReport) -> String {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>ssync {command} report</title>
+<title>sshi {command} report</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; background: #f8f9fa; color: #212529; }}
   h1 {{ font-size: 1.4rem; margin-bottom: 0.25rem; }}
@@ -203,7 +203,7 @@ fn render_html_report(report: &OperationReport) -> String {
 </style>
 </head>
 <body>
-<h1>ssync {command} report</h1>
+<h1>sshi {command} report</h1>
 <div class="meta">
   <strong>Executed:</strong> {executed_at} &nbsp;|&nbsp;
   <strong>Filter:</strong> {filter}
@@ -412,7 +412,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         // Write to an explicit empty-named path inside the temp dir to avoid CWD races.
         let report = sample_report("check");
-        let out_path = dir.path().join("ssync-check-test.json");
+        let out_path = dir.path().join("sshi-check-test.json");
         write_report(&report, out_path.to_str().unwrap(), "check", None).unwrap();
         let content = std::fs::read_to_string(&out_path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();

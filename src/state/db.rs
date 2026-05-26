@@ -5,10 +5,10 @@ use rusqlite::Connection;
 
 const CURRENT_VERSION: u32 = 1;
 
-/// Returns the platform-appropriate state directory for ssync.
+/// Returns the platform-appropriate state directory for sshi.
 pub fn state_dir() -> Result<PathBuf> {
-    // On macOS/Linux: ~/.local/state/ssync
-    // On Windows: %LOCALAPPDATA%/ssync
+    // On macOS/Linux: ~/.local/state/sshi
+    // On Windows: %LOCALAPPDATA%/sshi
     #[cfg(target_os = "windows")]
     let base = dirs::data_local_dir().context("Cannot determine local data directory")?;
     // Use state subdirectory on Linux/macOS for XDG compliance
@@ -17,13 +17,13 @@ pub fn state_dir() -> Result<PathBuf> {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
         home.join(".local").join("state")
     };
-    Ok(base.join("ssync"))
+    Ok(base.join("sshi"))
 }
 
-/// Returns the path to ssync.db.
+/// Returns the path to sshi.db.
 #[allow(dead_code)]
 pub fn db_path() -> Result<PathBuf> {
-    Ok(state_dir()?.join("ssync.db"))
+    Ok(state_dir()?.join("sshi.db"))
 }
 
 /// Resolve the effective state directory (AD-16): honors the
@@ -39,7 +39,7 @@ pub fn resolved_state_dir(override_dir: Option<&std::path::Path>) -> Result<Path
 /// Open or create the SQLite database with migrations applied.
 /// If `override_dir` is provided, uses that directory instead of the default.
 pub fn open(override_dir: Option<&std::path::Path>) -> Result<Connection> {
-    let path = resolved_state_dir(override_dir)?.join("ssync.db");
+    let path = resolved_state_dir(override_dir)?.join("sshi.db");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create {}", parent.display()))?;

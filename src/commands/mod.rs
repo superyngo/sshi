@@ -274,7 +274,7 @@ fn resolve_target_mode(target: &TargetArgs, config: &AppConfig) -> Result<Target
             "Target required. Use --group/-g, --host/-h, --shell/-s, or --all/-a to specify targets.",
         );
         if config.host.is_empty() {
-            hint.push_str("\nHint: Run 'ssync init' first to import hosts from ~/.ssh/config.");
+            hint.push_str("\nHint: Run 'sshi init' first to import hosts from ~/.ssh/config.");
         } else {
             append_available_hints(config, &mut hint);
         }

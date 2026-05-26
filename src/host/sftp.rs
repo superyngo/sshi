@@ -177,7 +177,7 @@ pub async fn sftp_probe(
     timeout: Duration,
 ) -> Result<()> {
     tokio::time::timeout(timeout, async {
-        let probe_path = format!("{}/.ssync_probe", home_dir);
+        let probe_path = format!("{}/.sshi_probe", home_dir);
         let sftp = open_sftp(handle).await?;
         sftp.create(&probe_path)
             .await

@@ -175,7 +175,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
     let mut stale_host_names: Vec<String> = Vec::new();
 
     if config_exists {
-        // Detect hosts in ssync config that no longer exist in ~/.ssh/config
+        // Detect hosts in sshi config that no longer exist in ~/.ssh/config
         let ssh_host_names: std::collections::HashSet<&str> =
             ssh_hosts.iter().map(|h| h.name.as_str()).collect();
         stale_host_names = ctx
@@ -202,7 +202,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
                 );
             } else {
                 print!(
-                    "Remove these {} host(s) from ssync config? [y/N]: ",
+                    "Remove these {} host(s) from sshi config? [y/N]: ",
                     stale_host_names.len()
                 );
                 std::io::Write::flush(&mut std::io::stdout())?;

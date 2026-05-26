@@ -1910,7 +1910,7 @@ async fn distribute(
 
     // Download to local temp file
     let temp_dir = tempfile::tempdir()?;
-    let local_temp = temp_dir.path().join("ssync_relay");
+    let local_temp = temp_dir.path().join("sshi_relay");
     sessions
         .download(source, &decision.path, &local_temp, timeout)
         .await?;
@@ -1971,7 +1971,7 @@ async fn distribute_pooled(
 
     // Download from source using pooled connection
     let temp_dir = tempfile::tempdir()?;
-    let local_temp = temp_dir.path().join("ssync_relay");
+    let local_temp = temp_dir.path().join("sshi_relay");
     {
         let _permit = limiter.acquire(&source.name).await;
         sessions
@@ -2029,7 +2029,7 @@ async fn distribute_pooled(
     Ok((succeeded, failed))
 }
 /// This handles the case where the shell expands `~/foo` → `/home/user/foo` before
-/// ssync receives it — remotes need the tilde form so it resolves to *their* home dir.
+/// sshi receives it — remotes need the tilde form so it resolves to *their* home dir.
 fn to_tilde_path(path: &str) -> String {
     // Check both HOME (Unix) and USERPROFILE (Windows)
     let home = std::env::var("HOME")

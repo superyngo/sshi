@@ -65,7 +65,7 @@ fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std
             *dirty = false;
         }
         Err(e) => {
-            eprintln!("ssync: failed to save config on quit: {e}");
+            eprintln!("sshi: failed to save config on quit: {e}");
         }
     }
 }
@@ -198,7 +198,7 @@ impl App {
         let state_file_path = persist::state_file_path(&ctx.config, ctx.config_path.as_deref())
             .unwrap_or_else(|e| {
                 tracing::warn!("Failed to resolve TUI state path; using temp dir: {e}");
-                std::env::temp_dir().join("ssync_tui_state.toml")
+                std::env::temp_dir().join("sshi_tui_state.toml")
             });
 
         // Load persisted state and validate against current config (§16.2).
@@ -511,7 +511,7 @@ impl App {
         // check_core's future cannot be sent between threads). A current-
         // thread runtime never moves the future across threads.
         let _ = std::thread::Builder::new()
-            .name("ssync-op".to_string())
+            .name("sshi-op".to_string())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -601,7 +601,7 @@ impl App {
         let sudo = self.run_sudo;
 
         let _ = std::thread::Builder::new()
-            .name("ssync-op".to_string())
+            .name("sshi-op".to_string())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -687,7 +687,7 @@ impl App {
         let keep = self.exec_keep;
 
         let _ = std::thread::Builder::new()
-            .name("ssync-op".to_string())
+            .name("sshi-op".to_string())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -772,7 +772,7 @@ impl App {
         };
 
         let _ = std::thread::Builder::new()
-            .name("ssync-op".to_string())
+            .name("sshi-op".to_string())
             .spawn(move || {
                 let rt = match tokio::runtime::Builder::new_current_thread()
                     .enable_all()
@@ -1744,7 +1744,7 @@ impl App {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" ssync ")
+                    .title(" sshi ")
                     .border_style(block_border_style),
             )
             .select(selected)
@@ -2295,7 +2295,7 @@ impl App {
                 self.config_path
                     .as_deref()
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "(default — ~/.config/ssync/config.toml)".to_string())
+                    .unwrap_or_else(|| "(default — ~/.config/sshi/config.toml)".to_string())
             ),
         };
         let block = Block::default()
@@ -2326,7 +2326,7 @@ impl App {
 
         if self.checkout_snapshots.is_empty() {
             let p = Paragraph::new(
-                "No snapshots available. Run `ssync check --all` to populate the database.",
+                "No snapshots available. Run `sshi check --all` to populate the database.",
             )
             .style(Style::default().fg(self.theme.inactive))
             .wrap(Wrap { trim: false });

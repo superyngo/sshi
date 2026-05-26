@@ -10,7 +10,7 @@ pub async fn run(config_path: Option<&Path>) -> Result<()> {
 
     if !path.exists() {
         bail!(
-            "Config file not found at {}\nRun 'ssync init' first to create it.",
+            "Config file not found at {}\nRun 'sshi init' first to create it.",
             path.display()
         );
     }

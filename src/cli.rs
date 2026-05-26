@@ -4,7 +4,7 @@ use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "ssync",
+    name = "sshi",
     version,
     about = "SSH-config-based cross-platform remote management tool",
     subcommand_required = false,
@@ -15,7 +15,7 @@ pub struct Cli {
     #[arg(short = 'v', long)]
     pub verbose: bool,
 
-    /// Path to config file (default: ~/.config/ssync/config.toml)
+    /// Path to config file (default: ~/.config/sshi/config.toml)
     #[arg(short = 'c', long, global = true)]
     pub config: Option<PathBuf>,
 
@@ -63,7 +63,7 @@ pub struct TargetArgs {
 #[derive(Args, Clone, Debug, Default)]
 pub struct OutputArgs {
     /// Write structured report to file (.json or .html).
-    /// Omit path for auto-named file: ssync-{command}-{YYYYMMDD-HHmmss}.json
+    /// Omit path for auto-named file: sshi-{command}-{YYYYMMDD-HHmmss}.json
     /// Examples: --out  |  --out report.json  |  --out report.html
     #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "")]
     pub out: Option<String>,
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn skip_parses_as_comma_list_on_check() {
-        let cli = Cli::try_parse_from(["ssync", "check", "--all", "--skip", "h1,h2"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "check", "--all", "--skip", "h1,h2"]).unwrap();
         match cli.command.unwrap() {
             Commands::Check { target, .. } => {
                 assert_eq!(target.skip, vec!["h1".to_string(), "h2".to_string()]);
@@ -257,30 +257,30 @@ mod tests {
 
     #[test]
     fn sync_rejects_no_push_missing() {
-        let result = Cli::try_parse_from(["ssync", "sync", "--all", "--no-push-missing"]);
+        let result = Cli::try_parse_from(["sshi", "sync", "--all", "--no-push-missing"]);
         assert!(result.is_err(), "--no-push-missing should be rejected");
     }
 
     #[test]
     fn sync_still_parses_without_removed_flag() {
-        let cli = Cli::try_parse_from(["ssync", "sync", "--all"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "sync", "--all"]).unwrap();
         assert!(matches!(cli.command.unwrap(), Commands::Sync { .. }));
     }
 
     #[test]
     fn run_rejects_yes() {
-        assert!(Cli::try_parse_from(["ssync", "run", "--all", "--yes", "echo hi"]).is_err());
-        assert!(Cli::try_parse_from(["ssync", "run", "--all", "-y", "echo hi"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "run", "--all", "--yes", "echo hi"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "run", "--all", "-y", "echo hi"]).is_err());
     }
 
     #[test]
     fn exec_rejects_yes() {
-        assert!(Cli::try_parse_from(["ssync", "exec", "--all", "--yes", "s.sh"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "exec", "--all", "--yes", "s.sh"]).is_err());
     }
 
     #[test]
     fn run_parses_dry_run() {
-        let cli = Cli::try_parse_from(["ssync", "run", "--all", "--dry-run", "echo hi"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "run", "--all", "--dry-run", "echo hi"]).unwrap();
         match cli.command.unwrap() {
             Commands::Run { dry_run, .. } => assert!(dry_run),
             _ => panic!("expected Run"),
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn check_parses_dry_run() {
-        let cli = Cli::try_parse_from(["ssync", "check", "--all", "--dry-run"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "check", "--all", "--dry-run"]).unwrap();
         match cli.command.unwrap() {
             Commands::Check { dry_run, .. } => assert!(dry_run),
             _ => panic!("expected Check"),

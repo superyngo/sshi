@@ -1,4 +1,4 @@
--- ssync DB schema v1
+-- sshi DB schema v1
 
 CREATE TABLE IF NOT EXISTS check_snapshots (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,

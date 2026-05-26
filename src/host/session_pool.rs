@@ -45,7 +45,7 @@ impl client::Handler for SshHandler {
 
             if !known_hosts_path.exists() {
                 bail!(
-                    "Unknown host key for {}:{} — run `ssync init` to add the host to known_hosts",
+                    "Unknown host key for {}:{} — run `sshi init` to add the host to known_hosts",
                     self.hostname,
                     self.port
                 );
@@ -59,7 +59,7 @@ impl client::Handler for SshHandler {
             ) {
                 Ok(true) => Ok(true),
                 Ok(false) => bail!(
-                    "Unknown host key for {}:{} — run `ssync init` to accept the key first",
+                    "Unknown host key for {}:{} — run `sshi init` to accept the key first",
                     self.hostname,
                     self.port
                 ),

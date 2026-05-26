@@ -1,4 +1,4 @@
-//! Interactive TUI for ssync. Feature-gated under `tui`.
+//! Interactive TUI for sshi. Feature-gated under `tui`.
 //!
 //! Public surface:
 //! - [`entry::run_or_fallback`] — performs §4 TTY/TERM detection and either
