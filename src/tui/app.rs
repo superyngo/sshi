@@ -136,9 +136,8 @@ pub struct App {
     run_command: InputField,
     /// Text input for the `exec` script path field (NOT persisted per AD-12).
     exec_script: InputField,
-    /// Sudo / yes / keep boolean params (persisted per AD-12).
+    /// Sudo / keep boolean params (persisted per AD-12).
     run_sudo: bool,
-    run_yes: bool,
     exec_sudo: bool,
     exec_keep: bool,
     /// Sync params (sync_mode and sync_dry_run persisted; adhoc_files NOT persisted per AD-12).
@@ -238,7 +237,6 @@ impl App {
             run_command: InputField::new(""),
             exec_script: InputField::new(""),
             run_sudo: persisted.operate.run_sudo,
-            run_yes: persisted.operate.run_yes,
             exec_sudo: persisted.operate.exec_sudo,
             exec_keep: persisted.operate.exec_keep,
             sync_mode: persisted.operate.sync_mode,
@@ -326,11 +324,11 @@ impl App {
             operate: super::state::persist::OperateState {
                 operation: self.operate_operation,
                 run_sudo: self.run_sudo,
-                run_yes: self.run_yes,
                 exec_sudo: self.exec_sudo,
                 exec_keep: self.exec_keep,
                 sync_mode: self.sync_mode,
                 sync_dry_run: self.sync_dry_run,
+                ..Default::default()
             },
         };
         if let Err(e) = persist::save(&self.state_file_path, &state) {
@@ -1557,7 +1555,7 @@ impl App {
                         self.save_state();
                     }
                     (OperationKind::Run, ParamPanelField::SecondFlag) => {
-                        self.run_yes = !self.run_yes;
+                        // run_yes removed; no-op placeholder until Task 8
                         self.save_state();
                     }
                     (OperationKind::Exec, ParamPanelField::Sudo) => {
@@ -2077,7 +2075,7 @@ impl App {
             run_command: &self.run_command,
             exec_script: &self.exec_script,
             run_sudo: self.run_sudo,
-            run_yes: self.run_yes,
+            run_yes: false,
             exec_sudo: self.exec_sudo,
             exec_keep: self.exec_keep,
             param_field: self.param_field,

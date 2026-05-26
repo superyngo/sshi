@@ -129,7 +129,6 @@ pub struct OperateState {
     pub operation: OperationKind,
     /// Whether to use sudo when running remote commands (Run/Exec operations).
     pub run_sudo: bool,
-    pub run_yes: bool,
     pub exec_sudo: bool,
     /// Keep uploaded script on remote after execution.
     pub exec_keep: bool,
@@ -137,6 +136,28 @@ pub struct OperateState {
     pub sync_mode: SyncMode,
     /// Sync tab: whether to do a dry run (no files transferred).
     pub sync_dry_run: bool,
+    /// Check tab: whether to do a dry run.
+    pub check_dry_run: bool,
+    /// Run tab: whether to do a dry run.
+    pub run_dry_run: bool,
+    /// Exec tab: whether to do a dry run.
+    pub exec_dry_run: bool,
+    /// View tab: selected view operation (checkout/list/log).
+    pub view_operation: ViewOperationKind,
+    /// View tab: include history when running checkout.
+    pub checkout_history: bool,
+    /// View tab: number of log entries to fetch (0 → App default of 20).
+    pub log_last: usize,
+    /// View tab: restrict log results to error rows.
+    pub log_errors: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ViewOperationKind {
+    #[default]
+    Checkout,
+    List,
+    Log,
 }
 
 /// Sync params panel mode.
@@ -397,6 +418,44 @@ active_tab = "Config"
         };
         validate_filter(&mut f, &cfg);
         assert_eq!(f.hosts, vec!["h1"]);
+    }
+
+    #[test]
+    fn operate_state_extended_round_trips() {
+        let mut s = OperateState::default();
+        s.log_last = 50;
+        s.log_errors = true;
+        s.checkout_history = true;
+        s.check_dry_run = true;
+        s.run_dry_run = true;
+        s.exec_dry_run = true;
+        s.view_operation = ViewOperationKind::Log;
+        let ser = toml::to_string(&s).unwrap();
+        let back: OperateState = toml::from_str(&ser).unwrap();
+        assert_eq!(back.log_last, 50);
+        assert!(back.log_errors);
+        assert!(back.checkout_history);
+        assert!(back.check_dry_run);
+        assert!(back.run_dry_run);
+        assert!(back.exec_dry_run);
+        assert_eq!(back.view_operation, ViewOperationKind::Log);
+    }
+
+    #[test]
+    fn view_operation_kind_defaults_checkout() {
+        assert_eq!(ViewOperationKind::default(), ViewOperationKind::Checkout);
+    }
+
+    #[test]
+    fn view_operation_kind_non_default_variants_round_trip() {
+        for v in [ViewOperationKind::List, ViewOperationKind::Log] {
+            let s = OperateState {
+                view_operation: v,
+                ..Default::default()
+            };
+            let back: OperateState = toml::from_str(&toml::to_string(&s).unwrap()).unwrap();
+            assert_eq!(back.view_operation, v);
+        }
     }
 
     #[test]
