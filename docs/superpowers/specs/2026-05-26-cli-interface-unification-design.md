@@ -132,7 +132,8 @@ core that performs side effects is never reached).
 
    **Deferred to #4 (TUI Operate), not this spec:** the TUI Operate tab keeps a
    `run_yes` state field + a visible "yes" checkbox (`app.rs:139`, render +
-   persistence per AD-12, help text `app.rs:2442`). Since `_yes` was always a
+   persistence per AD-12; the checkbox + help text live in
+   `src/tui/tabs/operate_tab.rs:57,246`). Since `_yes` was always a
    no-op, that checkbox **already does nothing** — leaving it inert is not a
    regression. Removing the `run_yes` field, its checkbox, and the help text is
    left for the #4 Operate refactor. This spec only stops passing the argument.
