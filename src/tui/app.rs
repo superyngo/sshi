@@ -146,7 +146,7 @@ pub struct App {
     sync_adhoc_files: Vec<String>,
     sync_adhoc_input: InputField,
     /// Source host override for sync (NOT persisted per AD-12).
-    _sync_source_input: InputField,
+    sync_source_input: InputField,
     /// Which param panel field is focused (when operate_focus == ParamPanel).
     param_field: ParamPanelField,
     /// Currently-running operation, if any. Mutually exclusive with starting
@@ -243,7 +243,7 @@ impl App {
             sync_dry_run: persisted.operate.sync_dry_run,
             sync_adhoc_files: Vec::new(),
             sync_adhoc_input: InputField::new(""),
-            _sync_source_input: InputField::new(""),
+            sync_source_input: InputField::new(""),
             param_field: ParamPanelField::CommandOrScript,
             running_op: None,
             event_tx,
@@ -768,6 +768,10 @@ impl App {
             SyncMode::AdHoc => self.sync_adhoc_files.clone(),
             SyncMode::ConfigEntries => Vec::new(),
         };
+        let source_override: Option<String> = {
+            let v = self.sync_source_input.value.trim().to_string();
+            if v.is_empty() { None } else { Some(v) }
+        };
 
         let _ = std::thread::Builder::new()
             .name("sshi-op".to_string())
@@ -794,7 +798,7 @@ impl App {
                     };
                     let sink = EventSender::new(event_tx.clone());
                     let outcome = tokio::select! {
-                        res = crate::commands::sync::sync_core(&ctx, &adhoc_files, dry_run, None, Some(&sink)) => res,
+                        res = crate::commands::sync::sync_core(&ctx, &adhoc_files, dry_run, source_override.as_deref(), Some(&sink)) => res,
                         _ = cancel_for_task.cancelled() => {
                             let _ = event_tx.send(TuiEvent::OperationCancelled);
                             return;
@@ -935,6 +939,17 @@ impl App {
                     ) => {
                         if self.sync_adhoc_input.mode == InputMode::Active {
                             Some(&mut self.sync_adhoc_input)
+                        } else {
+                            None
+                        }
+                    }
+                    (
+                        OperationKind::Sync,
+                        OperateFocus::ParamPanel,
+                        ParamPanelField::SyncSourceInput,
+                    ) => {
+                        if self.sync_source_input.mode == InputMode::Active {
+                            Some(&mut self.sync_source_input)
                         } else {
                             None
                         }
@@ -1406,7 +1421,7 @@ impl App {
                             OperateFocus::OpRadio
                         } else {
                             self.param_field = match self.operate_operation {
-                                OperationKind::Sync => ParamPanelField::SyncDryRun,
+                                OperationKind::Sync => ParamPanelField::SyncSourceInput,
                                 _ => ParamPanelField::SecondFlag,
                             };
                             OperateFocus::ParamPanel
@@ -1420,6 +1435,10 @@ impl App {
                             }
                             ParamPanelField::SyncAdHocInput => {
                                 self.param_field = ParamPanelField::SyncModeToggle;
+                                OperateFocus::ParamPanel
+                            }
+                            ParamPanelField::SyncSourceInput => {
+                                self.param_field = ParamPanelField::SyncDryRun;
                                 OperateFocus::ParamPanel
                             }
                             _ => OperateFocus::OpRadio,
@@ -1465,6 +1484,10 @@ impl App {
                             }
                             ParamPanelField::SyncAdHocInput => {
                                 self.param_field = ParamPanelField::SyncDryRun;
+                                OperateFocus::ParamPanel
+                            }
+                            ParamPanelField::SyncDryRun => {
+                                self.param_field = ParamPanelField::SyncSourceInput;
                                 OperateFocus::ParamPanel
                             }
                             _ => OperateFocus::TargetRow,
@@ -1585,6 +1608,16 @@ impl App {
                     && self.param_field == ParamPanelField::SyncAdHocInput =>
             {
                 self.sync_adhoc_input.activate();
+                Ok(true)
+            }
+            // Enter on sync source input activates it.
+            KeyCode::Enter
+                if self.active_tab == TabId::Operate
+                    && self.operate_focus == OperateFocus::ParamPanel
+                    && self.operate_operation == OperationKind::Sync
+                    && self.param_field == ParamPanelField::SyncSourceInput =>
+            {
+                self.sync_source_input.activate();
                 Ok(true)
             }
             // Delete removes the last item from the sync adhoc file list.
@@ -2068,6 +2101,7 @@ impl App {
             sync_dry_run: self.sync_dry_run,
             sync_adhoc_files: &self.sync_adhoc_files,
             sync_adhoc_input: &self.sync_adhoc_input,
+            sync_source_input: &self.sync_source_input,
             run_command: &self.run_command,
             exec_script: &self.exec_script,
             run_sudo: self.run_sudo,

@@ -41,6 +41,7 @@ pub enum ParamPanelField {
     SyncModeToggle,
     SyncAdHocInput,
     SyncDryRun,
+    SyncSourceInput,
 }
 
 /// Rendering data for the Operate tab, passed from App.
@@ -51,6 +52,7 @@ pub struct OperateRenderData<'a> {
     pub sync_dry_run: bool,
     pub sync_adhoc_files: &'a [String],
     pub sync_adhoc_input: &'a InputField,
+    pub sync_source_input: &'a InputField,
     pub run_command: &'a InputField,
     pub exec_script: &'a InputField,
     pub run_sudo: bool,
@@ -122,7 +124,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         OperationKind::Exec => 7u16,
         OperationKind::Sync => {
             let adhoc_list_rows = data.sync_adhoc_files.len().min(5) as u16;
-            8 + adhoc_list_rows
+            11 + adhoc_list_rows
         }
         _ => 0u16,
     };
@@ -286,6 +288,7 @@ fn render_sync_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
 
     let adhoc_input_focused = param_focused && data.param_field == ParamPanelField::SyncAdHocInput;
     let dry_run_focused = param_focused && data.param_field == ParamPanelField::SyncDryRun;
+    let source_input_focused = param_focused && data.param_field == ParamPanelField::SyncSourceInput;
 
     let adhoc_list_rows = data.sync_adhoc_files.len().min(5) as u16;
     let sync_chunks = Layout::default()
@@ -296,6 +299,8 @@ fn render_sync_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             Constraint::Length(3),
             Constraint::Length(adhoc_list_rows.max(1)),
             Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(area);
@@ -367,6 +372,18 @@ fn render_sync_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             ),
         ])),
         sync_chunks[4],
+    );
+
+    // Source override row (shown for both sync modes).
+    frame.render_widget(
+        Paragraph::new(Span::raw("")),
+        sync_chunks[5],
+    );
+    data.sync_source_input.render(
+        frame,
+        sync_chunks[6],
+        "Source override (optional)",
+        source_input_focused,
     );
 }
 
