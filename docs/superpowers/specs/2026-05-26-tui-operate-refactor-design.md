@@ -38,8 +38,10 @@ the rest of the TUI:
 ## Non-Goals
 
 - No changes to the Config tab internals or its schema.
-- No changes to any `*_core` command logic, **target-resolution semantics**, or
-  output/report formats.
+- No **semantic** changes to existing command behavior, **target-resolution
+  semantics**, or output/report formats. (Extracting new `*_core` data-returning
+  entry points for `checkout`/`list`/`log` is acknowledged prerequisite work —
+  see "Prerequisite: View command cores".)
 - No combinable target model. TUI targets stay mutually exclusive (see
   "Target model" below) — this is an intentional, documented divergence from
   the CLI's combinable `TargetArgs`.
@@ -98,8 +100,9 @@ preserved unchanged.
 
 Targets remain **mutually exclusive**, exactly as `tui_reconstruct_plan.md`
 specifies: one of `All | Groups | Hosts | Shell` at a time. This is reaffirmed,
-not changed. The popup picker (`§13`, `target_filter.rs`, `PopupState`) stays
-the editing surface; the only additions are:
+not changed. The popup picker (`§13`; `FilterPopup` in
+`src/tui/components/target_filter.rs`) stays the editing surface; the only
+additions are:
 
 - **`skip`** (`Vec<String>`) — hosts to exclude from the resolved set, edited in
   the popup via the vec editor. Currently missing from the TUI.
@@ -155,6 +158,8 @@ Notes:
 - `out` (`-o/--out`) appears on `check/run/exec/sync/checkout` only; it is a
   **specific** field.
 - `run --yes` is **dropped** (CLI removed it); the stale TUI `run_yes` is deleted.
+- sync `source` activates the existing dormant `_sync_source_input: InputField`
+  in `App` (currently underscore-prefixed and not surfaced in the param panel).
 
 ## init in Operate — deliberate grammar break (documented trade-off)
 
@@ -192,13 +197,34 @@ OpSelector → TargetSummary → SpecificPanel → Trigger(Operate only)
 - Enter on `Trigger` executes (Operate). View has no Trigger zone — it
   auto-refreshes.
 
+## Prerequisite: command cores for init + view ops
+
+`check`/`run`/`exec`/`sync` already expose `*_core` functions returning
+structured data with a progress sink, and the TUI already has `execute_*` paths
+for them. Two gaps must be closed first:
+
+- **`init`** exposes only `commands::init::run(ctx, update, dry_run, skip)` — no
+  `init_core` and no TUI `execute_init`. Needs an `init_core` (per-host progress
+  sink, structured return) plus a new `execute_init` wiring it to the progress
+  popup.
+- **View ops** expose `commands::list::run(ctx)`, `commands::log::run(ctx, last,
+  since, host, action, errors)`, and `commands::checkout::run(...)`, each
+  printing to stdout via the printer. The TUI result area needs **structured
+  return values**, not stdout — so extract `checkout_core`/`list_core`/`log_core`
+  returning data with no printer side effects.
+
+In all cases the existing `run()` functions become thin wrappers that call the
+new core and print. This is a pure refactor of plumbing, not a behavior change
+(acknowledged in Non-Goals).
+
 ## Execution & results
 
-- **Operate ops** reuse the existing `execute_*` path: build `Context`, resolve
-  targets, call `commands::{check,run,exec,sync,init}::*_core` with the progress
-  sink → per-host **progress popup**.
-- **View ops** call `commands::{checkout,list,log}::*_core` and render returned
-  data in the **result area**, refreshed live on op/param change. A minimal
+- **Operate ops** reuse the existing `execute_*` path (new `execute_init` for
+  init): build `Context`, resolve targets, call
+  `commands::{check,run,exec,sync,init}::*_core` with the progress sink →
+  per-host **progress popup**.
+- **View ops** call the new `commands::{checkout,list,log}::*_core` and render
+  returned data in the **result area**, refreshed live on op/param change. A minimal
   debounce and a simple "loading…" indicator are sufficient — no elaborate
   async state machine. Scrolling reuses the existing viewport handling.
 - The current Checkout-tab rendering is extracted into a reusable result
@@ -214,7 +240,9 @@ OpSelector → TargetSummary → SpecificPanel → Trigger(Operate only)
   (`Checkout`/`List`/`Log`) tagged by tab.
 - `ActiveTab::Checkout` → `ActiveTab::View`, with `#[serde(alias = "Checkout")]`
   so existing state files load without resetting (per the existing "never crash
-  on persistence read" contract).
+  on persistence read" contract). The non-persisted `TabId::Checkout` variant
+  (`src/tui/tabs/mod.rs`) is renamed to `TabId::View` as well; all match arms in
+  `app.rs`/`operate_tab.rs` that dispatch on it are updated.
 - CHANGELOG notes the View-tab rename and the dropped `run_yes`.
 
 ## Testing
