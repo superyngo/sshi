@@ -56,11 +56,7 @@ use operate_tab::truncate;
 /// Persist `config` to `path` if `dirty` is set; clear `dirty` on success.
 /// On failure prints to stderr — the caller is presumed to be the shutdown
 /// path where no UI is available to display errors.
-fn flush_config_if_dirty(
-    dirty: &mut bool,
-    config: &AppConfig,
-    path: Option<&std::path::Path>,
-) {
+fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std::path::Path>) {
     if !*dirty {
         return;
     }
@@ -1769,7 +1765,9 @@ impl App {
     }
 
     fn save_config(&mut self) {
-        let snap = self.config_tab.capture_selection();
+        // Consume the snapshot captured at the commit site. Re-capturing here
+        // would be too late — `commit_entry_form` etc. already wiped viewports.
+        let snap = self.config_tab.consume_pending_snapshot();
         let explicit_path = self.config_path.clone();
         let path_arg = explicit_path.as_deref();
         match crate::config::app::save(&self.config, path_arg) {
@@ -1777,14 +1775,16 @@ impl App {
                 self.config_tab.config_dirty = false;
                 self.config_tab.reload_banner_until = Some(Instant::now() + Duration::from_secs(2));
                 // Resolve the actual saved path so reload sees the correct mtime.
-                if let Ok(resolved) = crate::config::app::resolve_path(path_arg) {
+                let resolved_path = crate::config::app::resolve_path(path_arg).ok();
+                if let Some(resolved) = resolved_path.as_ref() {
                     if self.config_path.is_none() {
                         self.config_path = Some(resolved.clone());
                     }
-                    self.config_tab.reload(&self.config, Some(&resolved));
-                    self.config_tab.restore_selection(snap, &self.config);
+                    self.config_tab.reload(&self.config, Some(resolved));
                 } else {
                     self.config_tab.reload(&self.config, path_arg);
+                }
+                if let Some(snap) = snap {
                     self.config_tab.restore_selection(snap, &self.config);
                 }
             }

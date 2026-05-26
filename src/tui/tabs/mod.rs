@@ -1,5 +1,6 @@
 //! Tab identifiers and per-tab state.
 
+pub mod config_schema;
 pub mod config_tab;
 pub mod operate_tab;
 

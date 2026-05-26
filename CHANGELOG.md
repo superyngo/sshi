@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-21 — TOML serializer fix, explicit-save UX, vec_editor close fix
+- **fix(config): writer now persists `[[host]]` / `[[check]]` / `[[sync]]`
+  sections.** Root cause of "edits look saved in TUI but vanish after
+  restart": `apply_config_to_doc` (`src/config/app.rs:161`) was scoped to
+  `[settings]` only; per-entry edits were silently dropped on every save. New
+  `host_to_table` / `check_to_table` / `sync_to_table` helpers rebuild the
+  array-of-tables on write. Per-entry inline comments lost (acceptable for a
+  tool-managed file); top-level section comments preserved.
+- **change(tui): autosave-on-mutate removed; explicit `s` saves from main
+  view.** `mark_dirty` no longer sets `pending_save` — it just captures the
+  cursor snapshot. New `request_save_if_dirty()` flips `pending_save` when
+  the user presses `s` in Sidebar or FieldTable zone. Quit-time
+  `flush_dirty_config_to_disk` retained as safety net. Rationale: autosave
+  masked persistence bugs that only surfaced on next program start; explicit
+  save makes "did this actually write?" visible at the moment of action.
+- **fix(tui): entry-form vec editor (`Sync.paths` etc.) can be closed with
+  `s` or Esc.** Pre-existing bug: caller `take()`s `form.vec_editor` then
+  unconditionally restores it after handler runs, so the handler's
+  `form.vec_editor = None` was a no-op. Added `closing: bool` flag mirroring
+  `GroupPickerState`; caller now checks and drops instead of restoring.
+- tests: new `host_check_sync_edits_round_trip_through_save` covers the
+  writer regression.
+
+### 2026-05-21 — Config-tab unified schema refactor (real fix for Vec save & cursor)
+- fix(tui): Hosts/Checks/Syncs Vec edits (`groups`, `enabled`, `paths`) now
+  actually persist to disk. Root cause: `apply_*_field` matched only scalar
+  keys; Vec keys fell through `_ =>` and were silently dropped, so direct
+  popup commits looked like they saved but wrote unchanged config.
+- fix(tui): right-panel `field_vp` cursor stays put after any commit (direct
+  popup, inline edit, cycle). Was always resetting to row 0 because
+  `restore_selection` had no branch for "entry form closed, field cursor
+  outstanding"; the snapshot also didn't carry `field_vp.selected`.
+- fix(tui): sidebar cursor stays put after entry-form (`e`) commit. Was being
+  wiped by `commit_entry_form` BEFORE `save_config` captured the snapshot;
+  snapshot capture moved to mutation entry points (mark_dirty).
+- refactor(tui): unified field schema in new `src/tui/tabs/config_schema.rs`.
+  Single `fields()` + `apply()` per entry kind, used by right-panel inline
+  edit, direct popup, and entry-form commit. Removes parallel
+  `*_descriptors` / `*_form_fields` / `apply_*_field` definitions in
+  `config_tab.rs`.
+- refactor(tui): cursor preservation via
+  `ConfigTabState::pending_restore_snapshot` + `mark_dirty()` helper at every
+  commit site. `app.rs:save_config` now consumes via
+  `consume_pending_snapshot()`; `capture_selection` downgraded to
+  `pub(super)` so `app.rs` can't accidentally self-capture and bypass the
+  stored snapshot.
+- change(tui): `Host.proxy_jump` always visible in right panel (was hidden
+  when `None`). Empty string when unset.
+- change(tui): `Check.enabled` edited from the right panel now opens the
+  group-picker over the fixed `CHECK_ENABLED_OPTIONS` catalog with
+  descriptions (matching entry-form behaviour), instead of the free-text vec
+  editor. Prevents typos in check kind ids.
+- tests: 7 new schema unit tests + 4 new integration tests covering Vec
+  persistence and cursor preservation across all entry points.
+
 ### 2026-05-21 — Config-tab crash fixes, autosave-on-quit, cursor preservation
 - fix(tui): eliminate three render-time panics when editing empty
   vec fields (Sync.paths, Settings.skipped_hosts, Check.enabled).

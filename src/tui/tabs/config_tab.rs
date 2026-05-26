@@ -17,13 +17,17 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use crate::config::schema::{
-    generate_entry_id, AppConfig, CheckEntry, ConflictStrategy, HostEntry, Settings, ShellType,
-    SyncEntry,
+    generate_entry_id, AppConfig, CheckEntry, HostEntry, ShellType, SyncEntry,
 };
 
 use super::super::components::input_field::{InputField, InputMode};
 use super::super::components::viewport::Viewport;
 use super::super::theme::Theme;
+use super::config_schema::{
+    apply_check, apply_host, apply_settings, apply_sync, check_fields, host_fields,
+    parse_bracket_list, settings_fields, sync_fields, FieldDescriptor, FieldKind,
+    CHECK_ENABLED_OPTIONS,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfigZone {
@@ -42,74 +46,8 @@ pub enum SidebarItem {
     Sync(usize),
 }
 
-// ── Field type descriptors (Phase 7) ──────────────────────────────────────
-
-pub const CHECK_ENABLED_OPTIONS: &[(&str, &str)] = &[
-    ("online", "Check if host is online"),
-    ("system_info", "System info (uname / systeminfo)"),
-    ("cpu_arch", "CPU architecture"),
-    ("memory", "Memory usage"),
-    ("swap", "Swap usage"),
-    ("disk", "Disk usage"),
-    ("cpu_load", "CPU load"),
-    ("network", "Network interface info"),
-    ("battery", "Battery status"),
-    ("ip_address", "IP address"),
-];
-
-#[derive(Debug, Clone)]
-pub enum FieldKind {
-    U64,
-    Bool,
-    String,
-    OptionalString,
-    Enum {
-        variants: Vec<&'static str>,
-    },
-    VecString,
-    #[allow(dead_code)]
-    VecCheckPath,
-    CheckEnabled, // fixed multi-select for check.enabled
-    ShellEnum,
-    TriBool, // Option<bool>: "inherit" | "yes" | "no"
-}
-
-#[derive(Debug, Clone)]
-pub struct FieldDescriptor {
-    pub key: String,
-    pub display_value: String,
-    pub kind: FieldKind,
-    pub editable: bool,
-}
-
-impl FieldDescriptor {
-    fn scalar(key: &str, value: String, kind: FieldKind) -> Self {
-        Self {
-            key: key.to_string(),
-            display_value: value,
-            kind,
-            editable: true,
-        }
-    }
-
-    fn readonly(key: &str, value: String) -> Self {
-        Self {
-            key: key.to_string(),
-            display_value: value,
-            kind: FieldKind::String,
-            editable: false,
-        }
-    }
-
-    fn vec_field(key: &str, display: String, kind: FieldKind) -> Self {
-        Self {
-            key: key.to_string(),
-            display_value: display,
-            kind,
-            editable: true,
-        }
-    }
-}
+// FieldKind, FieldDescriptor, and CHECK_ENABLED_OPTIONS now live in
+// `super::config_schema` (the unified field schema).
 
 // ── Entry form state (Case B) ─────────────────────────────────────────────
 
@@ -140,6 +78,11 @@ pub struct VecEditorState {
     pub vp: Viewport,
     pub input: InputField,
     pub input_active: bool,
+    /// Set by the handler when 's'/Esc commits — the caller (which holds the
+    /// taken-out instance) checks this and drops it instead of restoring.
+    /// Without this flag the vec editor cannot close because the caller
+    /// always restores `form.vec_editor = Some(ve)` after handling the key.
+    pub closing: bool,
 }
 
 #[derive(Debug)]
@@ -174,6 +117,12 @@ pub struct DirectGroupPickerState {
     pub field_key: String,
     pub available: Vec<String>,
     pub checked: Vec<bool>,
+    /// Per-row description shown next to each option. Empty = no descriptions
+    /// (matches groups-mode picker; Check.enabled mode populates it from
+    /// `CHECK_ENABLED_OPTIONS`).
+    pub descriptions: Vec<String>,
+    /// `false` for fixed catalogs (e.g. `CheckEnabled`); `a` is a no-op then.
+    pub allow_add: bool,
     pub vp: Viewport,
     pub add_input: InputField,
     pub add_input_active: bool,
@@ -181,7 +130,7 @@ pub struct DirectGroupPickerState {
 
 impl EntryFormState {
     pub fn new_host(template: &HostEntry) -> Self {
-        let fields = host_form_fields(template);
+        let fields = host_fields(template);
         let count = fields.len();
         let mut vp = Viewport::new();
         vp.set_dims(count, 0);
@@ -199,7 +148,7 @@ impl EntryFormState {
     }
 
     pub fn new_check(template: &CheckEntry) -> Self {
-        let fields = check_form_fields(template);
+        let fields = check_fields(template);
         let count = fields.len();
         let mut vp = Viewport::new();
         vp.set_dims(count, 0);
@@ -217,7 +166,7 @@ impl EntryFormState {
     }
 
     pub fn new_sync(template: &SyncEntry) -> Self {
-        let fields = sync_form_fields(template);
+        let fields = sync_fields(template);
         let count = fields.len();
         let mut vp = Viewport::new();
         vp.set_dims(count, 0);
@@ -232,79 +181,6 @@ impl EntryFormState {
             group_picker: None,
             dirty: false,
         }
-    }
-}
-
-fn host_form_fields(h: &HostEntry) -> Vec<FieldDescriptor> {
-    vec![
-        FieldDescriptor::scalar("name", h.name.clone(), FieldKind::String),
-        FieldDescriptor::scalar("ssh_host", h.ssh_host.clone(), FieldKind::String),
-        FieldDescriptor::scalar("shell", h.shell.to_string(), FieldKind::ShellEnum),
-        FieldDescriptor::vec_field("groups", fmt_vec(&h.groups), FieldKind::VecString),
-        FieldDescriptor::scalar(
-            "proxy_jump",
-            h.proxy_jump.clone().unwrap_or_default(),
-            FieldKind::OptionalString,
-        ),
-    ]
-}
-
-fn check_form_fields(c: &CheckEntry) -> Vec<FieldDescriptor> {
-    let mut fields = vec![
-        FieldDescriptor::vec_field("enabled", fmt_vec(&c.enabled), FieldKind::CheckEnabled),
-        FieldDescriptor::vec_field("groups", fmt_vec(&c.groups), FieldKind::VecString),
-        FieldDescriptor::scalar("enable_hosts", c.enable_hosts.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("enable_all", c.enable_all.to_string(), FieldKind::Bool),
-    ];
-    for p in &c.path {
-        fields.push(FieldDescriptor::scalar(
-            &format!("path:{}:{}", p.label, p.path),
-            format!("{} → {}", p.label, p.path),
-            FieldKind::String,
-        ));
-    }
-    fields
-}
-
-fn sync_form_fields(s: &SyncEntry) -> Vec<FieldDescriptor> {
-    let mut fields = vec![
-        FieldDescriptor::vec_field("paths", fmt_vec(&s.paths), FieldKind::VecString),
-        FieldDescriptor::vec_field("groups", fmt_vec(&s.groups), FieldKind::VecString),
-        FieldDescriptor::scalar("enable_hosts", s.enable_hosts.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("enable_all", s.enable_all.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("recursive", s.recursive.to_string(), FieldKind::Bool),
-    ];
-    if let Some(m) = &s.mode {
-        fields.push(FieldDescriptor::scalar(
-            "mode",
-            m.clone(),
-            FieldKind::String,
-        ));
-    } else {
-        fields.push(FieldDescriptor::scalar(
-            "mode",
-            String::new(),
-            FieldKind::OptionalString,
-        ));
-    }
-    fields.push(FieldDescriptor::scalar(
-        "propagate_deletes",
-        tribool_from_opt(s.propagate_deletes).to_string(),
-        FieldKind::TriBool,
-    ));
-    fields.push(FieldDescriptor::scalar(
-        "source",
-        s.source.clone().unwrap_or_default(),
-        FieldKind::OptionalString,
-    ));
-    fields
-}
-
-fn fmt_vec(v: &[String]) -> String {
-    if v.is_empty() {
-        "(none)".to_string()
-    } else {
-        format!("[{}]", v.join(", "))
     }
 }
 
@@ -340,6 +216,12 @@ pub struct ConfigTabState {
     pub pending_delete: Option<(EntryFormKind, usize)>,
     pub pending_open_editor: bool,
     pub pending_save: bool,
+    /// Cursor snapshot captured at every commit site (entry form, direct
+    /// popup, inline edit, cycle). Consumed by `app.rs` once after save+reload
+    /// via [`consume_pending_snapshot`]. Using a stored snapshot (instead of
+    /// re-capturing in `save_config`) is the only way to survive the
+    /// commit→reload pipeline, which wipes viewports.
+    pub pending_restore_snapshot: Option<ConfigSelectionSnapshot>,
     // direct popups
     pub direct_vec_editor: Option<DirectVecEditorState>,
     pub direct_group_picker: Option<DirectGroupPickerState>,
@@ -360,6 +242,11 @@ pub struct ConfigTabState {
 #[derive(Default, Clone, Debug)]
 pub struct ConfigSelectionSnapshot {
     sidebar_idx: usize,
+    /// Outer right-panel field cursor. Restored when the entry form is closed
+    /// at the time of restoration (i.e. user committed a direct popup or
+    /// inline edit and we want to land back on the same row).
+    field_vp_idx: usize,
+    /// Entry-form internal field cursor (only meaningful if `entry_form_open`).
     field_idx: Option<usize>,
     entry_form_open: bool,
     vec_editor_idx: Option<usize>,
@@ -391,14 +278,52 @@ impl ConfigTabState {
             pending_delete: None,
             pending_open_editor: false,
             pending_save: false,
+            pending_restore_snapshot: None,
             direct_vec_editor: None,
             direct_group_picker: None,
         }
     }
 
-    pub fn capture_selection(&self) -> ConfigSelectionSnapshot {
+    /// Take the pending snapshot for `save_config` to consume.
+    ///
+    /// `app.rs` MUST use this rather than re-capturing — capturing inside
+    /// `save_config` happens after `commit_*` already wiped the viewports.
+    pub fn consume_pending_snapshot(&mut self) -> Option<ConfigSelectionSnapshot> {
+        self.pending_restore_snapshot.take()
+    }
+
+    /// Mark config dirty and capture the cursor state for post-reload restore.
+    /// Call at every site that mutates `AppConfig` from the UI. This is the
+    /// single chokepoint that protects the user's cursor across save+reload.
+    ///
+    /// Does NOT trigger save — the user explicitly presses `s` from the main
+    /// view to flush changes. (Quit also flushes via `flush_dirty_config_to_disk`
+    /// as a safety net.) Earlier versions also set `pending_save`; that
+    /// autosave-on-mutate path was removed because it masked persistence bugs
+    /// that only surfaced on next program start.
+    fn mark_dirty(&mut self) {
+        if self.pending_restore_snapshot.is_none() {
+            self.pending_restore_snapshot = Some(self.capture_selection());
+        }
+        self.config_dirty = true;
+    }
+
+    /// Explicit save trigger from main-view `s` key. Returns true when a
+    /// save should be performed (i.e. config is dirty). Used by app.rs to
+    /// route the save through its existing save_config() path.
+    pub fn request_save_if_dirty(&mut self) -> bool {
+        if self.config_dirty {
+            self.pending_save = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(super) fn capture_selection(&self) -> ConfigSelectionSnapshot {
         let mut snap = ConfigSelectionSnapshot {
             sidebar_idx: self.sidebar_vp.selected,
+            field_vp_idx: self.field_vp.selected,
             ..Default::default()
         };
         if let Some(form) = self.entry_form.as_ref() {
@@ -415,13 +340,30 @@ impl ConfigTabState {
         snap
     }
 
-    pub fn restore_selection(&mut self, snap: ConfigSelectionSnapshot, _config: &AppConfig) {
+    pub fn restore_selection(&mut self, snap: ConfigSelectionSnapshot, config: &AppConfig) {
         let clamp = |idx: usize, len: usize| -> usize {
-            if len == 0 { 0 } else { idx.min(len - 1) }
+            if len == 0 {
+                0
+            } else {
+                idx.min(len - 1)
+            }
         };
         let sidebar_len = self.items.len();
         self.sidebar_vp.selected = clamp(snap.sidebar_idx, sidebar_len);
-        self.sidebar_vp.set_dims(sidebar_len, self.sidebar_vp.visible_height);
+        self.sidebar_vp
+            .set_dims(sidebar_len, self.sidebar_vp.visible_height);
+
+        // Outer right-panel field cursor: restored whenever the entry form is
+        // closed at restore time (direct popup commit, inline edit, cycle).
+        // The post-reload field list length depends on the current sidebar
+        // selection, so derive it before clamping.
+        if self.entry_form.is_none() {
+            let field_len = self.outer_field_len(config);
+            self.field_vp.selected = clamp(snap.field_vp_idx, field_len);
+            self.field_vp
+                .set_dims(field_len, self.field_vp.visible_height);
+        }
+
         if snap.entry_form_open {
             if let (Some(form), Some(fi)) = (self.entry_form.as_mut(), snap.field_idx) {
                 let flen = form.fields.len();
@@ -447,18 +389,44 @@ impl ConfigTabState {
         }
     }
 
+    /// Number of fields in the right-panel for the currently-selected sidebar
+    /// item. Used by `restore_selection` to clamp `field_vp_idx`.
+    fn outer_field_len(&self, config: &AppConfig) -> usize {
+        match self.items.get(self.sidebar_vp.selected) {
+            Some(SidebarItem::SectionSettings) => settings_fields(&config.settings).len(),
+            Some(SidebarItem::Host(i)) => config
+                .host
+                .get(*i)
+                .map(host_fields)
+                .map(|f| f.len())
+                .unwrap_or(0),
+            Some(SidebarItem::Check(i)) => config
+                .check
+                .get(*i)
+                .map(check_fields)
+                .map(|f| f.len())
+                .unwrap_or(0),
+            Some(SidebarItem::Sync(i)) => config
+                .sync
+                .get(*i)
+                .map(sync_fields)
+                .map(|f| f.len())
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     pub fn reload(&mut self, config: &AppConfig, config_path: Option<&std::path::Path>) {
+        // Preserve viewport selections across rebuild — `restore_selection`
+        // (called by `save_config` after this) clamps them against the new
+        // dimensions. Previously this wiped `field_vp`, which is why the
+        // right-panel cursor jumped to the first row after every save.
         self.items = build_sidebar_items(config);
         let new_len = self.items.len();
-        let old_sel = self.sidebar_vp.selected;
-        self.sidebar_vp = Viewport::new();
-        self.sidebar_vp.set_dims(new_len, 0);
-        if old_sel < new_len {
-            for _ in 0..old_sel {
-                self.sidebar_vp.move_down();
-            }
-        }
-        self.field_vp = Viewport::new();
+        self.sidebar_vp
+            .set_dims(new_len, self.sidebar_vp.visible_height);
+        // field_vp dims depend on the (potentially new) selection; leave them
+        // for restore_selection to recompute.
         self.config_mtime =
             config_path.and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
         self.config_dirty = false;
@@ -484,7 +452,7 @@ impl ConfigTabState {
             None => "Config".to_string(),
             Some(SidebarItem::SectionSettings) => {
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = settings_descriptors(&config.settings);
+                    let fields = settings_fields(&config.settings);
                     let name = fields
                         .get(self.field_vp.selected)
                         .map(|f| f.key.as_str())
@@ -503,7 +471,7 @@ impl ConfigTabState {
             Some(SidebarItem::Host(i)) => {
                 let name = config.host.get(*i).map(|h| h.name.as_str()).unwrap_or("?");
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = host_descriptors(&config.host[*i]);
+                    let fields = host_fields(&config.host[*i]);
                     let fname = fields
                         .get(self.field_vp.selected)
                         .map(|f| f.key.as_str())
@@ -522,7 +490,7 @@ impl ConfigTabState {
             Some(SidebarItem::Check(i)) => {
                 let label = entry_label_check(config, *i);
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = check_descriptors(&config.check[*i]);
+                    let fields = check_fields(&config.check[*i]);
                     let fname = fields
                         .get(self.field_vp.selected)
                         .map(|f| f.key.as_str())
@@ -541,7 +509,7 @@ impl ConfigTabState {
             Some(SidebarItem::Sync(i)) => {
                 let label = entry_label_sync(config, *i);
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = sync_descriptors(&config.sync[*i]);
+                    let fields = sync_fields(&config.sync[*i]);
                     let fname = fields
                         .get(self.field_vp.selected)
                         .map(|f| f.key.as_str())
@@ -663,6 +631,10 @@ impl ConfigTabState {
                     self.start_edit_entry(config);
                     true
                 }
+                KeyCode::Char('s') => {
+                    self.request_save_if_dirty();
+                    true
+                }
                 KeyCode::Enter => {
                     if let Some(
                         SidebarItem::Host(_) | SidebarItem::Check(_) | SidebarItem::Sync(_),
@@ -675,6 +647,12 @@ impl ConfigTabState {
                 _ => false,
             },
             ConfigZone::FieldTable => match key.code {
+                KeyCode::Char('s') => {
+                    // Explicit save (matches Sidebar 's'). Only fires if
+                    // there's a dirty change to flush.
+                    self.request_save_if_dirty();
+                    true
+                }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.field_vp.move_up();
                     true
@@ -706,24 +684,21 @@ impl ConfigTabState {
                             let new_val = tribool_cycle_back(&f.display_value);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                             return true;
                         }
                         if matches!(f.kind, FieldKind::ShellEnum) {
                             let new_val = shell_cycle_back(&f.display_value);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(&new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                             return true;
                         }
                         if let FieldKind::Enum { variants } = &f.kind {
                             let new_val = enum_cycle(variants, &f.display_value, false);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(&new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                             return true;
                         }
                     }
@@ -737,22 +712,19 @@ impl ConfigTabState {
                             let new_val = tribool_cycle_fwd(&f.display_value);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                         }
                         if matches!(f.kind, FieldKind::ShellEnum) {
                             let new_val = shell_cycle_fwd(&f.display_value);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(&new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                         }
                         if let FieldKind::Enum { variants } = &f.kind {
                             let new_val = enum_cycle(variants, &f.display_value, true);
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(&new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                         }
                     }
                     true
@@ -768,8 +740,7 @@ impl ConfigTabState {
                             };
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(new_val, config);
-                            self.config_dirty = true;
-                            self.pending_save = true;
+                            self.mark_dirty();
                             return true;
                         }
                     }
@@ -784,8 +755,7 @@ impl ConfigTabState {
                                 let new_val = tribool_cycle_fwd(&f.display_value);
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(new_val, config);
-                                self.config_dirty = true;
-                                self.pending_save = true;
+                                self.mark_dirty();
                                 return true;
                             }
                             FieldKind::Bool => {
@@ -796,16 +766,14 @@ impl ConfigTabState {
                                 };
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(new_val, config);
-                                self.config_dirty = true;
-                                self.pending_save = true;
+                                self.mark_dirty();
                                 return true;
                             }
                             FieldKind::ShellEnum => {
                                 let new_val = shell_cycle_fwd(&f.display_value);
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(&new_val, config);
-                                self.config_dirty = true;
-                                self.pending_save = true;
+                                self.mark_dirty();
                                 return true;
                             }
                             FieldKind::Enum { variants } => {
@@ -813,50 +781,80 @@ impl ConfigTabState {
                                     enum_cycle(variants.as_slice(), &f.display_value, true);
                                 self.editing_field_index = field_idx;
                                 self.commit_inline_edit(&new_val, config);
-                                self.config_dirty = true;
-                                self.pending_save = true;
+                                self.mark_dirty();
                                 return true;
                             }
                             FieldKind::VecString
                             | FieldKind::VecCheckPath
                             | FieldKind::CheckEnabled => {
-                                // New behavior: open direct sub-popup instead of full entry form (Step 5)
+                                // Direct sub-popup. Three modes:
+                                //   - CheckEnabled  → group picker over fixed CHECK_ENABLED_OPTIONS
+                                //   - VecString/groups → group picker over collect_known_groups
+                                //   - anything else → free-text vec editor
                                 let field_key = f.key.clone();
                                 let current_val = f.display_value.clone();
                                 let sidebar_item = self.items[self.sidebar_vp.selected].clone();
                                 let field_index = self.field_vp.selected;
-                                let use_group_picker = matches!(f.kind, FieldKind::CheckEnabled)
-                                    || (matches!(f.kind, FieldKind::VecString)
-                                        && field_key == "groups");
-                                if use_group_picker {
-                                    let current = parse_bracket_list(&current_val);
-                                    let (available, checked) =
-                                        collect_known_groups(config, &current);
-                                    let mut vp = Viewport::new();
-                                    vp.set_dims(available.len(), 0);
-                                    self.direct_group_picker = Some(DirectGroupPickerState {
-                                        field_index,
-                                        sidebar_item,
-                                        field_key,
-                                        available,
-                                        checked,
-                                        vp,
-                                        add_input: InputField::new(""),
-                                        add_input_active: false,
-                                    });
-                                } else {
-                                    let items = parse_bracket_list(&current_val);
-                                    let mut vp = Viewport::new();
-                                    vp.set_dims(items.len(), 0);
-                                    self.direct_vec_editor = Some(DirectVecEditorState {
-                                        field_index,
-                                        sidebar_item,
-                                        field_key,
-                                        items,
-                                        vp,
-                                        input: InputField::new(""),
-                                        input_active: false,
-                                    });
+                                let current = parse_bracket_list(&current_val);
+                                match f.kind {
+                                    FieldKind::CheckEnabled => {
+                                        let available: Vec<String> = CHECK_ENABLED_OPTIONS
+                                            .iter()
+                                            .map(|(k, _)| (*k).to_string())
+                                            .collect();
+                                        let descriptions: Vec<String> = CHECK_ENABLED_OPTIONS
+                                            .iter()
+                                            .map(|(_, d)| (*d).to_string())
+                                            .collect();
+                                        let checked: Vec<bool> =
+                                            available.iter().map(|a| current.contains(a)).collect();
+                                        let mut vp = Viewport::new();
+                                        vp.set_dims(available.len(), 0);
+                                        self.direct_group_picker = Some(DirectGroupPickerState {
+                                            field_index,
+                                            sidebar_item,
+                                            field_key,
+                                            available,
+                                            checked,
+                                            descriptions,
+                                            allow_add: false,
+                                            vp,
+                                            add_input: InputField::new(""),
+                                            add_input_active: false,
+                                        });
+                                    }
+                                    FieldKind::VecString if field_key == "groups" => {
+                                        let (available, checked) =
+                                            collect_known_groups(config, &current);
+                                        let mut vp = Viewport::new();
+                                        vp.set_dims(available.len(), 0);
+                                        self.direct_group_picker = Some(DirectGroupPickerState {
+                                            field_index,
+                                            sidebar_item,
+                                            field_key,
+                                            available,
+                                            checked,
+                                            descriptions: vec![],
+                                            allow_add: true,
+                                            vp,
+                                            add_input: InputField::new(""),
+                                            add_input_active: false,
+                                        });
+                                    }
+                                    _ => {
+                                        let items = current;
+                                        let mut vp = Viewport::new();
+                                        vp.set_dims(items.len(), 0);
+                                        self.direct_vec_editor = Some(DirectVecEditorState {
+                                            field_index,
+                                            sidebar_item,
+                                            field_key,
+                                            items,
+                                            vp,
+                                            input: InputField::new(""),
+                                            input_active: false,
+                                        });
+                                    }
                                 }
                                 return true;
                             }
@@ -887,8 +885,7 @@ impl ConfigTabState {
             if input.mode == InputMode::Normal {
                 // Confirmed via Enter
                 self.commit_inline_edit(&input.value, config);
-                self.config_dirty = true;
-                self.pending_save = true;
+                self.mark_dirty();
             }
             return true;
         }
@@ -931,23 +928,43 @@ impl ConfigTabState {
             Some(i) => i.clone(),
             None => return,
         };
+        let idx = self.editing_field_index;
+        // Look up the key from the current schema. The index→key indirection
+        // is the bridge between the viewport (index-based) and apply (key-based).
         match item {
             SidebarItem::SectionSettings => {
-                apply_settings_field(config, self.editing_field_index, new_value);
+                if let Some(key) = settings_fields(&config.settings)
+                    .get(idx)
+                    .map(|f| f.key.clone())
+                {
+                    apply_settings(config, &key, new_value);
+                }
             }
             SidebarItem::Host(i) => {
-                if let Some(h) = config.host.get_mut(i) {
-                    apply_host_field(h, self.editing_field_index, new_value);
+                let key = config
+                    .host
+                    .get(i)
+                    .and_then(|h| host_fields(h).get(idx).map(|f| f.key.clone()));
+                if let (Some(h), Some(key)) = (config.host.get_mut(i), key) {
+                    apply_host(h, &key, new_value);
                 }
             }
             SidebarItem::Check(i) => {
-                if let Some(c) = config.check.get_mut(i) {
-                    apply_check_field(c, self.editing_field_index, new_value);
+                let key = config
+                    .check
+                    .get(i)
+                    .and_then(|c| check_fields(c).get(idx).map(|f| f.key.clone()));
+                if let (Some(c), Some(key)) = (config.check.get_mut(i), key) {
+                    apply_check(c, &key, new_value);
                 }
             }
             SidebarItem::Sync(i) => {
-                if let Some(s) = config.sync.get_mut(i) {
-                    apply_sync_field(s, self.editing_field_index, new_value);
+                let key = config
+                    .sync
+                    .get(i)
+                    .and_then(|s| sync_fields(s).get(idx).map(|f| f.key.clone()));
+                if let (Some(s), Some(key)) = (config.sync.get_mut(i), key) {
+                    apply_sync(s, &key, new_value);
                 }
             }
             _ => {}
@@ -968,8 +985,10 @@ impl ConfigTabState {
         {
             let mut ve = self.entry_form.as_mut().unwrap().vec_editor.take().unwrap();
             let handled = self.handle_vec_editor_key(key, &mut ve);
-            if let Some(form) = self.entry_form.as_mut() {
-                form.vec_editor = Some(ve);
+            if !ve.closing {
+                if let Some(form) = self.entry_form.as_mut() {
+                    form.vec_editor = Some(ve);
+                }
             }
             return handled;
         }
@@ -1182,6 +1201,7 @@ impl ConfigTabState {
                                         vp: Viewport::new(),
                                         input: InputField::new(""),
                                         input_active: false,
+                                        closing: false,
                                     };
                                     ve.vp.set_dims(ve.items.len(), 0);
                                     form.vec_editor = Some(ve);
@@ -1199,9 +1219,9 @@ impl ConfigTabState {
                 true
             }
             KeyCode::Char('s') => {
+                // commit_entry_form already marks dirty (sets pending_save +
+                // captures snapshot) and takes self.entry_form.
                 self.commit_entry_form(config);
-                self.entry_form = None;
-                self.pending_save = true;
                 true
             }
             KeyCode::Esc => {
@@ -1270,7 +1290,10 @@ impl ConfigTabState {
                 let form = self.entry_form.as_mut().unwrap();
                 form.fields[idx].display_value = display;
                 form.dirty = true;
-                form.vec_editor = None;
+                // Setting form.vec_editor = None here is a no-op because the
+                // caller already `take()`d it; flag closing so the caller
+                // drops the local instead of restoring it.
+                ve.closing = true;
                 true
             }
             _ => true, // swallow — prevent global keys (q, ?) from firing
@@ -1379,7 +1402,13 @@ impl ConfigTabState {
     }
 
     fn commit_entry_form(&mut self, config: &mut AppConfig) {
+        // Snapshot BEFORE any state mutation. After this point the entry form
+        // closes and the sidebar/field viewports get rebuilt; capturing later
+        // would lose the user's cursor position.
+        self.mark_dirty();
         let form = self.entry_form.take().unwrap();
+        // Single dispatch: feed every form field through the unified apply().
+        // Same code path as right-panel inline edits.
         match form.kind {
             EntryFormKind::Host => {
                 let mut h = if let Some(idx) = form.edit_index {
@@ -1394,26 +1423,7 @@ impl ConfigTabState {
                     }
                 };
                 for f in &form.fields {
-                    match f.key.as_str() {
-                        "name" => h.name = f.display_value.clone(),
-                        "ssh_host" => h.ssh_host = f.display_value.clone(),
-                        "shell" => {
-                            h.shell = match f.display_value.as_str() {
-                                "powershell" => ShellType::PowerShell,
-                                "cmd" => ShellType::Cmd,
-                                _ => ShellType::Sh,
-                            }
-                        }
-                        "groups" => h.groups = parse_bracket_list(&f.display_value),
-                        "proxy_jump" => {
-                            h.proxy_jump = if f.display_value.is_empty() {
-                                None
-                            } else {
-                                Some(f.display_value.clone())
-                            }
-                        }
-                        _ => {}
-                    }
+                    apply_host(&mut h, &f.key, &f.display_value);
                 }
                 if let Some(idx) = form.edit_index {
                     config.host[idx] = h;
@@ -1436,13 +1446,7 @@ impl ConfigTabState {
                     }
                 };
                 for f in &form.fields {
-                    match f.key.as_str() {
-                        "enabled" => c.enabled = parse_bracket_list(&f.display_value),
-                        "groups" => c.groups = parse_bracket_list(&f.display_value),
-                        "enable_hosts" => c.enable_hosts = f.display_value == "true",
-                        "enable_all" => c.enable_all = f.display_value == "true",
-                        _ => {}
-                    }
+                    apply_check(&mut c, &f.key, &f.display_value);
                 }
                 if let Some(idx) = form.edit_index {
                     config.check[idx] = c;
@@ -1468,31 +1472,7 @@ impl ConfigTabState {
                     }
                 };
                 for f in &form.fields {
-                    match f.key.as_str() {
-                        "paths" => s.paths = parse_bracket_list(&f.display_value),
-                        "groups" => s.groups = parse_bracket_list(&f.display_value),
-                        "enable_hosts" => s.enable_hosts = f.display_value == "true",
-                        "enable_all" => s.enable_all = f.display_value == "true",
-                        "recursive" => s.recursive = f.display_value == "true",
-                        "mode" => {
-                            s.mode = if f.display_value.is_empty() {
-                                None
-                            } else {
-                                Some(f.display_value.clone())
-                            }
-                        }
-                        "propagate_deletes" => {
-                            s.propagate_deletes = tribool_to_opt(&f.display_value);
-                        }
-                        "source" => {
-                            s.source = if f.display_value.is_empty() {
-                                None
-                            } else {
-                                Some(f.display_value.clone())
-                            }
-                        }
-                        _ => {}
-                    }
+                    apply_sync(&mut s, &f.key, &f.display_value);
                 }
                 if let Some(idx) = form.edit_index {
                     config.sync[idx] = s;
@@ -1501,16 +1481,17 @@ impl ConfigTabState {
                 }
             }
         }
-        self.config_dirty = true;
+        // Rebuild sidebar items but preserve viewport selections (clamp later
+        // in restore_selection). `mark_dirty` above already captured the
+        // pre-rebuild indices into pending_restore_snapshot.
         let items = build_sidebar_items(config);
         self.items = items;
-        self.sidebar_vp = Viewport::new();
-        self.sidebar_vp.set_dims(self.items.len(), 0);
-        self.field_vp = Viewport::new();
-        ()
+        self.sidebar_vp
+            .set_dims(self.items.len(), self.sidebar_vp.visible_height);
     }
 
     pub fn execute_delete(&mut self, config: &mut AppConfig, kind: EntryFormKind, index: usize) {
+        self.mark_dirty();
         match kind {
             EntryFormKind::Host => {
                 if index < config.host.len() {
@@ -1528,12 +1509,10 @@ impl ConfigTabState {
                 }
             }
         }
-        self.config_dirty = true;
         let items = build_sidebar_items(config);
         self.items = items;
-        self.sidebar_vp = Viewport::new();
-        self.sidebar_vp.set_dims(self.items.len(), 0);
-        self.field_vp = Viewport::new();
+        self.sidebar_vp
+            .set_dims(self.items.len(), self.sidebar_vp.visible_height);
     }
 
     pub fn start_add_entry(&mut self, kind: EntryFormKind) {
@@ -1961,40 +1940,30 @@ impl ConfigTabState {
     pub fn current_descriptors(&self, config: &AppConfig) -> Vec<FieldDescriptor> {
         match self.items.get(self.sidebar_vp.selected) {
             None => vec![],
-            Some(SidebarItem::SectionSettings) => settings_descriptors(&config.settings),
+            Some(SidebarItem::SectionSettings) => settings_fields(&config.settings),
             Some(SidebarItem::SectionHosts) => {
                 vec![FieldDescriptor::readonly(
                     "hosts",
                     format!("{} configured", config.host.len()),
                 )]
             }
-            Some(SidebarItem::Host(i)) => config
-                .host
-                .get(*i)
-                .map(host_descriptors)
-                .unwrap_or_default(),
+            Some(SidebarItem::Host(i)) => config.host.get(*i).map(host_fields).unwrap_or_default(),
             Some(SidebarItem::SectionChecks) => {
                 vec![FieldDescriptor::readonly(
                     "checks",
                     format!("{} configured", config.check.len()),
                 )]
             }
-            Some(SidebarItem::Check(i)) => config
-                .check
-                .get(*i)
-                .map(check_descriptors)
-                .unwrap_or_default(),
+            Some(SidebarItem::Check(i)) => {
+                config.check.get(*i).map(check_fields).unwrap_or_default()
+            }
             Some(SidebarItem::SectionSyncs) => {
                 vec![FieldDescriptor::readonly(
                     "syncs",
                     format!("{} configured", config.sync.len()),
                 )]
             }
-            Some(SidebarItem::Sync(i)) => config
-                .sync
-                .get(*i)
-                .map(sync_descriptors)
-                .unwrap_or_default(),
+            Some(SidebarItem::Sync(i)) => config.sync.get(*i).map(sync_fields).unwrap_or_default(),
         }
     }
 
@@ -2203,9 +2172,12 @@ impl ConfigTabState {
         // always points to the same entry as `item`. commit_inline_edit uses the
         // viewport selection, so both paths are consistent.
         let _ = item; // documented invariant — not needed at runtime
+                      // Snapshot BEFORE mutation; the popup will be closed by the caller
+                      // right after this returns, and save_config's reload would otherwise
+                      // wipe the field_vp cursor.
+        self.mark_dirty();
         self.editing_field_index = field_index;
         self.commit_inline_edit(display_value, config);
-        self.config_dirty = true;
     }
 
     fn handle_direct_vec_editor_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
@@ -2272,7 +2244,6 @@ impl ConfigTabState {
                 };
                 self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
                 self.direct_vec_editor = None;
-                self.pending_save = true;
                 true
             }
             KeyCode::Esc => {
@@ -2325,9 +2296,11 @@ impl ConfigTabState {
             }
             KeyCode::Char('a') => {
                 let gp = self.direct_group_picker.as_mut().unwrap();
-                gp.add_input = InputField::new("");
-                gp.add_input.activate();
-                gp.add_input_active = true;
+                if gp.allow_add {
+                    gp.add_input = InputField::new("");
+                    gp.add_input.activate();
+                    gp.add_input_active = true;
+                }
                 true
             }
             KeyCode::Enter | KeyCode::Char('s') => {
@@ -2349,7 +2322,6 @@ impl ConfigTabState {
                 };
                 self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
                 self.direct_group_picker = None;
-                self.pending_save = true;
                 true
             }
             KeyCode::Esc => {
@@ -2433,7 +2405,7 @@ impl ConfigTabState {
         use super::super::components::popup::centered_rect;
         let popup_area = centered_rect(60, 70, area);
         frame.render_widget(Clear, popup_area);
-        let title = format!(" Pick groups: {} ", dgp.field_key);
+        let title = format!(" Pick: {} ", dgp.field_key);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme.accent_config))
@@ -2444,20 +2416,19 @@ impl ConfigTabState {
         let visible_h = inner.height as usize;
         let mut vp = dgp.vp.clone();
         let extra = if dgp.add_input_active { 4 } else { 2 };
-        vp.set_dims(
-            dgp.available.len(),
-            visible_h.saturating_sub(extra + 2),
-        );
+        vp.set_dims(dgp.available.len(), visible_h.saturating_sub(extra + 2));
+        let hints = if dgp.allow_add {
+            "  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)"
+        } else {
+            "  (Space:toggle  Enter/s:apply  Esc:cancel)"
+        };
         let mut lines: Vec<Line> = vec![
-            Line::from(Span::styled(
-                "  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)",
-                Style::default().fg(theme.warning),
-            )),
+            Line::from(Span::styled(hints, Style::default().fg(theme.warning))),
             Line::from(""),
         ];
         if dgp.available.is_empty() {
             lines.push(Line::from(Span::styled(
-                "  (no known groups)",
+                "  (no options)",
                 Style::default().fg(theme.inactive),
             )));
         } else {
@@ -2473,7 +2444,11 @@ impl ConfigTabState {
                 } else {
                     Style::default()
                 };
-                lines.push(Line::from(Span::styled(format!("  {mark} {group}"), style)));
+                let label = match dgp.descriptions.get(abs) {
+                    Some(d) if !d.is_empty() => format!("  {mark} {group}  — {d}"),
+                    _ => format!("  {mark} {group}"),
+                };
+                lines.push(Line::from(Span::styled(label, style)));
             }
         }
         if dgp.add_input_active {
@@ -2524,298 +2499,6 @@ fn sidebar_item_display(item: &SidebarItem, config: &AppConfig) -> (&'static str
     }
 }
 
-// ── Field descriptor builders (Phase 7 typed version) ────────────────────────
-
-fn settings_descriptors(s: &Settings) -> Vec<FieldDescriptor> {
-    let mut f = vec![
-        FieldDescriptor::scalar(
-            "default_timeout",
-            format!("{}s", s.default_timeout),
-            FieldKind::U64,
-        ),
-        FieldDescriptor::scalar(
-            "data_retention_days",
-            format!("{}d", s.data_retention_days),
-            FieldKind::U64,
-        ),
-        FieldDescriptor::scalar(
-            "conflict_strategy",
-            format!("{:?}", s.conflict_strategy).to_lowercase(),
-            FieldKind::Enum {
-                variants: vec!["newest", "skip"],
-            },
-        ),
-        FieldDescriptor::scalar(
-            "propagate_deletes",
-            s.propagate_deletes.to_string(),
-            FieldKind::Bool,
-        ),
-        FieldDescriptor::scalar(
-            "max_concurrency",
-            s.max_concurrency.to_string(),
-            FieldKind::U64,
-        ),
-        FieldDescriptor::scalar(
-            "max_per_host_concurrency",
-            s.max_per_host_concurrency.to_string(),
-            FieldKind::U64,
-        ),
-    ];
-    if let Some(d) = &s.state_dir {
-        f.push(FieldDescriptor::scalar(
-            "state_dir",
-            d.display().to_string(),
-            FieldKind::OptionalString,
-        ));
-    }
-    if let Some(fmt) = &s.default_output_format {
-        f.push(FieldDescriptor::scalar(
-            "default_output_format",
-            fmt.clone(),
-            FieldKind::OptionalString,
-        ));
-    }
-    if !s.skipped_hosts.is_empty() {
-        f.push(FieldDescriptor::vec_field(
-            "skipped_hosts",
-            format!("[{}]", s.skipped_hosts.join(", ")),
-            FieldKind::VecString,
-        ));
-    }
-    f
-}
-
-fn host_descriptors(h: &HostEntry) -> Vec<FieldDescriptor> {
-    let mut f = vec![
-        FieldDescriptor::scalar("name", h.name.clone(), FieldKind::String),
-        FieldDescriptor::scalar("ssh_host", h.ssh_host.clone(), FieldKind::String),
-        FieldDescriptor::scalar("shell", h.shell.to_string(), FieldKind::ShellEnum),
-        FieldDescriptor::vec_field(
-            "groups",
-            if h.groups.is_empty() {
-                "(none)".to_string()
-            } else {
-                format!("[{}]", h.groups.join(", "))
-            },
-            FieldKind::VecString,
-        ),
-    ];
-    if let Some(pj) = &h.proxy_jump {
-        f.push(FieldDescriptor::scalar(
-            "proxy_jump",
-            pj.clone(),
-            FieldKind::OptionalString,
-        ));
-    }
-    f
-}
-
-fn check_descriptors(c: &CheckEntry) -> Vec<FieldDescriptor> {
-    let mut f = vec![
-        FieldDescriptor::vec_field(
-            "enabled",
-            if c.enabled.is_empty() {
-                "(none)".to_string()
-            } else {
-                format!("[{}]", c.enabled.join(", "))
-            },
-            FieldKind::VecString,
-        ),
-        FieldDescriptor::vec_field(
-            "groups",
-            if c.groups.is_empty() {
-                "(unscoped)".to_string()
-            } else {
-                format!("[{}]", c.groups.join(", "))
-            },
-            FieldKind::VecString,
-        ),
-        FieldDescriptor::scalar("enable_hosts", c.enable_hosts.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("enable_all", c.enable_all.to_string(), FieldKind::Bool),
-    ];
-    for (i, p) in c.path.iter().enumerate() {
-        f.push(FieldDescriptor::scalar(
-            &format!("path[{i}]"),
-            format!("{} → {}", p.label, p.path),
-            FieldKind::String,
-        ));
-    }
-    f
-}
-
-fn sync_descriptors(s: &SyncEntry) -> Vec<FieldDescriptor> {
-    let mut f = vec![
-        FieldDescriptor::vec_field(
-            "paths",
-            if s.paths.is_empty() {
-                "(none)".to_string()
-            } else {
-                format!("[{}]", s.paths.join(", "))
-            },
-            FieldKind::VecString,
-        ),
-        FieldDescriptor::vec_field(
-            "groups",
-            if s.groups.is_empty() {
-                "(unscoped)".to_string()
-            } else {
-                format!("[{}]", s.groups.join(", "))
-            },
-            FieldKind::VecString,
-        ),
-        FieldDescriptor::scalar("enable_hosts", s.enable_hosts.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("enable_all", s.enable_all.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("recursive", s.recursive.to_string(), FieldKind::Bool),
-    ];
-    if let Some(m) = &s.mode {
-        f.push(FieldDescriptor::scalar(
-            "mode",
-            m.clone(),
-            FieldKind::String,
-        ));
-    }
-    f.push(FieldDescriptor::scalar(
-        "propagate_deletes",
-        tribool_from_opt(s.propagate_deletes).to_string(),
-        FieldKind::TriBool,
-    ));
-    if let Some(src) = &s.source {
-        f.push(FieldDescriptor::scalar(
-            "source",
-            src.clone(),
-            FieldKind::OptionalString,
-        ));
-    }
-    f
-}
-
-// ── Inline-edit field writers (mutate AppConfig in place) ────────────────────
-
-fn apply_settings_field(config: &mut AppConfig, idx: usize, val: &str) {
-    let fields = settings_descriptors(&config.settings);
-    if idx >= fields.len() {
-        return;
-    }
-    let key = &fields[idx].key;
-    match key.as_str() {
-        "default_timeout" => {
-            if let Ok(v) = val.parse::<u64>() {
-                config.settings.default_timeout = v;
-            }
-        }
-        "data_retention_days" => {
-            if let Ok(v) = val.parse::<u64>() {
-                config.settings.data_retention_days = v;
-            }
-        }
-        "conflict_strategy" => {
-            config.settings.conflict_strategy = match val {
-                "skip" => ConflictStrategy::Skip,
-                _ => ConflictStrategy::Newest,
-            };
-        }
-        "propagate_deletes" => {
-            config.settings.propagate_deletes = val == "true";
-        }
-        "max_concurrency" => {
-            if let Ok(v) = val.parse::<usize>() {
-                config.settings.max_concurrency = v;
-            }
-        }
-        "max_per_host_concurrency" => {
-            if let Ok(v) = val.parse::<usize>() {
-                config.settings.max_per_host_concurrency = v;
-            }
-        }
-        "state_dir" => {
-            config.settings.state_dir = if val.is_empty() {
-                None
-            } else {
-                Some(std::path::PathBuf::from(val))
-            }
-        }
-        "default_output_format" => {
-            config.settings.default_output_format = if val.is_empty() {
-                None
-            } else {
-                Some(val.to_string())
-            }
-        }
-        _ => {}
-    }
-}
-
-fn apply_host_field(host: &mut HostEntry, idx: usize, val: &str) {
-    let fields = host_descriptors(host);
-    if idx >= fields.len() {
-        return;
-    }
-    match fields[idx].key.as_str() {
-        "name" => host.name = val.to_string(),
-        "ssh_host" => host.ssh_host = val.to_string(),
-        "shell" => {
-            host.shell = match val {
-                "powershell" => ShellType::PowerShell,
-                "cmd" => ShellType::Cmd,
-                _ => ShellType::Sh,
-            }
-        }
-        "proxy_jump" => {
-            host.proxy_jump = if val.is_empty() {
-                None
-            } else {
-                Some(val.to_string())
-            }
-        }
-        _ => {}
-    }
-}
-
-fn apply_check_field(check: &mut CheckEntry, idx: usize, val: &str) {
-    let fields = check_descriptors(check);
-    if idx >= fields.len() {
-        return;
-    }
-    match fields[idx].key.as_str() {
-        "enable_hosts" => check.enable_hosts = val == "true",
-        "enable_all" => check.enable_all = val == "true",
-        k if k.starts_with("path[") => {
-            // path editing is complex; handled via forms
-        }
-        _ => {}
-    }
-}
-
-fn apply_sync_field(sync: &mut SyncEntry, idx: usize, val: &str) {
-    let fields = sync_descriptors(sync);
-    if idx >= fields.len() {
-        return;
-    }
-    match fields[idx].key.as_str() {
-        "enable_hosts" => sync.enable_hosts = val == "true",
-        "enable_all" => sync.enable_all = val == "true",
-        "recursive" => sync.recursive = val == "true",
-        "mode" => {
-            sync.mode = if val.is_empty() {
-                None
-            } else {
-                Some(val.to_string())
-            }
-        }
-        "propagate_deletes" => {
-            sync.propagate_deletes = tribool_to_opt(val);
-        }
-        "source" => {
-            sync.source = if val.is_empty() {
-                None
-            } else {
-                Some(val.to_string())
-            }
-        }
-        _ => {}
-    }
-}
-
 // ── Label helpers ────────────────────────────────────────────────────────────
 
 pub fn entry_label_check(config: &AppConfig, i: usize) -> String {
@@ -2848,14 +2531,6 @@ pub fn entry_label_sync(config: &AppConfig, i: usize) -> String {
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
-
-fn tribool_from_opt(v: Option<bool>) -> &'static str {
-    match v {
-        None => "inherit",
-        Some(true) => "yes",
-        Some(false) => "no",
-    }
-}
 
 fn apply_add_input_to_picker(
     value: &str,
@@ -2891,14 +2566,6 @@ fn tribool_cycle_back(s: &str) -> &'static str {
         "no" => "yes",
         "yes" => "inherit",
         _ => "no",
-    }
-}
-
-fn tribool_to_opt(s: &str) -> Option<bool> {
-    match s {
-        "yes" => Some(true),
-        "no" => Some(false),
-        _ => None,
     }
 }
 
@@ -2956,18 +2623,6 @@ fn strip_unit(s: &str) -> String {
         .to_string()
 }
 
-fn parse_bracket_list(s: &str) -> Vec<String> {
-    let inner = s.trim_start_matches('[').trim_end_matches(']');
-    if inner.is_empty() || inner == "(none)" || inner == "(unscoped)" {
-        return vec![];
-    }
-    inner
-        .split(',')
-        .map(|item| item.trim().to_string())
-        .filter(|item| !item.is_empty())
-        .collect()
-}
-
 // Collect known groups across config (Step 3)
 fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>, Vec<bool>) {
     let mut known: std::collections::BTreeSet<String> = config
@@ -3009,8 +2664,8 @@ use super::super::components::popup::centered_rect;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
     use ratatui::layout::Rect;
+    use ratatui::{backend::TestBackend, Terminal};
 
     fn render_once(state: &mut ConfigTabState, config: &AppConfig) {
         // Create a 80x24 test terminal and render one frame.
@@ -3089,6 +2744,7 @@ mod tests {
                 vp: Viewport::new(),
                 input: InputField::new(""),
                 input_active: false,
+                closing: false,
             });
         } else {
             panic!("entry_form not set");
@@ -3242,7 +2898,10 @@ mod tests {
         state.entry_form = Some(form);
         // Move the field cursor inside the form to a non-zero position.
         if let Some(form) = state.entry_form.as_mut() {
-            assert!(form.fields.len() >= 2, "host form should have multiple fields");
+            assert!(
+                form.fields.len() >= 2,
+                "host form should have multiple fields"
+            );
             form.field_vp.set_dims(form.fields.len(), 0);
             form.field_vp.move_down();
             form.field_vp.move_down();
@@ -3301,6 +2960,7 @@ mod tests {
                 vp: Viewport::new(),
                 input_active: false,
                 input: InputField::new(""),
+                closing: false,
             };
             ve.vp.set_dims(3, 0);
             ve.vp.move_down();
@@ -3375,6 +3035,7 @@ mod tests {
                 vp: Viewport::new(),
                 input_active: false,
                 input: InputField::new(""),
+                closing: false,
             };
             ve.vp.set_dims(2, 0);
             ve.vp.move_down();
@@ -3389,6 +3050,7 @@ mod tests {
                 vp: Viewport::new(),
                 input_active: false,
                 input: InputField::new(""),
+                closing: false,
             });
         }
         state.restore_selection(snap, &config);
@@ -3432,5 +3094,162 @@ mod tests {
             .map(|d| d.vp.selected)
             .unwrap();
         assert_eq!(restored, 2);
+    }
+
+    // ── New tests covering the unified-schema refactor (2026-05-21) ──────────
+    //
+    // These reproduce the three production bugs that the refactor targets:
+    //   1. Hosts/Checks/Syncs Vec edits via direct popup were silently dropped
+    //   2. Cursor jumped to first row after entry-form commit (sidebar)
+    //   3. Cursor jumped to first row after direct popup commit (field_vp)
+
+    fn make_host_config() -> AppConfig {
+        let mut c = AppConfig::default();
+        c.host.push(HostEntry {
+            name: "h1".into(),
+            ssh_host: "1.2.3.4".into(),
+            shell: ShellType::Sh,
+            groups: vec!["old".into()],
+            proxy_jump: None,
+        });
+        c
+    }
+
+    #[test]
+    fn direct_popup_commit_persists_host_groups() {
+        let mut config = make_host_config();
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Host(_)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        // Simulate: open direct vec editor on "groups" field (index 3 in host_fields)
+        state.direct_vec_editor = Some(DirectVecEditorState {
+            field_index: 3,
+            sidebar_item: state.items[sid].clone(),
+            field_key: "groups".to_string(),
+            items: vec!["a".into(), "b".into()],
+            vp: Viewport::new(),
+            input: InputField::new(""),
+            input_active: false,
+        });
+        // Commit via the same code path the 's' key takes.
+        state.commit_direct_popup_field(state.items[sid].clone(), 3, "[a, b]", &mut config);
+        // The Vec field MUST be written through to config (the original bug).
+        assert_eq!(config.host[0].groups, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn direct_popup_commit_preserves_field_vp_cursor() {
+        let mut config = make_host_config();
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Host(_)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        state
+            .field_vp
+            .set_dims(host_fields(&config.host[0]).len(), 0);
+        // Move field cursor to "groups" (index 3) before opening popup.
+        state.field_vp.selected = 3;
+
+        state.direct_vec_editor = Some(DirectVecEditorState {
+            field_index: 3,
+            sidebar_item: state.items[sid].clone(),
+            field_key: "groups".to_string(),
+            items: vec!["x".into()],
+            vp: Viewport::new(),
+            input: InputField::new(""),
+            input_active: false,
+        });
+        state.commit_direct_popup_field(state.items[sid].clone(), 3, "[x]", &mut config);
+        state.direct_vec_editor = None;
+        // Snapshot must have been captured by commit_direct_popup_field's mark_dirty.
+        let snap = state.consume_pending_snapshot().expect("snapshot captured");
+        assert_eq!(
+            snap.field_vp_idx, 3,
+            "snapshot must remember field_vp cursor"
+        );
+
+        // Simulate save_config's reload+restore (without touching disk).
+        state.reload(&config, None);
+        state.restore_selection(snap, &config);
+        assert_eq!(
+            state.field_vp.selected, 3,
+            "field cursor must stay on the edited row, not jump to 0"
+        );
+    }
+
+    #[test]
+    fn entry_form_commit_preserves_sidebar_cursor() {
+        let mut config = make_host_config();
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Host(_)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        // Open entry form (edit-in-place via `e`).
+        state.entry_form = Some(EntryFormState::new_host(&config.host[0]));
+        if let Some(form) = state.entry_form.as_mut() {
+            form.edit_index = Some(0);
+        }
+        // Commit (== pressing 's' in the form).
+        state.commit_entry_form(&mut config);
+        let snap = state.consume_pending_snapshot().expect("snapshot captured");
+        assert_eq!(snap.sidebar_idx, sid);
+
+        state.reload(&config, None);
+        state.restore_selection(snap, &config);
+        assert_eq!(
+            state.sidebar_vp.selected, sid,
+            "sidebar cursor must stay on the edited entry, not jump to 0"
+        );
+    }
+
+    #[test]
+    fn check_enabled_via_direct_popup_persists() {
+        let mut config = AppConfig::default();
+        config.check.push(CheckEntry {
+            name: None,
+            id: generate_entry_id("check"),
+            enabled: vec![],
+            path: vec![],
+            groups: vec![],
+            enable_hosts: true,
+            enable_all: true,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Check(_)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        // enabled is index 0 in check_fields.
+        state.direct_group_picker = Some(DirectGroupPickerState {
+            field_index: 0,
+            sidebar_item: state.items[sid].clone(),
+            field_key: "enabled".to_string(),
+            available: vec!["online".into(), "cpu_load".into()],
+            checked: vec![true, true],
+            descriptions: vec![],
+            allow_add: false,
+            vp: Viewport::new(),
+            add_input: InputField::new(""),
+            add_input_active: false,
+        });
+        state.commit_direct_popup_field(
+            state.items[sid].clone(),
+            0,
+            "[online, cpu_load]",
+            &mut config,
+        );
+        assert_eq!(config.check[0].enabled, vec!["online", "cpu_load"]);
     }
 }

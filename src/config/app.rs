@@ -2,9 +2,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use toml_edit::{value, DocumentMut, Item, Table, Value};
+use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, Value};
 
-use super::schema::AppConfig;
+use super::schema::{AppConfig, CheckEntry, HostEntry, SyncEntry};
 
 /// Returns the platform-appropriate config directory for ssync.
 pub fn config_dir() -> Result<PathBuf> {
@@ -133,11 +133,11 @@ pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
 
 /// Mutate a parsed TOML document in place to reflect the in-memory `AppConfig`.
 ///
-/// **Phase 0.5 scope:** scalar fields under `[settings]` are written through;
-/// per-entry scalars inside `[[host]]` / `[[check]]` / `[[sync]]` and full
-/// array-of-tables add/remove/reorder are deferred to Phase 7.
-///
-/// Unknown top-level keys are preserved automatically by `toml_edit`.
+/// `[settings]` is updated in place via `set_scalar`, preserving per-key inline
+/// comments and decor. `[[host]]` / `[[check]]` / `[[sync]]` array-of-tables
+/// are fully rebuilt: per-entry inline comments are lost but top-level section
+/// comments survive. Unknown top-level keys are preserved automatically by
+/// `toml_edit`.
 /// Set a scalar key in `table`, preserving the existing item's decor
 /// (whitespace and inline comments) if the key already exists.
 fn set_scalar<V: Into<Value>>(table: &mut Table, key: &str, v: V) {
@@ -229,6 +229,117 @@ fn apply_config_to_doc(doc: &mut DocumentMut, config: &AppConfig) {
             settings.remove("default_output_format");
         }
     }
+
+    // Host/Check/Sync sections: rebuild the entire ArrayOfTables. This
+    // preserves the top-level [settings] in-place edits (with comments) but
+    // loses per-entry inline comments — acceptable trade-off given the file
+    // is tool-managed and inline comments inside [[host]]/[[check]]/[[sync]]
+    // entries are rare in practice. Previously these sections were never
+    // written back, so any Hosts/Checks/Syncs edit through the TUI was
+    // silently dropped on save (only [settings] persisted).
+    write_aot(doc, "host", &config.host, host_to_table);
+    write_aot(doc, "check", &config.check, check_to_table);
+    write_aot(doc, "sync", &config.sync, sync_to_table);
+}
+
+fn write_aot<T, F>(doc: &mut DocumentMut, key: &str, items: &[T], to_table: F)
+where
+    F: Fn(&T) -> Table,
+{
+    if items.is_empty() {
+        doc.remove(key);
+        return;
+    }
+    let mut aot = ArrayOfTables::new();
+    for item in items {
+        aot.push(to_table(item));
+    }
+    doc.insert(key, Item::ArrayOfTables(aot));
+}
+
+fn string_array(values: &[String]) -> Array {
+    let mut arr = Array::new();
+    for v in values {
+        arr.push(v.as_str());
+    }
+    arr
+}
+
+fn host_to_table(h: &HostEntry) -> Table {
+    let mut t = Table::new();
+    t.insert("name", value(h.name.as_str()));
+    t.insert("ssh_host", value(h.ssh_host.as_str()));
+    t.insert(
+        "shell",
+        value(match h.shell {
+            super::schema::ShellType::Sh => "sh",
+            super::schema::ShellType::PowerShell => "powershell",
+            super::schema::ShellType::Cmd => "cmd",
+        }),
+    );
+    if !h.groups.is_empty() {
+        t.insert("groups", value(Value::Array(string_array(&h.groups))));
+    }
+    if let Some(pj) = &h.proxy_jump {
+        if !pj.is_empty() {
+            t.insert("proxy_jump", value(pj.as_str()));
+        }
+    }
+    t
+}
+
+fn check_to_table(c: &CheckEntry) -> Table {
+    let mut t = Table::new();
+    if let Some(n) = &c.name {
+        t.insert("name", value(n.as_str()));
+    }
+    if !c.id.is_empty() {
+        t.insert("id", value(c.id.as_str()));
+    }
+    t.insert("enabled", value(Value::Array(string_array(&c.enabled))));
+    if !c.groups.is_empty() {
+        t.insert("groups", value(Value::Array(string_array(&c.groups))));
+    }
+    t.insert("enable_hosts", value(c.enable_hosts));
+    t.insert("enable_all", value(c.enable_all));
+    if !c.path.is_empty() {
+        let mut aot = ArrayOfTables::new();
+        for p in &c.path {
+            let mut pt = Table::new();
+            pt.insert("path", value(p.path.as_str()));
+            pt.insert("label", value(p.label.as_str()));
+            aot.push(pt);
+        }
+        t.insert("path", Item::ArrayOfTables(aot));
+    }
+    t
+}
+
+fn sync_to_table(s: &SyncEntry) -> Table {
+    let mut t = Table::new();
+    if let Some(n) = &s.name {
+        t.insert("name", value(n.as_str()));
+    }
+    if !s.id.is_empty() {
+        t.insert("id", value(s.id.as_str()));
+    }
+    t.insert("paths", value(Value::Array(string_array(&s.paths))));
+    if !s.groups.is_empty() {
+        t.insert("groups", value(Value::Array(string_array(&s.groups))));
+    }
+    t.insert("enable_hosts", value(s.enable_hosts));
+    t.insert("enable_all", value(s.enable_all));
+    t.insert("recursive", value(s.recursive));
+    if let Some(m) = &s.mode {
+        t.insert("mode", value(m.as_str()));
+    }
+    if let Some(pd) = s.propagate_deletes {
+        t.insert("propagate_deletes", value(pd));
+    }
+    if let Some(src) = &s.source {
+        t.insert("source", value(src.as_str()));
+    }
+    t
 }
 
 /// Inject helpful comments into TOML config for [settings], [[check]] and [[sync]] sections.
@@ -405,6 +516,94 @@ unknown_future_option = true
         assert!(
             after.contains("unknown_future_option = true"),
             "unknown key dropped:\n{after}"
+        );
+    }
+
+    /// Regression: editing a Host/Check/Sync field must persist across a
+    /// reload. Pre-fix `apply_config_to_doc` only wrote [settings] back, so
+    /// any change to host.groups / check.enabled / sync.paths was silently
+    /// dropped — the file on disk was the original.
+    #[test]
+    fn host_check_sync_edits_round_trip_through_save() {
+        use super::super::schema::{CheckEntry, CheckPath, HostEntry, ShellType, SyncEntry};
+        let original = "\
+[settings]
+default_timeout = 30
+
+[[host]]
+name = \"h1\"
+ssh_host = \"1.2.3.4\"
+shell = \"sh\"
+groups = [\"old\"]
+
+[[check]]
+enabled = [\"online\"]
+enable_hosts = true
+enable_all = true
+
+[[sync]]
+paths = [\"/etc\"]
+enable_hosts = true
+enable_all = true
+recursive = false
+";
+        let f = write_tmp(original);
+        let mut cfg = load(Some(f.path())).unwrap().unwrap();
+        // Mutate one field of each kind through the same path the TUI uses.
+        cfg.host[0].groups = vec!["new1".into(), "new2".into()];
+        cfg.host[0].proxy_jump = Some("bastion".into());
+        cfg.check[0].enabled = vec!["online".into(), "cpu_load".into()];
+        cfg.check[0].path = vec![CheckPath {
+            path: "/var/log".into(),
+            label: "Logs".into(),
+        }];
+        cfg.sync[0].paths = vec!["/srv".into(), "/opt".into()];
+        cfg.sync[0].propagate_deletes = Some(true);
+
+        save(&cfg, Some(f.path())).unwrap();
+        let reloaded = load(Some(f.path())).unwrap().unwrap();
+
+        assert_eq!(reloaded.host[0].groups, vec!["new1", "new2"]);
+        assert_eq!(reloaded.host[0].proxy_jump.as_deref(), Some("bastion"));
+        assert_eq!(reloaded.check[0].enabled, vec!["online", "cpu_load"]);
+        assert_eq!(reloaded.check[0].path.len(), 1);
+        assert_eq!(reloaded.check[0].path[0].label, "Logs");
+        assert_eq!(reloaded.sync[0].paths, vec!["/srv", "/opt"]);
+        assert_eq!(reloaded.sync[0].propagate_deletes, Some(true));
+
+        // Settings still untouched.
+        assert_eq!(reloaded.settings.default_timeout, 30);
+
+        // Silence unused imports if the schema types change.
+        let _ = (
+            HostEntry {
+                name: String::new(),
+                ssh_host: String::new(),
+                shell: ShellType::Sh,
+                groups: vec![],
+                proxy_jump: None,
+            },
+            CheckEntry {
+                name: None,
+                id: String::new(),
+                enabled: vec![],
+                path: vec![],
+                groups: vec![],
+                enable_hosts: true,
+                enable_all: true,
+            },
+            SyncEntry {
+                name: None,
+                id: String::new(),
+                paths: vec![],
+                groups: vec![],
+                enable_hosts: true,
+                enable_all: true,
+                recursive: false,
+                mode: None,
+                propagate_deletes: None,
+                source: None,
+            },
         );
     }
 
