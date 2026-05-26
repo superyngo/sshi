@@ -157,6 +157,10 @@ pub enum Commands {
         #[arg(short = 'S', long)]
         sudo: bool,
 
+        /// Preview without executing
+        #[arg(long)]
+        dry_run: bool,
+
         #[command(flatten)]
         output: OutputArgs,
     },
@@ -267,6 +271,15 @@ mod tests {
     #[test]
     fn exec_rejects_yes() {
         assert!(Cli::try_parse_from(["ssync", "exec", "--all", "--yes", "s.sh"]).is_err());
+    }
+
+    #[test]
+    fn run_parses_dry_run() {
+        let cli = Cli::try_parse_from(["ssync", "run", "--all", "--dry-run", "echo hi"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Run { dry_run, .. } => assert!(dry_run),
+            _ => panic!("expected Run"),
+        }
     }
 }
 

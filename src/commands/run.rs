@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
+use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
 use crate::host::shell;
 use crate::output::printer;
@@ -169,8 +170,23 @@ pub async fn run(
     ctx: &Context,
     command: &str,
     sudo: bool,
+    dry_run: bool,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
+    if dry_run {
+        let display = if sudo {
+            shell::sudo_wrap(ShellType::Sh, command)
+        } else {
+            command.to_string()
+        };
+        println!("[dry-run] Command: {}", display);
+        let hosts = ctx.resolve_hosts()?;
+        for host in &hosts {
+            printer::print_host_line(&host.name, "ok", "would execute");
+        }
+        return Ok(());
+    }
+
     let sink = PrinterSink;
     let CommandReport::Run(report) = run_core(ctx, command, sudo, Some(&sink)).await? else {
         unreachable!("run_core always returns CommandReport::Run")
