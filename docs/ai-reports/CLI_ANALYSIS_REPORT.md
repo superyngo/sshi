@@ -1,7 +1,7 @@
-# SSYNC CLI Analysis Report
+# SSHI CLI Analysis Report
 
 **Analysis Date**: 2025  
-**Scope**: All 9 SSYNC commands and their CLI argument structures  
+**Scope**: All 9 SSHI commands and their CLI argument structures  
 **Source Files Analyzed**: 
 - `src/cli.rs` (lines 1-215)
 - `src/commands/mod.rs` (lines 1-251)
@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-This report documents the complete CLI argument structure across all SSYNC commands and identifies 8 significant inconsistencies, including 3 critical issues that will affect users.
+This report documents the complete CLI argument structure across all SSHI commands and identifies 8 significant inconsistencies, including 3 critical issues that will affect users.
 
 ### Critical Issues Found
 
@@ -114,10 +114,10 @@ pub help: Option<bool>,
 
 **User impact**:
 ```bash
-ssync check -H              # Works: shows help
-ssync check -h host1        # Works: targets host1
-ssync init -h               # Works: shows help
-ssync log -h filter         # Works: filters by hostname
+sshi check -H              # Works: shows help
+sshi check -h host1        # Works: targets host1
+sshi init -h               # Works: shows help
+sshi log -h filter         # Works: filters by hostname
 ```
 
 The same flag has different meanings in different contexts.
@@ -144,9 +144,9 @@ sudo: bool,  // Boolean flag, no value
 
 **Examples**:
 ```bash
-ssync sync --all -s web1           # ✓ Works: source=web1
-ssync run --all -s "whoami"        # ✗ Fails: -s is bool, not source
-ssync run --all --sudo "whoami"    # ✓ Works: explicit form
+sshi sync --all -s web1           # ✓ Works: source=web1
+sshi run --all -s "whoami"        # ✗ Fails: -s is bool, not source
+sshi run --all --sudo "whoami"    # ✓ Works: explicit form
 ```
 
 ### 3. --timeout Not Available for INIT (MAJOR)
@@ -179,9 +179,9 @@ pub async fn new_without_targets(verbose: bool, config_path: Option<&Path>) -> R
 
 **Examples**:
 ```bash
-ssync init --timeout 60            # ✗ Error: unknown argument
-ssync check --all --timeout 60     # ✓ Works
-ssync sync --all --timeout 60      # ✓ Works
+sshi init --timeout 60            # ✗ Error: unknown argument
+sshi check --all --timeout 60     # ✓ Works
+sshi sync --all --timeout 60      # ✓ Works
 ```
 
 **Impact**: If default timeout is too short, user must:
@@ -233,18 +233,18 @@ host: Option<String>,  // -h to filter by hostname
 
 **Examples**:
 ```bash
-ssync log -h web1           # Filter logs for host web1
-ssync log --help            # Show help
-ssync init -h               # Show help (standard)
-ssync check -h web1         # Target web1 (TargetArgs)
+sshi log -h web1           # Filter logs for host web1
+sshi log --help            # Show help
+sshi init -h               # Show help (standard)
+sshi check -h web1         # Target web1 (TargetArgs)
 ```
 
 ### 7. Other Minor Issues
 
 **Positional Argument Placement**:
 - RUN and EXEC require positional args after options
-- `ssync run --all "cmd"` works
-- `ssync run "cmd" --all` fails
+- `sshi run --all "cmd"` works
+- `sshi run "cmd" --all` fails
 
 **--serial on Read-Only Commands**:
 - LIST, CHECKOUT have `--serial` but don't benefit from it
@@ -256,7 +256,7 @@ ssync check -h web1         # Target web1 (TargetArgs)
 
 Flow:
 ```
-User input: ssync check --all --timeout 60
+User input: sshi check --all --timeout 60
   ↓
 clap parses: target.timeout = Some(60)
   ↓
@@ -268,7 +268,7 @@ Result: context.timeout = 60 (CLI wins)
 
 Without CLI timeout:
 ```
-User input: ssync check --all
+User input: sshi check --all
   ↓
 clap parses: target.timeout = None
   ↓
@@ -282,7 +282,7 @@ Result: context.timeout = config.settings.default_timeout
 
 Flow:
 ```
-User input: ssync init
+User input: sshi init
   ↓
 clap parses: (no --timeout field)
   ↓
@@ -388,7 +388,7 @@ Each command file contains specific implementation:
 
 ## Conclusion
 
-The SSYNC CLI has a well-structured argument system based on TargetArgs for remote commands and specific arguments for each command. However, three critical inconsistencies should be addressed:
+The SSHI CLI has a well-structured argument system based on TargetArgs for remote commands and specific arguments for each command. However, three critical inconsistencies should be addressed:
 
 1. The help flag mechanism should be standardized
 2. The -s flag conflict between commands should be resolved

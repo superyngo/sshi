@@ -2,19 +2,19 @@
 
 **Date**: 2026-03-21
 **Status**: Draft
-**Scope**: Windows as ssync client (primary), Cmd remote shell fixes (secondary)
+**Scope**: Windows as sshi client (primary), Cmd remote shell fixes (secondary)
 
 ---
 
 ## Problem Statement
 
-ssync currently assumes a Unix client environment. Running on Windows fails immediately:
+sshi currently assumes a Unix client environment. Running on Windows fails immediately:
 
 ```
-PS> ssync init
+PS> sshi init
 Error: Failed to create socket directory
 Caused by: 系統找不到指定的路徑。 (os error 3)
-at path "F:/tmp\\ssync-GfIODq"
+at path "F:/tmp\\sshi-GfIODq"
 ```
 
 Root causes:
@@ -67,7 +67,7 @@ pub fn new() -> Result<Self> {
         ConnectionMode::Direct
     } else {
         let socket_dir = tempfile::Builder::new()
-            .prefix("ssync-")
+            .prefix("sshi-")
             .tempdir_in("/tmp")
             .context("Failed to create socket directory")?;
         ConnectionMode::Pooled { socket_dir }
@@ -142,21 +142,21 @@ if let Some(sock) = socket {
 
 #### Current Problem
 
-Probe paths (`/tmp/.ssync_probe`, `~/.ssync_probe`) and cleanup command (`rm -f`) are Sh-only — both fail on Cmd/PowerShell remotes.
+Probe paths (`/tmp/.sshi_probe`, `~/.sshi_probe`) and cleanup command (`rm -f`) are Sh-only — both fail on Cmd/PowerShell remotes.
 
 #### Fix
 
 ```rust
 pub async fn scp_probe(host: &HostEntry, timeout_secs: u64, socket: Option<&Path>) -> Result<()> {
     let temp_dir = tempfile::tempdir().context("Failed to create temp dir for scp probe")?;
-    let local_probe = temp_dir.path().join("ssync_probe");
+    let local_probe = temp_dir.path().join("sshi_probe");
     std::fs::write(&local_probe, b"0")?;
 
     // Shell-aware remote probe paths
     let probe_paths: Vec<&str> = match host.shell {
-        ShellType::Sh => vec!["/tmp/.ssync_probe", "~/.ssync_probe"],
-        ShellType::PowerShell => vec!["$env:TEMP\\.ssync_probe"],
-        ShellType::Cmd => vec!["%TEMP%\\.ssync_probe"],
+        ShellType::Sh => vec!["/tmp/.sshi_probe", "~/.sshi_probe"],
+        ShellType::PowerShell => vec!["$env:TEMP\\.sshi_probe"],
+        ShellType::Cmd => vec!["%TEMP%\\.sshi_probe"],
     };
 
     for remote_path in &probe_paths {
@@ -359,7 +359,7 @@ The `get_expanded_temp_dir_pooled()` function already handles all three shells c
 1. **Unit tests**: Add `#[cfg(target_os = "windows")]` test for `ConnectionManager::new()` succeeding
 2. **Unit tests**: Test `to_tilde_path()` with both `HOME` and `USERPROFILE`
 3. **Existing tests**: Run full `cargo test` to ensure no regressions
-4. **Manual test**: `ssync init` on Windows should complete without socket directory error
+4. **Manual test**: `sshi init` on Windows should complete without socket directory error
 5. **Build matrix**: Verify both `cargo build` and `cargo build --no-default-features` on Windows
 
 ## Out of Scope

@@ -7,9 +7,9 @@
 
 ## Problem Statement
 
-Three improvements to ssync:
+Three improvements to sshi:
 
-1. **Init stale host detection:** When running `ssync init`, hosts that exist in ssync's config but have been removed from `~/.ssh/config` are silently kept. Users have no way to know or clean up stale entries.
+1. **Init stale host detection:** When running `sshi init`, hosts that exist in sshi's config but have been removed from `~/.ssh/config` are silently kept. Users have no way to know or clean up stale entries.
 
 2. **Sync summary hostnames:** The sync summary shows transfer counts (`1 synced  1 failed`) but doesn't indicate *which* hosts succeeded or failed. Users must scan verbose output to identify problematic hosts.
 
@@ -21,7 +21,7 @@ Three improvements to ssync:
 
 ### Approach
 
-Add stale-host detection directly in the `init` command flow. After loading the SSH config and existing ssync config, compare host lists. If stale hosts are found, print a summary and prompt for confirmation before removing.
+Add stale-host detection directly in the `init` command flow. After loading the SSH config and existing sshi config, compare host lists. If stale hosts are found, print a summary and prompt for confirmation before removing.
 
 ### Location
 
@@ -31,10 +31,10 @@ Add stale-host detection directly in the `init` command flow. After loading the 
 
 1. Collect all `ssh_host` values from `ctx.config.host`
 2. Build a set of SSH config host names from `ssh_hosts`
-3. Any ssync host whose `ssh_host` is NOT in the SSH config set → stale
+3. Any sshi host whose `ssh_host` is NOT in the SSH config set → stale
 4. If stale hosts found:
    - Print summary listing each stale host
-   - Prompt: `Remove these N host(s) from ssync config? [y/N]:`
+   - Prompt: `Remove these N host(s) from sshi config? [y/N]:`
    - On `y`/`Y`: filter stale hosts out of the config's `host` vector
 5. In dry-run mode: print the stale list with `[dry-run]` note, skip prompt
 6. Only remove from `[[host]]` section — leave `[[check]]` and `[[sync]]` entries untouched
@@ -50,7 +50,7 @@ Scanning ~/.ssh/config...
 Found 2 host(s) no longer in ~/.ssh/config:
   - oldserver
   - retired-pi
-Remove these 2 host(s) from ssync config? [y/N]: y
+Remove these 2 host(s) from sshi config? [y/N]: y
 Removed 2 stale host(s).
 ```
 

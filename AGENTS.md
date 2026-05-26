@@ -1,13 +1,13 @@
-# AGENTS.md - Shared AI Agent Prompt for ssync
+# AGENTS.md - Shared AI Agent Prompt for sshi
 
 ## Build, Test, and Quality Commands
 
 ```bash
-# Build (two binaries: ssync and ssync-tui)
-cargo build                                       # ssync only (headless; default)
-cargo build --bin ssync-tui --features tui        # TUI binary
-cargo build --release --bin ssync                 # Release headless
-cargo build --release --bin ssync-tui --features tui  # Release TUI
+# Build (two binaries: sshi and sshi-tui)
+cargo build                                       # sshi only (headless; default)
+cargo build --bin sshi-tui --features tui        # TUI binary
+cargo build --release --bin sshi                 # Release headless
+cargo build --release --bin sshi-tui --features tui  # Release TUI
 
 # Check without building (faster)
 cargo check
@@ -107,8 +107,8 @@ cargo fmt --check
 
 ### Paths
 - Use `dirs` crate for cross-platform paths
-- Config: `dirs::config_dir()/ssync/`
-- State: `dirs::state_dir()/ssync/` (fallback: `dirs::data_local_dir()/ssync/`)
+- Config: `dirs::config_dir()/sshi/`
+- State: `dirs::state_dir()/sshi/` (fallback: `dirs::data_local_dir()/sshi/`)
 - SSH config: `~/.ssh/config`
 
 ### Output Formatting
@@ -135,7 +135,7 @@ cargo fmt --check
 
 ## Architecture Overview
 
-ssync is a CLI tool managing remote hosts over SSH. Single binary, no embedded SSH.
+sshi is a CLI tool managing remote hosts over SSH. Single binary, no embedded SSH.
 
 **Module Structure:**
 - `cli.rs` - Clap CLI definitions

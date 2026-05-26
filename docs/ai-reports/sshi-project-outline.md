@@ -1,4 +1,4 @@
-# ssync — 專案大綱
+# sshi — 專案大綱
 
 > 以 `~/.ssh/config` 為基礎的個人跨平台遠端管理工具
 
@@ -20,7 +20,7 @@
 
 ### 定位
 
-ssync 是一個單一 binary 的命令列工具，無需在遠端安裝任何 client，以使用者既有的 `~/.ssh/config` 作為 host 來源，提供檔案同步、系統狀態監控與遠端執行等功能。
+sshi 是一個單一 binary 的命令列工具，無需在遠端安裝任何 client，以使用者既有的 `~/.ssh/config` 作為 host 來源，提供檔案同步、系統狀態監控與遠端執行等功能。
 
 ### 核心特性
 
@@ -96,7 +96,7 @@ std::process::Command → ssh / scp / rsync
 ## 3. 專案架構
 
 ```
-ssync/
+sshi/
 ├── Cargo.toml
 ├── Cargo.lock
 ├── README.md
@@ -108,7 +108,7 @@ ssync/
     │
     ├── config/
     │   ├── mod.rs
-    │   ├── app.rs               # 讀寫 ~/.config/ssync/config.toml
+    │   ├── app.rs               # 讀寫 ~/.config/sshi/config.toml
     │   ├── schema.rs            # serde 結構體（AppConfig, HostEntry, SyncGroup…）
     │   └── ssh_config.rs        # 解析 ~/.ssh/config，取 Host 清單與連線參數
     │
@@ -153,21 +153,21 @@ ssync/
 ## 4. 安裝後資料夾與檔案結構
 
 ```
-~/.config/ssync/
+~/.config/sshi/
 └── config.toml              # 主設定檔（init 建立，使用者手動維護）
 
-~/.local/state/ssync/
-├── ssync.db                 # SQLite state DB（check 快照、sync 狀態、操作 log）
-└── ssync.log                # 文字 log（操作摘要，供 log 子命令讀取）
+~/.local/state/sshi/
+├── sshi.db                 # SQLite state DB（check 快照、sync 狀態、操作 log）
+└── sshi.log                # 文字 log（操作摘要，供 log 子命令讀取）
 ```
 
-ssync 本體為單一 binary，建議安裝至 `~/.local/bin/ssync` 或 `/usr/local/bin/ssync`。
+sshi 本體為單一 binary，建議安裝至 `~/.local/bin/sshi` 或 `/usr/local/bin/sshi`。
 
 ---
 
 ## 5. 設定檔規範
 
-### 完整範例：`~/.config/ssync/config.toml`
+### 完整範例：`~/.config/sshi/config.toml`
 
 ```toml
 # ── 全域設定 ────────────────────────────────────────────
@@ -312,12 +312,12 @@ hosts = ["home-linux", "vps", "work-win"]
 
 ---
 
-### `ssync init`
+### `sshi init`
 
 從 `~/.ssh/config` 匯入 host 清單，SSH 連線偵測遠端 shell 類型，建立或更新 `config.toml`。
 
 ```
-ssync init [OPTIONS]
+sshi init [OPTIONS]
 
 Options:
     --update     重新偵測已有 host 的 shell 類型
@@ -329,16 +329,16 @@ Options:
 1. 讀取 `~/.ssh/config`，列出所有 `Host`（排除萬用字元）
 2. 並行 SSH 連線，執行 shell 偵測指令（`uname` / `$PSVersionTable` / `ver`）
 3. 顯示偵測結果，請使用者確認
-4. 寫入 `~/.config/ssync/config.toml`
+4. 寫入 `~/.config/sshi/config.toml`
 
 ---
 
-### `ssync check`
+### `sshi check`
 
 並行收集指定 host 的系統快照，儲存至 state DB。
 
 ```
-ssync check [OPTIONS]
+sshi check [OPTIONS]
             [-g <group>] [-h <host>] [--all]
             [--serial] [--timeout <secs>]
 ```
@@ -373,12 +373,12 @@ ssync check [OPTIONS]
 
 ---
 
-### `ssync checkout`
+### `sshi checkout`
 
 從 state DB 讀取歷史資料，產生報表。
 
 ```
-ssync checkout [OPTIONS]
+sshi checkout [OPTIONS]
                [-g <group>] [-h <host>] [--all]
 
 Options:
@@ -407,12 +407,12 @@ Options:
 
 ---
 
-### `ssync sync`
+### `sshi sync`
 
 依最新版本雙向同步檔案或資料夾。
 
 ```
-ssync sync [OPTIONS]
+sshi sync [OPTIONS]
            [-g <group>] [-h <host>] [--all]
            [--serial] [--dry-run] [--timeout <secs>]
 ```
@@ -436,12 +436,12 @@ ssync sync [OPTIONS]
 
 ---
 
-### `ssync run`
+### `sshi run`
 
 對遠端 host 執行指令字串。
 
 ```
-ssync run <COMMAND> [OPTIONS]
+sshi run <COMMAND> [OPTIONS]
           [-g <group>] [-h <host>] [--all]
           [--serial] [--timeout <secs>]
           [-s, --sudo]
@@ -458,9 +458,9 @@ Options:
 **範例：**
 
 ```bash
-ssync run "df -h" --all
-ssync run "apt-get update" --group servers --sudo
-ssync run "Get-Service" --host work-win
+sshi run "df -h" --all
+sshi run "apt-get update" --group servers --sudo
+sshi run "Get-Service" --host work-win
 ```
 
 **互動式處理：**
@@ -471,12 +471,12 @@ ssync run "Get-Service" --host work-win
 
 ---
 
-### `ssync exec`
+### `sshi exec`
 
 將本機腳本上傳並在遠端執行。
 
 ```
-ssync exec <SCRIPT> [OPTIONS]
+sshi exec <SCRIPT> [OPTIONS]
            [-g <group>] [-h <host>] [--all]
            [--serial] [--dry-run] [--timeout <secs>]
            [-s, --sudo]
@@ -510,12 +510,12 @@ Options:
 
 ---
 
-### `ssync log`
+### `sshi log`
 
 查看操作紀錄。
 
 ```
-ssync log [OPTIONS]
+sshi log [OPTIONS]
 
 Options:
     --last <n>          顯示最後 n 筆（預設：20）
@@ -531,7 +531,7 @@ Options:
 
 ### 資料庫位置
 
-`~/.local/state/ssync/ssync.db`（SQLite，rusqlite bundled）
+`~/.local/state/sshi/sshi.db`（SQLite，rusqlite bundled）
 
 ---
 

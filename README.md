@@ -1,4 +1,4 @@
-# ssync
+# sshi
 
 SSH-config-based cross-platform remote management tool.
 
@@ -8,27 +8,27 @@ SSH-config-based cross-platform remote management tool.
 - **System Snapshots**: Collect and store system information for historical tracking
 - **File Synchronization**: Sync files across multiple hosts using collect-decide-distribute model
 - **Remote Execution**: Run commands or scripts on multiple hosts in parallel
-- **TUI Interface**: Interactive terminal UI (`ssync`) for browsing snapshot data, configuring filters, and running checks
+- **TUI Interface**: Interactive terminal UI (`sshi`) for browsing snapshot data, configuring filters, and running checks
 
 ## Installation
 
 ### Windows
 
 ```powershell
-$env:APP_NAME="ssync"; $env:REPO="superyngo/ssync"; irm https://gist.githubusercontent.com/superyngo/a6b786af38b8b4c2ce15a70ae5387bd7/raw/gpinstall.ps1 | iex
+$env:APP_NAME="sshi"; $env:REPO="superyngo/sshi"; irm https://gist.githubusercontent.com/superyngo/a6b786af38b8b4c2ce15a70ae5387bd7/raw/gpinstall.ps1 | iex
 ```
 
 ### macOS / Linux
 
 ```bash
-cargo install ssync
+cargo install sshi
 ```
 
 Or build from source:
 
 ```bash
-git clone https://github.com/superyngo/ssync.git
-cd ssync
+git clone https://github.com/superyngo/sshi.git
+cd sshi
 cargo install --path .
 ```
 
@@ -38,14 +38,14 @@ One binary is produced. Source builds default to headless; release downloads inc
 
 | Binary | Built with | What it does |
 |--------|-----------|--------------|
-| `ssync` | always | All CLI subcommands. Invoked without a subcommand → launches TUI (if built with `--features tui`), otherwise prints "Interactive TUI not available" and exits 1. |
+| `sshi` | always | All CLI subcommands. Invoked without a subcommand → launches TUI (if built with `--features tui`), otherwise prints "Interactive TUI not available" and exits 1. |
 
 ```bash
-cargo build --bin ssync                            # headless
-cargo build --bin ssync --features tui             # TUI build
+cargo build --bin sshi                            # headless
+cargo build --bin sshi --features tui             # TUI build
 ```
 
-> Running multiple `ssync` instances against the same config simultaneously
+> Running multiple `sshi` instances against the same config simultaneously
 > is not supported; they share a single state file with last-write-wins
 > semantics.
 
@@ -92,13 +92,13 @@ cargo build --bin ssync --features tui             # TUI build
 Import hosts from `~/.ssh/config`:
 
 ```bash
-ssync init
+sshi init
 ```
 
 Re-detect shell types for existing hosts:
 
 ```bash
-ssync init --update
+sshi init --update
 ```
 
 ### Check
@@ -107,16 +107,16 @@ Collect system snapshots from hosts:
 
 ```bash
 # All hosts
-ssync check --all
+sshi check --all
 
 # Specific group
-ssync check -g servers
+sshi check -g servers
 
 # Specific hosts
-ssync check -h host1,host2
+sshi check -h host1,host2
 
 # Sequential execution
-ssync check --all --serial
+sshi check --all --serial
 ```
 
 ### Sync
@@ -125,19 +125,19 @@ Synchronize files across hosts:
 
 ```bash
 # Sync configured files
-ssync sync --all
+sshi sync --all
 
 # Preview without changes
-ssync sync --all --dry-run
+sshi sync --all --dry-run
 
 # Sync specific files
-ssync sync --all -f /etc/hosts,/etc/resolv.conf
+sshi sync --all -f /etc/hosts,/etc/resolv.conf
 
 # Use fixed source host
-ssync sync --all -S host1
+sshi sync --all -S host1
 
 # Don't push to hosts missing files
-ssync sync --all --no-push-missing
+sshi sync --all --no-push-missing
 ```
 
 ### Run
@@ -146,13 +146,13 @@ Execute commands on remote hosts:
 
 ```bash
 # Run command on all hosts
-ssync run --all "uptime"
+sshi run --all "uptime"
 
 # Run with sudo
-ssync run --all "apt update" -S
+sshi run --all "apt update" -S
 
 # Auto-confirm prompts (serial mode)
-ssync run --all "systemctl restart nginx" --yes
+sshi run --all "systemctl restart nginx" --yes
 ```
 
 ### Exec
@@ -161,16 +161,16 @@ Upload and execute local scripts:
 
 ```bash
 # Execute script
-ssync exec --all ./deploy.sh
+sshi exec --all ./deploy.sh
 
 # Execute with sudo
-ssync exec --all ./install.sh -S
+sshi exec --all ./install.sh -S
 
 # Keep remote script after execution
-ssync exec --all ./script.sh --keep
+sshi exec --all ./script.sh --keep
 
 # Preview without executing
-ssync exec --all ./deploy.sh --dry-run
+sshi exec --all ./deploy.sh --dry-run
 ```
 
 ### Checkout
@@ -179,16 +179,16 @@ View historical data and generate reports:
 
 ```bash
 # Interactive TUI
-ssync checkout --all
+sshi checkout --all
 
 # HTML report
-ssync checkout --all --out report.html
+sshi checkout --all --out report.html
 
 # Show trend history
-ssync checkout --all --history
+sshi checkout --all --history
 
 # History from specific date
-ssync checkout --all --history --since "2025-01-01"
+sshi checkout --all --history --since "2025-01-01"
 ```
 
 ### Log
@@ -197,19 +197,19 @@ View operation logs:
 
 ```bash
 # Show last 20 entries
-ssync log
+sshi log
 
 # Show last 50 entries
-ssync log --last 50
+sshi log --last 50
 
 # Filter by host
-ssync log --host server1
+sshi log --host server1
 
 # Filter by action type
-ssync log --action sync
+sshi log --action sync
 
 # Show only errors
-ssync log --errors
+sshi log --errors
 ```
 
 ### Config
@@ -217,7 +217,7 @@ ssync log --errors
 Open configuration file in `$EDITOR`:
 
 ```bash
-ssync config
+sshi config
 ```
 
 ## Target Selection
@@ -235,7 +235,17 @@ All commands that operate on remote hosts support the following target options:
 
 ## Configuration
 
-The default config location is `~/.config/ssync/config.toml`.
+The default config location is `~/.config/sshi/config.toml`, and state (the
+snapshot database `sshi.db`) lives in `~/.local/state/sshi/`.
+
+> **Migrating from `ssync`:** this project was previously named `ssync` and used
+> `~/.config/ssync/` and `~/.local/state/ssync/`. The new paths are not read
+> automatically — move your existing files:
+>
+> ```sh
+> mv ~/.config/ssync ~/.config/sshi
+> mv ~/.local/state/ssync ~/.local/state/sshi
+> ```
 
 Example configuration:
 
@@ -243,7 +253,7 @@ Example configuration:
 [settings]
 default_timeout = 30
 max_concurrency = 10
-state_dir = "~/.local/share/ssync"
+state_dir = "~/.local/share/sshi"
 # default_output_format = "html"   # json (default) or html
 
 [[host]]

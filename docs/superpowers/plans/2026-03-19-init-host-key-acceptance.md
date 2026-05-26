@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** When `ssync init` encounters hosts with unknown SSH keys, prompt the user to accept them via `ssh-keyscan` and retry automatically.
+**Goal:** When `sshi init` encounters hosts with unknown SSH keys, prompt the user to accept them via `ssh-keyscan` and retry automatically.
 
 **Architecture:** After `pre_check`, partition failures by error type. For "Host key verification failed" errors, use `ssh -G` to resolve host/port, run `ssh-keyscan` in parallel, batch-append to `~/.ssh/known_hosts`, then retry with a second `ConnectionManager`. All changes are in `src/commands/init.rs`.
 

@@ -1,7 +1,7 @@
-# SSYNC Codebase Analysis Report
+# SSHI Codebase Analysis Report
 
 ## Overview
-SSYNC is an SSH-config-based cross-platform remote management tool built in Rust. It synchronizes files, runs commands, and collects metrics across multiple remote hosts using a collect-decide-distribute model.
+SSHI is an SSH-config-based cross-platform remote management tool built in Rust. It synchronizes files, runs commands, and collects metrics across multiple remote hosts using a collect-decide-distribute model.
 
 ---
 
@@ -65,11 +65,11 @@ Handles config file I/O and path resolution.
 
 **`config_dir() -> Result<PathBuf>`**
 - Returns platform-specific config directory:
-  - Linux/macOS: `~/.config/ssync`
-  - Windows: `%APPDATA%\ssync`
+  - Linux/macOS: `~/.config/sshi`
+  - Windows: `%APPDATA%\sshi`
 
 **`config_path() -> Result<PathBuf>`**
-- Returns `~/.config/ssync/config.toml`
+- Returns `~/.config/sshi/config.toml`
 
 **`resolve_path(custom_path: Option<&Path>) -> Result<PathBuf>`**
 - Uses custom path if provided, else `config_path()`

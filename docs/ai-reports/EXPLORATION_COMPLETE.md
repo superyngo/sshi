@@ -1,4 +1,4 @@
-# SSYNC Codebase Exploration - Complete Report
+# SSHI Codebase Exploration - Complete Report
 
 ## Documents Generated
 

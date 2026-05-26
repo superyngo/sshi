@@ -8,7 +8,7 @@
 
 ## Context
 
-`ssync` authenticates to remote hosts via `src/host/auth.rs::authenticate()`, which currently
+`sshi` authenticates to remote hosts via `src/host/auth.rs::authenticate()`, which currently
 calls `rpassword::prompt_password()` (or equivalent) directly — a blocking terminal prompt that
 is incompatible with the ratatui TUI event loop.  Auth scenarios that require interactive input:
 

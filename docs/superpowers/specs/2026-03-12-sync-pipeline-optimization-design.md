@@ -59,7 +59,7 @@ pub enum ConnectionState {
 - `reachable_hosts()` returns only hosts with `ConnectionState::Connected`
 - `cleanup()` on Drop: uses blocking `std::process::Command` to send `ssh -O exit` per master, then removes socket dir. An explicit `async fn shutdown()` is provided as the preferred cleanup path — callers should call it before drop when possible. Drop serves as a safety net.
 - ControlPersist=300s keeps idle connections alive for 5 minutes
-- **Socket path length**: macOS limits Unix domain socket paths to ~104 bytes. Socket dir uses `/tmp/ssync-XXXX/` with hashed hostnames (`%C` or truncated SHA) to stay under the limit.
+- **Socket path length**: macOS limits Unix domain socket paths to ~104 bytes. Socket dir uses `/tmp/sshi-XXXX/` with hashed hostnames (`%C` or truncated SHA) to stay under the limit.
 
 **Integration with executor.rs**: New function signatures accept an optional `&Path` for the control socket:
 

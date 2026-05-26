@@ -2,7 +2,7 @@
 
 ## Problem
 
-When `ssync init` encounters SSH hosts not yet in `~/.ssh/known_hosts`, the ControlMaster pre-check fails with "Host key verification failed" because `BatchMode=yes` disables interactive prompts. Users must manually SSH to each host to accept the key, then re-run `init`. This is tedious when onboarding many new hosts.
+When `sshi init` encounters SSH hosts not yet in `~/.ssh/known_hosts`, the ControlMaster pre-check fails with "Host key verification failed" because `BatchMode=yes` disables interactive prompts. Users must manually SSH to each host to accept the key, then re-run `init`. This is tedious when onboarding many new hosts.
 
 ## Solution
 
@@ -49,7 +49,7 @@ After `conn_mgr.pre_check()` returns, the existing code iterates `failed_hosts()
 ### ssh-keyscan Details
 
 - Command: `ssh-keyscan -H <ssh_host>` (hashes the hostname in known_hosts for privacy).
-- The `-p` flag is used if the host's SSH config specifies a non-standard port (parsed from the SSH host alias or extracted from ssh config). However, since ssync uses SSH host aliases from `~/.ssh/config`, the keyscan should use the resolved hostname/port. We'll use `ssh -G <alias>` to extract the actual `Hostname` and `Port`, then pass those to `ssh-keyscan -H -p <port> <hostname>`.
+- The `-p` flag is used if the host's SSH config specifies a non-standard port (parsed from the SSH host alias or extracted from ssh config). However, since sshi uses SSH host aliases from `~/.ssh/config`, the keyscan should use the resolved hostname/port. We'll use `ssh -G <alias>` to extract the actual `Hostname` and `Port`, then pass those to `ssh-keyscan -H -p <port> <hostname>`.
 - Output is collected in memory, then written to `~/.ssh/known_hosts` in a single append operation (avoids filesystem races from parallel writes).
 - Each keyscan has a timeout matching the configured SSH timeout.
 - Empty or comment-only output from keyscan is treated as a failure.

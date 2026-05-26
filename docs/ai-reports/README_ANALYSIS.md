@@ -1,6 +1,6 @@
-# SSYNC Codebase Analysis - Quick Start Guide
+# SSHI Codebase Analysis - Quick Start Guide
 
-This directory contains three comprehensive analysis documents of the SSYNC codebase.
+This directory contains three comprehensive analysis documents of the SSHI codebase.
 
 ## 📚 Documents Overview
 
@@ -8,7 +8,7 @@ This directory contains three comprehensive analysis documents of the SSYNC code
 The comprehensive architectural analysis document (652 lines).
 
 **What's inside:**
-- Complete overview of the SSYNC system
+- Complete overview of the SSHI system
 - Detailed breakdown of all 16 code components
 - Config schema structures (AppConfig, HostEntry, SyncFile, etc.)
 - CLI argument definitions with all subcommands
@@ -115,7 +115,7 @@ Navigation and quick reference document (294 lines).
 ## 🗺️ System Map
 
 ```
-ssync/
+sshi/
 ├── src/config/           ← Configuration system
 │   ├── schema.rs         (141 lines) - TOML structures
 │   ├── app.rs            (120 lines) - Config I/O
@@ -293,7 +293,7 @@ A: In src/config/app.rs inject_config_comments(). Also in schema.rs field commen
 ---
 
 Generated: March 2025
-Codebase: SSYNC (SSH-config-based remote management tool)
+Codebase: SSHI (SSH-config-based remote management tool)
 Status: Complete exploration with full documentation
 
 For questions, see the relevant analysis document sections listed above.

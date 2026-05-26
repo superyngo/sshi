@@ -1,4 +1,4 @@
-# ssync russh 遷移評估報告
+# sshi russh 遷移評估報告
 
 > 評估日期：2026-04-14
 > 專案版本：v0.5.0（7,652 行 Rust、63 個測試）
@@ -10,7 +10,7 @@
 
 ### 1.1 SSH 傳輸層面
 
-ssync 目前以 **黑盒子模式** 使用系統 `ssh`/`scp`：
+sshi 目前以 **黑盒子模式** 使用系統 `ssh`/`scp`：
 
 | 操作             | 實作方式                              | 呼叫處                                                       |
 |-----------------|--------------------------------------|-------------------------------------------------------------|
@@ -32,7 +32,7 @@ ssync 目前以 **黑盒子模式** 使用系統 `ssh`/`scp`：
 ```
 ConnectionManager
 ├── Pooled mode (Unix)
-│   ├── tempdir /tmp/ssync-XXXXXX/
+│   ├── tempdir /tmp/sshi-XXXXXX/
 │   ├── per-host socket: blake3(hostname)[0..12]
 │   ├── establish_master() → ssh -o ControlMaster=yes -N -f
 │   └── shutdown() → ssh -O exit 逐一關閉
@@ -54,7 +54,7 @@ ConnectionManager
 
 ### 1.4 SSH Config 依賴
 
-ssync 自行解析 `~/.ssh/config` 只取 5 個欄位（`Host`, `HostName`, `User`, `Port`, `IdentityFile`），其餘全靠 ssh binary 自行處理。init 時呼叫 `ssh -G <alias>` 讓 ssh 自己展開最終設定。
+sshi 自行解析 `~/.ssh/config` 只取 5 個欄位（`Host`, `HostName`, `User`, `Port`, `IdentityFile`），其餘全靠 ssh binary 自行處理。init 時呼叫 `ssh -G <alias>` 讓 ssh 自己展開最終設定。
 
 ---
 
@@ -151,7 +151,7 @@ pub struct ConnectionManager {
 
 **現狀**：手動解析 5 個欄位，其餘靠 ssh binary。
 
-**遷移後**：ssync **必須自己理解所有需要的 SSH config 欄位**，因為不再有 ssh binary 幫你解析。
+**遷移後**：sshi **必須自己理解所有需要的 SSH config 欄位**，因為不再有 ssh binary 幫你解析。
 
 需要新增解析的欄位：
 
@@ -259,8 +259,8 @@ async fn authenticate(session: &mut Handle<SshHandler>, user: &str, config: &Hos
 ```
 
 **邊界情況**：
-- 加密私鑰（需 passphrase）：ssync 目前用 `BatchMode=yes`，不支援互動輸入。遷移後同樣應 bail
-- SSH Agent forwarding：russh 支援，但 ssync 不需要
+- 加密私鑰（需 passphrase）：sshi 目前用 `BatchMode=yes`，不支援互動輸入。遷移後同樣應 bail
+- SSH Agent forwarding：russh 支援，但 sshi 不需要
 - Certificate-based auth：russh 支援 `authenticate_publickey` 搭配 cert，但需額外處理 `-cert.pub` 檔案
 - FIDO/U2F keys（ed25519-sk, ecdsa-sk）：**russh 目前不支援 FIDO key 認證**——這是 blocker 如果你的 homelab 用 hardware key
 
@@ -295,7 +295,7 @@ impl client::Handler for SshHandler {
             }
             Err(_) => {
                 // Not in known_hosts → 根據 StrictHostKeyChecking 決定
-                // ssync 的 init 流程已處理 keyscan，這裡應該 bail
+                // sshi 的 init 流程已處理 keyscan，這裡應該 bail
                 bail!("Unknown host key for {}", self.host)
             }
         }
@@ -465,7 +465,7 @@ async-trait = "0.1"      # Handler trait
 
 ### 4.3 Binary size 影響
 
-- 現狀：ssync 不含 crypto 依賴，binary 較小
+- 現狀：sshi 不含 crypto 依賴，binary 較小
 - russh 帶入：`ring` 或 `rust-crypto`（密碼學）、`ssh-encoding`、`ssh-key`
 - 預估增加：+2-4 MB（release build）
 - 交叉編譯：russh 使用 `ring`（有平台限制）或可選 `aws-lc-rs`
@@ -480,7 +480,7 @@ async-trait = "0.1"      # Handler trait
 |---|------|-------|------|------|
 | R1 | FIDO/U2F key 不支援 | 🔴 | 中 | russh 不支援 ed25519-sk/ecdsa-sk。如果任何 host 使用 hardware key，認證會失敗 |
 | R2 | SSH config 相容性缺口 | 🔴 | 高 | `Match`/`Include`/`CanonicalizeHostname` 等進階 directive 難以完整支援 |
-| R3 | Exit code 遺漏 | 🟡 | 中 | Channel event stream 的 ExitStatus 容易漏接，導致 ssync 狀態記錄出錯 |
+| R3 | Exit code 遺漏 | 🟡 | 中 | Channel event stream 的 ExitStatus 容易漏接，導致 sshi 狀態記錄出錯 |
 | R4 | SFTP 大檔案效能 | 🟡 | 中 | russh-sftp 的 streaming 效能可能不如系統 scp（需要 benchmark） |
 | R5 | 平台差異 | 🟡 | 低 | russh 在 Windows 上的 SSH Agent 支援（named pipe vs Unix socket）需要驗證 |
 | R6 | 加密私鑰 passphrase | 🟡 | 中 | 目前 BatchMode=yes 不需處理，但 russh 載入加密 key 時會失敗，需要明確跳過 |
@@ -525,7 +525,7 @@ async-trait = "0.1"      # Handler trait
 |------|------|
 | 效能提升 | 取決於 russh 的 crypto 實作效能 vs 系統 OpenSSH |
 | 更好的 Windows 體驗 | 取決於 russh 在 Windows 上的成熟度 |
-| 更好的 CI 整合 | 不需要在 CI 環境安裝 ssh，但 ssync 主要是 CLI 工具而非 library |
+| 更好的 CI 整合 | 不需要在 CI 環境安裝 ssh，但 sshi 主要是 CLI 工具而非 library |
 
 ### 6.3 代價
 
@@ -533,9 +533,9 @@ async-trait = "0.1"      # Handler trait
 |------|------|
 | 大量改動 | 估計改動 ~40% 的程式碼（~3,000 行） |
 | SSH config 相容性下降 | 不可能 100% 複製 OpenSSH 的所有 config 處理 |
-| 認證行為差異 | 用戶可能遇到「ssh 能連但 ssync 不能」的情況 |
+| 認證行為差異 | 用戶可能遇到「ssh 能連但 sshi 不能」的情況 |
 | 偵錯困難 | 出問題時不能用 `ssh -vvv` 對比排查 |
-| 維護負擔增加 | 認證/config/known_hosts 都變成 ssync 的責任 |
+| 維護負擔增加 | 認證/config/known_hosts 都變成 sshi 的責任 |
 | 安全表面擴大 | 自行實作 SSH 客戶端 = 自行承擔所有密碼學風險 |
 
 ---
@@ -676,9 +676,9 @@ embedded-ssh = ["russh", "russh-keys", "russh-sftp", "ssh2-config"]
 
 ### 核心判斷
 
-**遷移的技術可行性：✅ 可行**——russh 足夠成熟，且 ssync 的 SSH 使用模式（exec + SFTP）在 russh 支援範圍內。
+**遷移的技術可行性：✅ 可行**——russh 足夠成熟，且 sshi 的 SSH 使用模式（exec + SFTP）在 russh 支援範圍內。
 
-**遷移的必要性：⚠️ 低到中等**——ssync 當前架構運作良好，主要痛點（ControlMaster 管理、Windows 相容性）有更輕量的解法。
+**遷移的必要性：⚠️ 低到中等**——sshi 當前架構運作良好，主要痛點（ControlMaster 管理、Windows 相容性）有更輕量的解法。
 
 **遷移的 ROI：⚠️ 不確定**——需要 PoC 驗證後才能確定收益是否值得 ~3,000 行的改動和長期維護成本。
 

@@ -160,7 +160,7 @@ fn resolve_target_mode(target: &TargetArgs, config: &AppConfig) -> Result<Target
             "Target required. Use --group/-g, --host/-h, --shell/-S, or --all/-a to specify targets.",
         );
         if config.host.is_empty() {
-            hint.push_str("\nHint: Run 'ssync init' first to import hosts from ~/.ssh/config.");
+            hint.push_str("\nHint: Run 'sshi init' first to import hosts from ~/.ssh/config.");
         } else {
             append_available_hints(config, &mut hint);
         }
@@ -522,7 +522,7 @@ After the `TargetArgs` struct definition, add:
 #[derive(Args, Clone, Debug, Default)]
 pub struct OutputArgs {
     /// Write structured report to file (.json or .html).
-    /// Omit path for auto-named file: ssync-{command}-{YYYYMMDD-HHmmss}.json
+    /// Omit path for auto-named file: sshi-{command}-{YYYYMMDD-HHmmss}.json
     /// Examples: --out  |  --out report.json  |  --out report.html
     #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "")]
     pub out: Option<String>,
@@ -776,14 +776,14 @@ mod tests {
         std::env::set_current_dir(&dir).unwrap();
         let report = sample_report("check");
         write_report(&report, "", "check").unwrap();
-        // A file matching ssync-check-*.json should exist
+        // A file matching sshi-check-*.json should exist
         let entries: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .collect();
         assert_eq!(entries.len(), 1);
         let name = entries[0].file_name().to_string_lossy().to_string();
-        assert!(name.starts_with("ssync-check-"));
+        assert!(name.starts_with("sshi-check-"));
         assert!(name.ends_with(".json"));
         std::env::set_current_dir(orig).unwrap();
     }
@@ -883,7 +883,7 @@ pub struct ReportSummary {
 }
 
 /// Write `report` to a file. Path semantics:
-/// - `""` → auto-generate `ssync-{command}-{YYYYMMDD-HHmmss}.json` in CWD
+/// - `""` → auto-generate `sshi-{command}-{YYYYMMDD-HHmmss}.json` in CWD
 /// - `*.json` → JSON
 /// - `*.html` → HTML
 /// - other extension → error
@@ -892,7 +892,7 @@ pub fn write_report(report: &OperationReport, out: &str, command: &str) -> Resul
 
     let path = if out.is_empty() {
         let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        format!("ssync-{}-{}.json", command, ts)
+        format!("sshi-{}-{}.json", command, ts)
     } else {
         out.to_string()
     };
@@ -966,7 +966,7 @@ fn render_html_report(report: &OperationReport) -> String {
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>ssync {command} report</title>
+<title>sshi {command} report</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; background: #f8f9fa; color: #212529; }}
   h1 {{ font-size: 1.4rem; margin-bottom: 0.25rem; }}
@@ -989,7 +989,7 @@ fn render_html_report(report: &OperationReport) -> String {
 </style>
 </head>
 <body>
-<h1>ssync {command} report</h1>
+<h1>sshi {command} report</h1>
 <div class="meta">
   <strong>Executed:</strong> {executed_at} &nbsp;|&nbsp;
   <strong>Filter:</strong> {filter}
@@ -1949,14 +1949,14 @@ Expected: no diff output (or run `cargo fmt` to fix).
 ```bash
 cargo build --release 2>&1 | tail -5
 ```
-Expected: `Compiling ssync ... Finished release [optimized]`
+Expected: `Compiling sshi ... Finished release [optimized]`
 
 - [ ] **Step 5: Smoke test `--help`**
 
 ```bash
-./target/release/ssync --help
-./target/release/ssync run --help
-./target/release/ssync checkout --help
+./target/release/sshi --help
+./target/release/sshi run --help
+./target/release/sshi checkout --help
 ```
 Verify `--shell/-S` appears in global target options, `--out/-o` appears in run/checkout, no `--format` visible.
 

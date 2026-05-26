@@ -5,7 +5,7 @@
 
 ## Problem Statement
 
-Three improvements to ssync CLI targeting usability and output flexibility:
+Three improvements to sshi CLI targeting usability and output flexibility:
 
 1. **Shell-based host filtering** — add a 4th exclusive target mode (`--shell`) so users can operate on all `sh` or `powershell` hosts in one command, without creating explicit groups.
 2. **Remove `--format` from `checkout`** — the flag causes confusion by coupling output destination with rendering format; TUI will be fully redesigned separately.
@@ -112,7 +112,7 @@ TUI Rust code (`#[cfg(feature = "tui")]` blocks) is left in place — no deletio
 #[derive(Args, Clone, Debug, Default)]
 pub struct OutputArgs {
     /// Write structured report to file (.json or .html); omit path for auto-generated JSON.
-    /// Examples:  --out            → ssync-{cmd}-{YYYYMMDD-HHmmss}.json
+    /// Examples:  --out            → sshi-{cmd}-{YYYYMMDD-HHmmss}.json
     ///             --out out.json   → explicit JSON file
     ///             --out out.html   → HTML report
     #[arg(short = 'o', long, num_args = 0..=1, default_missing_value = "")]
@@ -125,7 +125,7 @@ Semantics:
 | Value | Meaning |
 |-------|---------|
 | `None` | `--out` not provided; no file output |
-| `Some("")` | flag only; auto-generate `ssync-{command}-{YYYYMMDD-HHmmss}.json` in CWD |
+| `Some("")` | flag only; auto-generate `sshi-{command}-{YYYYMMDD-HHmmss}.json` in CWD |
 | `Some("path.json")` | write JSON to path |
 | `Some("path.html")` | write HTML to path |
 | Other extension | error: unsupported format; suggest `.json` or `.html` |
@@ -234,7 +234,7 @@ pub struct ReportSummary {
 pub fn write_report(report: &OperationReport, out: &str, command: &str) -> Result<()>
 ```
 
-- `out == ""` → auto-generate filename `ssync-{command}-{YYYYMMDD-HHmmss}.json`, write to CWD
+- `out == ""` → auto-generate filename `sshi-{command}-{YYYYMMDD-HHmmss}.json`, write to CWD
 - Extension `.json` → `serde_json::to_string_pretty`
 - Extension `.html` → `render_html_report()`
 - Other → `bail!("Unsupported output format. Use .json or .html")`
@@ -244,7 +244,7 @@ pub fn write_report(report: &OperationReport, out: &str, command: &str) -> Resul
 
 Standalone HTML (no external CSS/JS), inline styles only. Structure:
 
-- Page title: `ssync {command} report — {executed_at}`
+- Page title: `sshi {command} report — {executed_at}`
 - Header section: executed_at, command, filter mode/values, summary counts
 - Per-host results table: host | status | duration | output (stdout/stderr or metrics)
 - For `check`: two sub-sections per host — Metrics (key/value table) + Probe Outputs (collapsible `<details>` per probe)

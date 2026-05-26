@@ -220,7 +220,7 @@ Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>"
 In `src/commands/init.rs`, after line 24 (`let effective_update = update || config_exists;`) and before line 26 (`// Merge CLI --skip with persisted skipped_hosts`), insert stale-host detection:
 
 ```rust
-// Detect hosts in ssync config that no longer exist in ~/.ssh/config
+// Detect hosts in sshi config that no longer exist in ~/.ssh/config
 let ssh_host_names: std::collections::HashSet<&str> =
     ssh_hosts.iter().map(|h| h.name.as_str()).collect();
 let stale_hosts: Vec<String> = ctx
@@ -247,7 +247,7 @@ if !stale_hosts.is_empty() {
         );
     } else {
         print!(
-            "Remove these {} host(s) from ssync config? [y/N]: ",
+            "Remove these {} host(s) from sshi config? [y/N]: ",
             stale_hosts.len()
         );
         std::io::Write::flush(&mut std::io::stdout())?;
@@ -316,7 +316,7 @@ if stale_hosts_removed {
 }
 ```
 
-This covers the scenario where a user's SSH config has shrunk (host removed) but ssync config is otherwise stable — the most common real-world case.
+This covers the scenario where a user's SSH config has shrunk (host removed) but sshi config is otherwise stable — the most common real-world case.
 
 - [ ] **Step 3: Handle edge case — config doesn't exist yet**
 
@@ -338,9 +338,9 @@ Expected: All tests pass, no clippy warnings. (Init has no unit tests — it's a
 - [ ] **Step 5: Manual smoke test description**
 
 To manually test:
-1. Add a fake host to `~/.config/ssync/config.toml` that doesn't exist in `~/.ssh/config`
-2. Run `ssync init` — should prompt to remove it
-3. Run `ssync init --dry-run` — should show the stale list but not prompt
+1. Add a fake host to `~/.config/sshi/config.toml` that doesn't exist in `~/.ssh/config`
+2. Run `sshi init` — should prompt to remove it
+3. Run `sshi init --dry-run` — should show the stale list but not prompt
 
 - [ ] **Step 6: Commit**
 
@@ -348,7 +348,7 @@ To manually test:
 git add src/commands/init.rs
 git commit -m "feat: detect and prompt to remove stale hosts during init
 
-When running 'ssync init', hosts in ssync config that no longer exist
+When running 'sshi init', hosts in sshi config that no longer exist
 in ~/.ssh/config are detected. User is shown a summary and prompted
 for confirmation before removal. Dry-run mode shows the list without
 prompting.

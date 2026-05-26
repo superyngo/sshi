@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make ssync fully functional as a Windows client by introducing dual-mode ConnectionManager (Pooled/Direct), fixing Unix-hardcoded paths, and splitting Cmd remote shell branches from Sh.
+**Goal:** Make sshi fully functional as a Windows client by introducing dual-mode ConnectionManager (Pooled/Direct), fixing Unix-hardcoded paths, and splitting Cmd remote shell branches from Sh.
 
 **Architecture:** ConnectionManager gets a `ConnectionMode` enum (`Pooled` with socket dir for Unix, `Direct` with no connection pooling for Windows). Platform detection uses runtime `cfg!(target_os = "windows")`. All `_pooled` executor functions already accept `Option<&Path>` socket, so Direct mode (returning `None`) requires zero downstream API changes.
 
@@ -70,7 +70,7 @@ impl ConnectionManager {
             ConnectionMode::Direct
         } else {
             let socket_dir = tempfile::Builder::new()
-                .prefix("ssync-")
+                .prefix("sshi-")
                 .tempdir_in("/tmp")
                 .context("Failed to create socket directory")?;
             ConnectionMode::Pooled { socket_dir }
@@ -291,13 +291,13 @@ pub async fn scp_probe(host: &HostEntry, timeout_secs: u64, socket: Option<&Path
     use crate::config::schema::ShellType;
 
     let temp_dir = tempfile::tempdir().context("Failed to create temp dir for scp probe")?;
-    let local_probe = temp_dir.path().join("ssync_probe");
+    let local_probe = temp_dir.path().join("sshi_probe");
     std::fs::write(&local_probe, b"0").context("Failed to write probe file")?;
 
     let probe_paths: Vec<&str> = match host.shell {
-        ShellType::Sh => vec!["/tmp/.ssync_probe", "~/.ssync_probe"],
-        ShellType::PowerShell => vec!["$env:TEMP\\.ssync_probe", "~/.ssync_probe"],
-        ShellType::Cmd => vec!["%TEMP%\\.ssync_probe"],
+        ShellType::Sh => vec!["/tmp/.sshi_probe", "~/.sshi_probe"],
+        ShellType::PowerShell => vec!["$env:TEMP\\.sshi_probe", "~/.sshi_probe"],
+        ShellType::Cmd => vec!["%TEMP%\\.sshi_probe"],
     };
 
     let mut last_err = None;
@@ -365,7 +365,7 @@ Replace the function (lines 1236-1251):
 
 ```rust
 /// This handles the case where the shell expands `~/foo` → `/home/user/foo` before
-/// ssync receives it — remotes need the tilde form so it resolves to *their* home dir.
+/// sshi receives it — remotes need the tilde form so it resolves to *their* home dir.
 fn to_tilde_path(path: &str) -> String {
     // Check both HOME (Unix) and USERPROFILE (Windows)
     let home = std::env::var("HOME")

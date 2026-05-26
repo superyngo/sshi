@@ -67,7 +67,7 @@ Edit `src/tui/components/viewport.rs`, inside the existing `mod tests` block (af
 
 - [ ] **Step 1.2: Run tests to verify they fail**
 
-Run: `cargo test --features tui -p ssync --lib tui::components::viewport -- --nocapture`
+Run: `cargo test --features tui -p sshi --lib tui::components::viewport -- --nocapture`
 
 Expected: three new tests fail to compile with `error[E0599]: no method named visible_slice found`.
 
@@ -89,7 +89,7 @@ Edit `src/tui/components/viewport.rs`. Insert after the existing `visible_range`
 
 - [ ] **Step 1.4: Run tests to verify they pass**
 
-Run: `cargo test --features tui -p ssync --lib tui::components::viewport`
+Run: `cargo test --features tui -p sshi --lib tui::components::viewport`
 
 Expected: all viewport tests pass (the three new ones plus the three existing ones).
 
@@ -147,13 +147,13 @@ Expected output: empty (zero matches).
 
 - [ ] **Step 2.3: Run `cargo check` to confirm no compile breakage**
 
-Run: `cargo check --features tui -p ssync`
+Run: `cargo check --features tui -p sshi`
 
 Expected: clean build (warnings allowed, no errors).
 
 - [ ] **Step 2.4: Run the existing test suite to confirm no regression**
 
-Run: `cargo test --features tui -p ssync --lib`
+Run: `cargo test --features tui -p sshi --lib`
 
 Expected: all existing tests pass.
 
@@ -252,13 +252,13 @@ Document in the commit message which sites were rewritten and which were left be
 
 - [ ] **Step 3.5: Run `cargo check`**
 
-Run: `cargo check --features tui -p ssync`
+Run: `cargo check --features tui -p sshi`
 
 Expected: clean build.
 
 - [ ] **Step 3.6: Run the existing test suite**
 
-Run: `cargo test --features tui -p ssync --lib`
+Run: `cargo test --features tui -p sshi --lib`
 
 Expected: all existing tests still pass.
 
@@ -412,7 +412,7 @@ Adjust the literal field lists in the test code to match. If `AppConfig` does no
 
 Since Tasks 2 and 3 have already landed, these tests should pass on first run. They serve as regression coverage.
 
-Run: `cargo test --features tui -p ssync --lib tui::tabs::config_tab::tests::render_does_not_panic -- --nocapture`
+Run: `cargo test --features tui -p sshi --lib tui::tabs::config_tab::tests::render_does_not_panic -- --nocapture`
 
 Expected: all three new tests pass. If any panics with `range end index 1 out of range`, Tasks 2–3 missed a site; re-locate via the backtrace and fix.
 
@@ -480,7 +480,7 @@ fn flush_config_if_dirty(
             *dirty = false;
         }
         Err(e) => {
-            eprintln!("ssync: failed to save config on quit: {e}");
+            eprintln!("sshi: failed to save config on quit: {e}");
         }
     }
 }
@@ -583,13 +583,13 @@ mod flush_tests {
 
 - [ ] **Step 5.4: Run the new tests**
 
-Run: `cargo test --features tui -p ssync --lib flush_tests -- --nocapture`
+Run: `cargo test --features tui -p sshi --lib flush_tests -- --nocapture`
 
 Expected: both tests pass.
 
 - [ ] **Step 5.5: Run the full suite**
 
-Run: `cargo test --features tui -p ssync --lib`
+Run: `cargo test --features tui -p sshi --lib`
 
 Expected: all tests pass.
 
@@ -700,13 +700,13 @@ Expected: no matches.
 
 - [ ] **Step 6.5: Run `cargo check`**
 
-Run: `cargo check --features tui -p ssync`
+Run: `cargo check --features tui -p sshi`
 
 Expected: clean build. If a `match` is now non-exhaustive, the compiler will pinpoint it — add or remove the missing arm.
 
 - [ ] **Step 6.6: Run the full test suite**
 
-Run: `cargo test --features tui -p ssync --lib`
+Run: `cargo test --features tui -p sshi --lib`
 
 Expected: all tests pass.
 
@@ -823,7 +823,7 @@ If `build_sidebar_items` is not visible (private to module), this test sits insi
 
 - [ ] **Step 7.3: Run tests to verify they fail**
 
-Run: `cargo test --features tui -p ssync --lib snapshot_ -- --nocapture`
+Run: `cargo test --features tui -p sshi --lib snapshot_ -- --nocapture`
 
 Expected: compile errors — `capture_selection` and `restore_selection` are undefined.
 
@@ -899,7 +899,7 @@ The unused `_config` parameter is retained because the spec's clamping rules ref
 
 - [ ] **Step 7.6: Run tests to verify they pass**
 
-Run: `cargo test --features tui -p ssync --lib snapshot_ -- --nocapture`
+Run: `cargo test --features tui -p sshi --lib snapshot_ -- --nocapture`
 
 Expected: both tests pass.
 
@@ -1047,13 +1047,13 @@ Expected: no matches.
 
 - [ ] **Step 8.5: Run `cargo check`**
 
-Run: `cargo check --features tui -p ssync`
+Run: `cargo check --features tui -p sshi`
 
 Expected: clean build. Compiler will flag any missed usage.
 
 - [ ] **Step 8.6: Run the full test suite**
 
-Run: `cargo test --features tui -p ssync --lib`
+Run: `cargo test --features tui -p sshi --lib`
 
 Expected: all tests pass (including the new snapshot tests from Task 7).
 
@@ -1196,7 +1196,7 @@ Show the exact diff in the audit doc's "Fix sketch" field. Apply it.
 
 - [ ] **Step 10.X.3: Run tests**
 
-Run: `cargo test --features tui -p ssync --lib`
+Run: `cargo test --features tui -p sshi --lib`
 
 Expected: all tests pass, including the new one.
 
@@ -1246,7 +1246,7 @@ Insert under the existing Unreleased section (or create one immediately after th
 
 - [ ] **Step 11.3: Final test sweep**
 
-Run: `cargo test --features tui -p ssync`
+Run: `cargo test --features tui -p sshi`
 
 Expected: all tests pass.
 

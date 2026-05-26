@@ -236,7 +236,7 @@ After the existing `parse_ssh_config` / `parse_ssh_config_content` functions, ad
 /// Fully resolved SSH connection parameters for a host alias.
 #[derive(Debug, Clone)]
 pub struct ResolvedHostConfig {
-    /// The alias as stored in ssync config (used for display/lookup)
+    /// The alias as stored in sshi config (used for display/lookup)
     pub alias: String,
     /// Actual DNS name or IP to connect to
     pub hostname: String,
@@ -833,7 +833,7 @@ mod handler {
 
             if !known_hosts_path.exists() {
                 bail!(
-                    "Unknown host key for {}:{} — run `ssync init` to add the host to known_hosts",
+                    "Unknown host key for {}:{} — run `sshi init` to add the host to known_hosts",
                     self.hostname,
                     self.port
                 );
@@ -855,7 +855,7 @@ mod handler {
                     self.port
                 ),
                 russh_keys::key::CheckResult::NotFound => bail!(
-                    "Unknown host key for {}:{} — run `ssync init` to accept the key first",
+                    "Unknown host key for {}:{} — run `sshi init` to accept the key first",
                     self.hostname,
                     self.port
                 ),
@@ -1855,7 +1855,7 @@ pub async fn sftp_probe(
     home_dir: &str,
     timeout: Duration,
 ) -> Result<()> {
-    let probe_path = format!("{}/.ssync_probe", home_dir);
+    let probe_path = format!("{}/.sshi_probe", home_dir);
     let channel = tokio::time::timeout(timeout, handle.channel_open_session())
         .await
         .context("SFTP probe channel open timeout")?

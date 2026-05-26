@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-26 — Rename project ssync → sshi
+- **BREAKING:** the project, crate, and binary are renamed from `ssync` to
+  `sshi`. Invoke the CLI as `sshi`; `cargo install sshi`; repo is now
+  `github.com/superyngo/sshi`.
+- **BREAKING (config/state paths):** default config dir moved
+  `~/.config/ssync/` → `~/.config/sshi/` and state dir `~/.local/state/ssync/`
+  → `~/.local/state/sshi/` (DB file `ssync.db` → `sshi.db`). The old paths are
+  **not** migrated automatically — move your files manually (see README
+  "Migrating from `ssync`").
+- Mechanical sweep across `Cargo.toml`, all source identifiers/strings/help
+  text, the clap command name, migration headers, temp-file prefixes, thread
+  names, and docs.
+
 ### 2026-05-26 — TUI Config tab: save hint + unified option-field cycling
 - fix(tui): main-view Config footer now shows the `s:Save` hint (was only on
   the entry-form footer). `src/tui/app.rs` Config hints line.
@@ -128,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Full TUI interface: Phase 0 through Phase 6 (scaffolding, checkout, persistence, operate, config, sync, help popup)
-- Single `ssync` binary — TUI launches when run without subcommand; `--no-tui` for headless mode
+- Single `sshi` binary — TUI launches when run without subcommand; `--no-tui` for headless mode
 - Arrow-key navigation: Up from top escapes to NavBar, Left/Right switches tabs
 - Config tab: inline edit, vec editor, entry form with group picker
 - Operate tab: run/exec support, check execution, progress popup
@@ -140,7 +153,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - ADR: SSH auth TUI popup design
 
 ### Changed
-- Unified into single binary — `ssync-tui` removed, TUI is a default feature
+- Unified into single binary — `sshi-tui` removed, TUI is a default feature
 - Navbar focus reset on running-op tab switch
 - Inline edit suspends global hotkeys (q, Esc) while active
 
@@ -215,7 +228,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel SFTP probe with JoinSet and home-dir caching in session pool
 
 ### Changed
-- `ssync init` migrated to `RusshSessionPool`; unknown-host-key flow matches russh error format
+- `sshi init` migrated to `RusshSessionPool`; unknown-host-key flow matches russh error format
 - `shell.rs` detect functions replaced with `detect_russh`
 - `pool.rs` is now russh-only; `ConnectionManager` removed entirely
 - `filter_reachable` now consistently keyed on `ssh_host` (matching `filter_sftp_capable`)

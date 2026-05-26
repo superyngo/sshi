@@ -69,7 +69,7 @@ with:
 - [ ] **Step 2: Build to verify no compile errors**
 
 ```bash
-cd /Volumes/Home/Users/wen/repos/ssync && cargo build 2>&1 | tail -5
+cd /Volumes/Home/Users/wen/repos/sshi && cargo build 2>&1 | tail -5
 ```
 
 Expected: `Finished` with no errors.
@@ -365,7 +365,7 @@ In `src/tui/app.rs`, inside `render_tab_bar`, replace the `Tabs` construction (a
 
 ```rust
         let tabs = Tabs::new(titles)
-            .block(Block::default().borders(Borders::ALL).title(" ssync "))
+            .block(Block::default().borders(Borders::ALL).title(" sshi "))
             .select(selected)
             .style(Style::default().fg(self.theme.inactive))
             .highlight_style(highlight);
@@ -383,7 +383,7 @@ with:
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" ssync ")
+                    .title(" sshi ")
                     .border_style(block_border_style),
             )
             .select(selected)
@@ -681,7 +681,7 @@ to:
 Also make `current_descriptors` pub (it may already be, but confirm):
 
 ```bash
-grep -n "fn current_descriptors" /Volumes/Home/Users/wen/repos/ssync/src/tui/tabs/config_tab.rs
+grep -n "fn current_descriptors" /Volumes/Home/Users/wen/repos/sshi/src/tui/tabs/config_tab.rs
 ```
 
 If the line reads `fn current_descriptors` (no `pub`), change it to `pub fn current_descriptors`.
@@ -689,7 +689,7 @@ If the line reads `fn current_descriptors` (no `pub`), change it to `pub fn curr
 Also make `reset_field_vp` pub:
 
 ```bash
-grep -n "fn reset_field_vp" /Volumes/Home/Users/wen/repos/ssync/src/tui/tabs/config_tab.rs
+grep -n "fn reset_field_vp" /Volumes/Home/Users/wen/repos/sshi/src/tui/tabs/config_tab.rs
 ```
 
 If private, change to `pub fn reset_field_vp`.

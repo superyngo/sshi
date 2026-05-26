@@ -141,7 +141,7 @@ Currently `Bool` fields open a text input box when Enter is pressed. They should
 
 - [ ] **Step 4: Build and verify**
   ```bash
-  cd /Volumes/Home/Users/wen/repos/ssync
+  cd /Volumes/Home/Users/wen/repos/sshi
   cargo build 2>&1 | grep -E "^error"
   ```
   Expected: no errors.

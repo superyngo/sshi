@@ -1,4 +1,4 @@
-# SSYNC Complete File Contents Reference
+# SSHI Complete File Contents Reference
 
 This document contains the complete content of all key files mentioned in the analysis.
 
@@ -45,8 +45,8 @@ pub struct Settings {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skipped_hosts: Vec<String>,
 
-    /// Override the state directory (where ssync.db is stored).
-    /// Default: ~/.local/state/ssync (Linux/macOS) or %LOCALAPPDATA%/ssync (Windows)
+    /// Override the state directory (where sshi.db is stored).
+    /// Default: ~/.local/state/sshi (Linux/macOS) or %LOCALAPPDATA%/sshi (Windows)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_dir: Option<PathBuf>,
 }
@@ -150,17 +150,17 @@ use anyhow::{Context, Result};
 
 use super::schema::AppConfig;
 
-/// Returns the platform-appropriate config directory for ssync.
+/// Returns the platform-appropriate config directory for sshi.
 pub fn config_dir() -> Result<PathBuf> {
     #[cfg(not(target_os = "windows"))]
     {
         let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".config").join("ssync"))
+        Ok(home.join(".config").join("sshi"))
     }
     #[cfg(target_os = "windows")]
     {
         let base = dirs::config_dir().context("Cannot determine config directory")?;
-        return Ok(base.join("ssync"));
+        return Ok(base.join("sshi"));
     }
 }
 
@@ -276,7 +276,7 @@ use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
-    name = "ssync",
+    name = "sshi",
     version,
     about = "SSH-config-based cross-platform remote management tool"
 )]
@@ -285,7 +285,7 @@ pub struct Cli {
     #[arg(short = 'v', long)]
     pub verbose: bool,
 
-    /// Path to config file (default: ~/.config/ssync/config.toml)
+    /// Path to config file (default: ~/.config/sshi/config.toml)
     #[arg(short = 'c', long, global = true)]
     pub config: Option<PathBuf>,
 

@@ -6,11 +6,11 @@
 
 ## Problem Statement
 
-ssync currently shells out to system `ssh`/`scp` binaries for all remote operations. This creates four concrete problems:
+sshi currently shells out to system `ssh`/`scp` binaries for all remote operations. This creates four concrete problems:
 
 1. **Multi-alias SSH config parsing is broken**: `Host bastion.bss-qa slb225` creates one entry named `"bastion.bss-qa slb225"` instead of two separate aliases, so hosts registered under multiple aliases are unreachable.
 2. **No connection multiplexing on Windows**: Windows lacks Unix domain sockets, so ControlMaster is unavailable. Every SSH operation spawns an independent process, causing high per-operation latency with many hosts.
-3. **No ProxyJump support**: The current transport blindly passes `host.ssh_host` to the ssh binary, so ProxyJump defined in `~/.ssh/config` only works by accident (the system ssh binary resolves it). ssync has no explicit awareness of the jump topology.
+3. **No ProxyJump support**: The current transport blindly passes `host.ssh_host` to the ssh binary, so ProxyJump defined in `~/.ssh/config` only works by accident (the system ssh binary resolves it). sshi has no explicit awareness of the jump topology.
 4. **Cross-platform SCP inconsistency**: SCP availability and behavior varies by platform; Windows OpenSSH's SCP implementation has edge cases.
 5. **VirtualLock security warnings on Windows**: When russh is added, its crypto subsystem tries to lock private key memory via `VirtualLock`. Under standard Windows user accounts this fails and emits a noisy warning on stderr.
 
@@ -103,7 +103,7 @@ pub struct HostEntry {
     #[serde(default)]
     pub groups: Vec<String>,
     /// ProxyJump alias or user@host:port. Populated from SSH config at init time,
-    /// can also be set manually in ssync config.
+    /// can also be set manually in sshi config.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_jump: Option<String>,
 }
@@ -183,7 +183,7 @@ async fn check_server_key(&mut self, server_public_key: &ssh_key::PublicKey) -> 
     match russh::client::check_known_hosts_path(&self.host, self.port, server_public_key, &known_hosts) {
         Ok(true) => Ok(true),
         Ok(false) => bail!("HOST KEY VERIFICATION FAILED for {}:{} — possible MITM", self.host, self.port),
-        Err(_) => bail!("Unknown host key for {}:{} — run `ssync init` to accept", self.host, self.port),
+        Err(_) => bail!("Unknown host key for {}:{} — run `sshi init` to accept", self.host, self.port),
     }
 }
 ```
@@ -194,7 +194,7 @@ async fn check_server_key(&mut self, server_public_key: &ssh_key::PublicKey) -> 
 
 ## Section 3: Authentication Chain (`host/auth.rs`)
 
-Authentication is attempted in order until one succeeds. All branches use `rpassword` for terminal prompts so that ssync works in non-interactive pipelines (passphrase cache means users are only prompted once per unique key path per process invocation).
+Authentication is attempted in order until one succeeds. All branches use `rpassword` for terminal prompts so that sshi works in non-interactive pipelines (passphrase cache means users are only prompted once per unique key path per process invocation).
 
 ```
 1. For each key in identity_files (or defaults if empty and !identities_only):
@@ -214,7 +214,7 @@ Authentication is attempted in order until one succeeds. All branches use `rpass
    → bail!("Authentication failed for {name}: no valid credentials")
 ```
 
-**Passphrase cache**: `HashMap<PathBuf, String>` stored in the auth context for the lifetime of a single ssync invocation. Not persisted to disk.
+**Passphrase cache**: `HashMap<PathBuf, String>` stored in the auth context for the lifetime of a single sshi invocation. Not persisted to disk.
 
 **Default key paths** (used when `identity_files` is empty and `identities_only` is false):
 - `~/.ssh/id_ed25519`
@@ -266,7 +266,7 @@ pub async fn download(
 pub async fn sftp_probe(session: &Handle<SshHandler>, timeout: Duration) -> Result<()>
 ```
 
-Attempts `sftp.stat(".")` (current directory) or `sftp.create("~/.ssync_probe")` + `sftp.remove(...)`. Success means SFTP subsystem is available. Failure marks the host as SFTP-incapable.
+Attempts `sftp.stat(".")` (current directory) or `sftp.create("~/.sshi_probe")` + `sftp.remove(...)`. Success means SFTP subsystem is available. Failure marks the host as SFTP-incapable.
 
 ### Remote Path Handling
 
@@ -292,7 +292,7 @@ let filter = if std::env::var("RUST_LOG").is_ok() {
     EnvFilter::from_default_env()
 } else if args.verbose {
     // Show russh warnings (including VirtualLock) in verbose mode
-    EnvFilter::new("ssync=debug,russh=debug,russh_keys=debug,info")
+    EnvFilter::new("sshi=debug,russh=debug,russh_keys=debug,info")
 } else {
     // Suppress russh noise; show only errors from crypto crates
     EnvFilter::new("russh=error,russh_keys=error,ssh_key=error,zeroize=error,info")
@@ -361,15 +361,15 @@ tracing_subscriber::fmt().with_env_filter(filter).init();
 
 ### Authentication
 - SSH Agent not used (out of scope for this design)
-- FIDO/U2F keys (ed25519-sk, ecdsa-sk) not supported by russh — if encountered, fail with clear message: `"FIDO/hardware keys are not supported by ssync's embedded SSH client. Use the system ssh binary instead."`
+- FIDO/U2F keys (ed25519-sk, ecdsa-sk) not supported by russh — if encountered, fail with clear message: `"FIDO/hardware keys are not supported by sshi's embedded SSH client. Use the system ssh binary instead."`
 - Certificate-based auth: not in scope
 - Encrypted keys with wrong passphrase: retry up to 3 times before bailing
 
 ### Connection
 - IPv6 literal addresses: pass directly to `TcpStream::connect`, format as `[::1]:22`
 - DNS resolution failure: propagate as connection error with host name in context
-- Server with banner longer than 64 KB: russh handles internally; not an ssync concern
-- Server disconnects mid-operation: return an error from the channel read loop; ssync marks host as failed for that operation
+- Server with banner longer than 64 KB: russh handles internally; not an sshi concern
+- Server disconnects mid-operation: return an error from the channel read loop; sshi marks host as failed for that operation
 
 ### SFTP
 - Remote disk full: `write_all` returns an error; propagate as upload failure
@@ -383,7 +383,7 @@ tracing_subscriber::fmt().with_env_filter(filter).init();
 - Proxy host itself requires ProxyJump: recursive resolution handles this transparently (depth limit: 8 hops)
 
 ### Multi-hop ProxyJump (`ProxyJump = "jump1,jump2"`)
-OpenSSH's comma-separated ProxyJump means: connect via jump1 first, then via jump2 to reach the target. ssync resolves this left-to-right, each hop wrapped in a `channel_open_direct_tcpip`.
+OpenSSH's comma-separated ProxyJump means: connect via jump1 first, then via jump2 to reach the target. sshi resolves this left-to-right, each hop wrapped in a `channel_open_direct_tcpip`.
 
 ---
 

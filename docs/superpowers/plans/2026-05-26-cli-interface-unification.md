@@ -47,7 +47,7 @@ mod tests {
 
     #[test]
     fn skip_parses_as_comma_list_on_check() {
-        let cli = Cli::try_parse_from(["ssync", "check", "--all", "--skip", "h1,h2"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "check", "--all", "--skip", "h1,h2"]).unwrap();
         match cli.command.unwrap() {
             Commands::Check { target, .. } => {
                 assert_eq!(target.skip, vec!["h1".to_string(), "h2".to_string()]);
@@ -222,13 +222,13 @@ Add to the `#[cfg(test)] mod tests` in `src/cli.rs`:
 ```rust
     #[test]
     fn sync_rejects_no_push_missing() {
-        let err = Cli::try_parse_from(["ssync", "sync", "--all", "--no-push-missing"]);
+        let err = Cli::try_parse_from(["sshi", "sync", "--all", "--no-push-missing"]);
         assert!(err.is_err(), "--no-push-missing should no longer be accepted");
     }
 
     #[test]
     fn sync_still_parses_without_removed_flag() {
-        assert!(Cli::try_parse_from(["ssync", "sync", "--all"]).is_ok());
+        assert!(Cli::try_parse_from(["sshi", "sync", "--all"]).is_ok());
     }
 ```
 
@@ -314,13 +314,13 @@ Add to `#[cfg(test)] mod tests` in `src/cli.rs`:
 ```rust
     #[test]
     fn run_rejects_yes() {
-        assert!(Cli::try_parse_from(["ssync", "run", "--all", "--yes", "echo hi"]).is_err());
-        assert!(Cli::try_parse_from(["ssync", "run", "--all", "-y", "echo hi"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "run", "--all", "--yes", "echo hi"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "run", "--all", "-y", "echo hi"]).is_err());
     }
 
     #[test]
     fn exec_rejects_yes() {
-        assert!(Cli::try_parse_from(["ssync", "exec", "--all", "--yes", "s.sh"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "exec", "--all", "--yes", "s.sh"]).is_err());
     }
 ```
 
@@ -437,7 +437,7 @@ Add to `#[cfg(test)] mod tests` in `src/cli.rs`:
 ```rust
     #[test]
     fn run_parses_dry_run() {
-        let cli = Cli::try_parse_from(["ssync", "run", "--all", "--dry-run", "echo hi"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "run", "--all", "--dry-run", "echo hi"]).unwrap();
         match cli.command.unwrap() {
             Commands::Run { dry_run, .. } => assert!(dry_run),
             _ => panic!("expected Run"),
@@ -545,7 +545,7 @@ Add to `#[cfg(test)] mod tests` in `src/cli.rs`:
 ```rust
     #[test]
     fn check_parses_dry_run() {
-        let cli = Cli::try_parse_from(["ssync", "check", "--all", "--dry-run"]).unwrap();
+        let cli = Cli::try_parse_from(["sshi", "check", "--all", "--dry-run"]).unwrap();
         match cli.command.unwrap() {
             Commands::Check { dry_run, .. } => assert!(dry_run),
             _ => panic!("expected Check"),

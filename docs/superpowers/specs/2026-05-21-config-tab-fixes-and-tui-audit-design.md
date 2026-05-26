@@ -133,7 +133,7 @@ If `Viewport` does not already expose `scroll_y` publicly, add a getter (`pub fn
   ```rust
   if self.config_tab.config_dirty {
       if let Err(e) = crate::config::app::save(&self.config, self.config_path.as_deref()) {
-          eprintln!("ssync: failed to save config on quit: {e}");
+          eprintln!("sshi: failed to save config on quit: {e}");
       } else {
           self.config_tab.config_dirty = false;
       }

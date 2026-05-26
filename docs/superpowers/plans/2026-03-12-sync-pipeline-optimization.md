@@ -439,10 +439,10 @@ pub struct ConnectionManager {
 
 impl ConnectionManager {
     /// Create a new ConnectionManager with a temporary socket directory.
-    /// Uses /tmp/ssync-XXXX/ to keep socket paths short (macOS ~104 byte limit).
+    /// Uses /tmp/sshi-XXXX/ to keep socket paths short (macOS ~104 byte limit).
     pub fn new() -> Result<Self> {
         let socket_dir = tempfile::Builder::new()
-            .prefix("ssync-")
+            .prefix("sshi-")
             .tempdir_in("/tmp")
             .context("Failed to create socket directory")?;
         Ok(Self {
@@ -631,7 +631,7 @@ mod tests {
     fn test_socket_path_short_enough() {
         let mgr = ConnectionManager::new().unwrap();
         let path = mgr.socket_path_for("very-long-hostname.example.com");
-        // /tmp/ssync-XXXXXX/123456789012 should be well under 104 bytes
+        // /tmp/sshi-XXXXXX/123456789012 should be well under 104 bytes
         let path_str = path.to_string_lossy();
         assert!(path_str.len() < 104, "Socket path too long: {} ({} bytes)", path_str, path_str.len());
     }
@@ -1847,10 +1847,10 @@ Expected: No warnings, all tests pass. Existing tests for sync decision logic st
 - [ ] **Step 5: Manual testing notes**
 
 Test scenarios to verify manually (not automated — requires SSH hosts):
-- `ssync sync -a` with multiple files: should see progress bars, batch collection
-- `ssync sync -a --source host-a` with file missing on host-a: should skip, not abort
-- `ssync sync -a --dry-run`: should show decisions without transferring
-- `ssync sync -a --serial`: should work with concurrency=1
+- `sshi sync -a` with multiple files: should see progress bars, batch collection
+- `sshi sync -a --source host-a` with file missing on host-a: should skip, not abort
+- `sshi sync -a --dry-run`: should show decisions without transferring
+- `sshi sync -a --serial`: should work with concurrency=1
 
 - [ ] **Step 6: Commit**
 

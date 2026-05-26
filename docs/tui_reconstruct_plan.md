@@ -24,7 +24,7 @@ All later sections defer to this table.
 | # | Decision | Value |
 |---|----------|-------|
 | AD-1 | `tui` cargo feature default | **NOT in `[features].default`** for source builds. `cargo build` is headless. |
-| AD-2 | Release binaries | Two: `ssync` (headless, no `tui`) and `ssync-tui` (with `--features tui`). End-users installing from GitHub Releases get TUI by default via `ssync-tui`. |
+| AD-2 | Release binaries | Two: `sshi` (headless, no `tui`) and `sshi-tui` (with `--features tui`). End-users installing from GitHub Releases get TUI by default via `sshi-tui`. |
 | AD-3 | Entry point when run without subcommand | Three exit paths: (a) `tui` feature missing → stderr error + **exit 1**; (b) feature present but stdin/stdout not a TTY (or `TERM=dumb`) → print help + **exit 2** (clap convention); (c) feature present + TTY → launch TUI. See §4. |
 | AD-4 | New runtime dependencies | **`toml_edit = "0.22"`** (format-preserving config write-back; always-on). **`tempfile`** (cross-platform atomic config / state write; **already declared as a direct dependency in `Cargo.toml`** — no new entry needed). **`tokio-util` with `features = ["sync"]`** (provides `CancellationToken` used in §18.2; tui-feature-gated). **`tracing-subscriber` must declare `features = ["env-filter", "reload"]`** (the `reload` feature is required for AD-15 fmt-layer writer swap — the current `Cargo.toml` only has `"env-filter"`). **No subprocess transport, no `tracing-appender`** — see AD-13/AD-15. (`tracing-appender` appears in `Cargo.toml` but has **no references in `src/`**; Phase 0 removes it — see §19 Phase 0 step 5.) (Earlier text claiming "no new dependencies needed" is wrong and is corrected here.) |
 | AD-5 | DB ownership | `rusqlite::Connection` lives **only on the main thread** inside `App.db`. Spawned operation tasks **open their own connection** via `state::db::open(state_dir_override)?` and write through it; SQLite WAL mode handles concurrency. |
@@ -38,17 +38,17 @@ All later sections defer to this table.
 | AD-13 | Operation runtime | **Reuse the existing russh-based `host::pool::SshPool` and per-op collector building blocks.** The TUI is a UI on top of the same async runtime that CLI commands use; no second transport. AsyncBridge converts collector progress callbacks (or a new lightweight event channel embedded in the collector) into `TuiEvent`s on a `tokio::mpsc::channel`. (Resolves the prior `Stdio::piped` / `kill_on_drop` confusion.) |
 | AD-14 | Command-core extraction precedes TUI | **MVP only extracts `check_core`** in Phase 0.7. `checkout` read helpers are made `pub(crate)` in the same phase. `run_core`, `exec_core`, `sync_core`, and `checkout_core` are extracted in their own phases (Phase 5, 5, 6, and Phase 4 respectively) so the CLI regression surface stays small. Without `check_core`, Phase 3 cannot land. |
 | AD-15 | Tracing initialization | The existing `init_tracing()` global subscriber **stays**. The TUI does NOT re-init or redirect the global subscriber. Instead, when the `tui` feature is enabled and TUI is launched, the tracing setup is changed to a `Registry` with two layers: (1) the existing fmt/env-filter writing to stderr (active only outside TUI), and (2) an in-memory ring-buffer layer that pushes into a shared `Arc<Mutex<VecDeque<LogEntry>>>` the App reads. While the TUI is running, the fmt layer is dropped to a no-op writer (`std::io::sink`) via a `reload::Layer` handle so that nothing prints to the raw terminal. |
-| AD-16 | TUI state file path | The state file lives at `{resolved_state_dir}/tui_state-{config_hash}.toml`, where `resolved_state_dir` is the **same root as the SQLite DB** (honors `config.settings.state_dir` override via a new `state::db::resolved_state_dir(override)` helper — see §16) and `config_hash` is the first 8 hex chars of `blake3(effective_path_str)`. **blake3 is used here because it is already a direct dependency of ssync (via the `sync` command's file-hashing path); no new hasher is introduced.** **`effective_path_str` is derived by calling `config::app::resolve_path(custom_path)` first**, then canonicalizing the result if the file exists. See §16 for the full fallback chain. **Note:** `resolve_path` currently does NOT expand `~` or normalize relative paths — Phase 0.5 must enhance it with tilde expansion (`dirs::home_dir()` substitution) so that `None`, `~/.config/ssync/config.toml`, and an explicit equivalent path all land on the same hash. `canonicalize()` is **never** a hard precondition for startup. Atomic write uses `tempfile::NamedTempFile::persist()` in the same directory — see §15.4 for the cross-platform rationale. **Collision risk:** the 8-hex-char (32-bit) hash gives a collision probability of ~2⁻¹⁶ at 65K distinct config paths. For a single-user tool this is an accepted risk; a collision causes two config paths to share the same state file (last-write-wins), not data corruption. |
-| AD-17 | `ssync-tui` binary realization | `Cargo.toml` declares **two `[[bin]]` targets**: `ssync` (always built, no TUI) and `ssync-tui` (`required-features = ["tui"]`). Both share `src/main.rs`; the binary name is read at runtime to decide whether the no-subcommand fallback is even reachable. Release CI runs `cargo build --release --bin ssync` and `cargo build --release --bin ssync-tui --features tui` and uploads both artifacts. (Resolves the prior "AD-2 was a slogan" gap.) **Tradeoff note:** the two-binary model doubles the release artifact count and CI matrix. An alternative is a single binary with runtime feature detection — the linking cost of `ratatui`/`crossterm` is only ~1–2 MB. However, the two-binary approach is kept for principle-of-least-surprise: the binary name declares intent, and symlink aliasing cannot accidentally expose TUI to headless users. |
+| AD-16 | TUI state file path | The state file lives at `{resolved_state_dir}/tui_state-{config_hash}.toml`, where `resolved_state_dir` is the **same root as the SQLite DB** (honors `config.settings.state_dir` override via a new `state::db::resolved_state_dir(override)` helper — see §16) and `config_hash` is the first 8 hex chars of `blake3(effective_path_str)`. **blake3 is used here because it is already a direct dependency of sshi (via the `sync` command's file-hashing path); no new hasher is introduced.** **`effective_path_str` is derived by calling `config::app::resolve_path(custom_path)` first**, then canonicalizing the result if the file exists. See §16 for the full fallback chain. **Note:** `resolve_path` currently does NOT expand `~` or normalize relative paths — Phase 0.5 must enhance it with tilde expansion (`dirs::home_dir()` substitution) so that `None`, `~/.config/sshi/config.toml`, and an explicit equivalent path all land on the same hash. `canonicalize()` is **never** a hard precondition for startup. Atomic write uses `tempfile::NamedTempFile::persist()` in the same directory — see §15.4 for the cross-platform rationale. **Collision risk:** the 8-hex-char (32-bit) hash gives a collision probability of ~2⁻¹⁶ at 65K distinct config paths. For a single-user tool this is an accepted risk; a collision causes two config paths to share the same state file (last-write-wins), not data corruption. |
+| AD-17 | `sshi-tui` binary realization | `Cargo.toml` declares **two `[[bin]]` targets**: `sshi` (always built, no TUI) and `sshi-tui` (`required-features = ["tui"]`). Both share `src/main.rs`; the binary name is read at runtime to decide whether the no-subcommand fallback is even reachable. Release CI runs `cargo build --release --bin sshi` and `cargo build --release --bin sshi-tui --features tui` and uploads both artifacts. (Resolves the prior "AD-2 was a slogan" gap.) **Tradeoff note:** the two-binary model doubles the release artifact count and CI matrix. An alternative is a single binary with runtime feature detection — the linking cost of `ratatui`/`crossterm` is only ~1–2 MB. However, the two-binary approach is kept for principle-of-least-surprise: the binary name declares intent, and symlink aliasing cannot accidentally expose TUI to headless users. |
 | AD-18 | Config entry stable identity | Phase 0.5 adds **two** new fields to `CheckEntry` and `SyncEntry` only (`HostEntry.name` is already a required `String` and is unchanged): (1) **`name: Option<String>`** — pure display label for the TUI sidebar and Applicable Entries panel, never used as a lookup key; and (2) **`id: String`** — a short random 8-hex-char identifier (e.g. `"a3f7c2d1"`) generated once on entry creation. Both are `#[serde(default)]`, so existing configs load fine (missing `id` → empty string). **Persistence uses `id` when non-empty, falls back to vec index when empty.** Implications: (a) edit/delete operations in the TUI reference entries by `id` when available, index otherwise; (b) `name` need not be unique and may be empty; (c) persistence stores the active entry by `id`; (d) if `id` is empty (legacy config) and the persisted index is out-of-range, the value is silently dropped to `None`. **Index-shift limitation (legacy configs only):** if a legacy entry (empty `id`) at position N is removed externally, all persisted indices > N shift down by 1 and may point to wrong entries. Once an entry gains an `id` (on first TUI save), this limitation no longer applies to that entry. **`id` generation:** `blake3(name_bytes + current_unix_timestamp_nanos)[..4].to_hex()` — BLAKE3 is already a direct dependency; this avoids introducing a UUID library. Collisions are negligible in a single-user config. **`name` display rule:** truncated to fit the available sidebar column width using `unicode_width::UnicodeWidthStr::width()` (not `str::len()`) to correctly handle CJK and other wide characters; the maximum is the sidebar column width minus padding, with an absolute cap of 40 display columns. When `None` or empty string, falls back to `"{Type} #{index}"` (e.g. `"Check #1"`, `"Sync #2"`). Control characters and newlines are stripped before display. |
-| AD-19 | Concurrent instance handling | Running two `ssync-tui` processes against the same config file simultaneously is **a known limitation in MVP**: both write to `tui_state-{config_hash}.toml` with last-write-wins semantics, risking state loss. No file lock or pidfile is implemented. This is acceptable for MVP because the TUI is a single-user interactive tool and simultaneous instances are uncommon. **Document** the limitation in `README.md` ("Running multiple ssync-tui instances with the same config simultaneously is not supported"). Any future feature that requires exclusive state access must add a pidfile or advisory `flock(2)` lock under a separate ADR. |
+| AD-19 | Concurrent instance handling | Running two `sshi-tui` processes against the same config file simultaneously is **a known limitation in MVP**: both write to `tui_state-{config_hash}.toml` with last-write-wins semantics, risking state loss. No file lock or pidfile is implemented. This is acceptable for MVP because the TUI is a single-user interactive tool and simultaneous instances are uncommon. **Document** the limitation in `README.md` ("Running multiple sshi-tui instances with the same config simultaneously is not supported"). Any future feature that requires exclusive state access must add a pidfile or advisory `flock(2)` lock under a separate ADR. |
 | AD-20 | `viewport.rs` / `scrollable_list.rs` unification | Phase 1a implements a **single `viewport.rs`** that encapsulates `scroll_y`, `selected`, `visible_height`, and the scroll invariant (`scroll_y ≤ selected ≤ scroll_y + visible_height − 1`). A separate `scrollable_list.rs` is introduced only if a genuinely distinct use case emerges that cannot share the same struct. **`visible_range()`** is a required method on `viewport.rs` that returns `(scroll_y, scroll_y + visible_height)` — rendering code iterates only this slice, giving O(visible) render cost regardless of list length. If both files are still present at Phase 1b review, consolidate before Phase 2. This is an enforceable architectural decision, not an advisory note. |
 
 ---
 
 ## 1. Context & Goals
 
-ssync is a CLI-based SSH remote management tool. Today users interact
+sshi is a CLI-based SSH remote management tool. Today users interact
 exclusively through subcommand flags. A TUI provides an interactive,
 visual workflow for the three core activities: configuring the tool
 (Config), executing operations (Operate), and reviewing checkout data
@@ -60,7 +60,7 @@ dependencies. A dormant `run_tui()` function exists in
 **deleted** as part of Phase 1a — it is not the basis for the new TUI.
 The current `Cli.command` is a required field; Phase 1a flips it to
 `Option<Commands>` and adds the no-subcommand dispatch (§5). All
-existing subcommands (`ssync check`, `ssync run`, etc.) continue to
+existing subcommands (`sshi check`, `sshi run`, etc.) continue to
 work unchanged.
 
 ---
@@ -115,7 +115,7 @@ src/commands/
 | `src/commands/checkout.rs` | **Phase 0.7:** make `fetch_latest_snapshots`, `DisplayColumns`, `extract_*` `pub(crate)` (already covered by the combined row above — listed here for clarity). **Phase 1a:** delete the dead `run_tui()` PoC. |
 | `src/config/schema.rs` | Add `name: Option<String>` (pure display label; see AD-18) and `id: String` (stable entry identity; see AD-18) to `CheckEntry` and `SyncEntry` (`#[serde(default)]`) |
 | `src/config/app.rs` | Update `save()` to use `toml_edit::DocumentMut` for the **edit path** while preserving the existing `inject_config_comments` behavior on first-create (§15.4) |
-| `Cargo.toml` | Add `toml_edit = "0.22"` (always-on, not feature-gated; cheap dep). Add second `[[bin]]` for `ssync-tui` with `required-features = ["tui"]` (AD-17). |
+| `Cargo.toml` | Add `toml_edit = "0.22"` (always-on, not feature-gated; cheap dep). Add second `[[bin]]` for `sshi-tui` with `required-features = ["tui"]` (AD-17). |
 
 ### 2.3 Cargo.toml feature & bin configuration (AD-1, AD-17)
 
@@ -125,11 +125,11 @@ default = []                         # AD-1: source build is headless
 tui     = ["ratatui", "crossterm"]
 
 [[bin]]
-name = "ssync"
+name = "sshi"
 path = "src/main.rs"
 
 [[bin]]
-name = "ssync-tui"
+name = "sshi-tui"
 path = "src/main.rs"
 required-features = ["tui"]
 ```
@@ -138,18 +138,18 @@ Build matrix:
 
 | Command | Produces | Behavior of no-subcommand invocation |
 |---------|----------|--------------------------------------|
-| `cargo build --bin ssync` | `target/debug/ssync` | stderr: `"Interactive TUI not available. Use the ssync-tui binary."` + **exit 1** (AD-17 binary-name gate; TUI is unreachable from this binary regardless of compiled feature flag). |
-| `cargo build --bin ssync-tui --features tui` | `target/debug/ssync-tui` | If TTY: launches TUI (exit 0 on clean quit). If non-TTY (pipe / `TERM=dumb`): clap help + **exit 2**. |
-| `cargo build` (no `--bin`) | Both `ssync` and `ssync-tui` (the latter only if `--features tui` is also passed). | Behavior per the binary actually invoked. |
+| `cargo build --bin sshi` | `target/debug/sshi` | stderr: `"Interactive TUI not available. Use the sshi-tui binary."` + **exit 1** (AD-17 binary-name gate; TUI is unreachable from this binary regardless of compiled feature flag). |
+| `cargo build --bin sshi-tui --features tui` | `target/debug/sshi-tui` | If TTY: launches TUI (exit 0 on clean quit). If non-TTY (pipe / `TERM=dumb`): clap help + **exit 2**. |
+| `cargo build` (no `--bin`) | Both `sshi` and `sshi-tui` (the latter only if `--features tui` is also passed). | Behavior per the binary actually invoked. |
 
 Why a runtime binary-name check? Without it, a user who built
-`ssync-tui` and then symlinked it as `ssync` would get an
+`sshi-tui` and then symlinked it as `sshi` would get an
 unexpected TUI on what is supposed to be the headless name. The
-binary-name gate makes the contract explicit: only `ssync-tui` is
+binary-name gate makes the contract explicit: only `sshi-tui` is
 ever allowed to enter alternate screen.
 
-Release CI runs both `cargo build --release --bin ssync` and
-`cargo build --release --bin ssync-tui --features tui` and uploads
+Release CI runs both `cargo build --release --bin sshi` and
+`cargo build --release --bin sshi-tui --features tui` and uploads
 both artifacts as named.
 
 ---
@@ -173,10 +173,10 @@ When the binary is invoked **with no subcommand**, the entry-point
 logic is (AD-3, AD-17):
 
 ```text
-binary_name = argv[0].file_stem()                   # "ssync" or "ssync-tui"
+binary_name = argv[0].file_stem()                   # "sshi" or "sshi-tui"
 
-if binary_name != "ssync-tui" OR not built with `tui` feature:
-    eprintln!("Interactive TUI not available. Use the `ssync-tui` binary.")
+if binary_name != "sshi-tui" OR not built with `tui` feature:
+    eprintln!("Interactive TUI not available. Use the `sshi-tui` binary.")
     exit code 1
 
 elif not stdout.is_terminal() OR not stdin.is_terminal():
@@ -208,14 +208,14 @@ Detection happens **before** any terminal-mode changes (raw mode,
 alternate screen). This keeps non-TTY invocations from corrupting the
 calling shell.
 
-`ssync -c custom.toml` (no subcommand, `-c` only) follows the same
-rules. All explicit subcommands (`ssync check --all`, etc.) bypass
+`sshi -c custom.toml` (no subcommand, `-c` only) follows the same
+rules. All explicit subcommands (`sshi check --all`, etc.) bypass
 this detection entirely and run unchanged.
 
 **Accessibility note:** The TUI renders in alternate-screen ANSI mode,
 which screen-reader software cannot interpret. Users relying on
-screen readers should use the `ssync` CLI subcommands directly; all
-TUI operations are equally available via the command line. The `ssync`
+screen readers should use the `sshi` CLI subcommands directly; all
+TUI operations are equally available via the command line. The `sshi`
 binary always works in non-TTY and pipe mode (exit 1 for no-subcommand,
 normal subcommand behavior otherwise).
 
@@ -228,7 +228,7 @@ normal subcommand behavior otherwise).
 ```rust
 #[derive(Parser)]
 #[command(
-    name = "ssync",
+    name = "sshi",
     version,
     about = "SSH-config-based cross-platform remote management tool",
     subcommand_required = false,
@@ -251,25 +251,25 @@ pub struct Cli {
 #[cfg(feature = "tui")]
 mod tui;
 
-fn binary_is_ssync_tui() -> bool {
+fn binary_is_sshi_tui() -> bool {
     std::env::args_os()
         .next()
         .and_then(|p| std::path::Path::new(&p).file_stem().map(|s| s.to_owned()))
-        .map(|s| s == "ssync-tui")
+        .map(|s| s == "sshi-tui")
         .unwrap_or(false)
 }
 
 match cli.command {
     None => {
-        // AD-17 binary-name gate: only the ssync-tui binary is allowed
+        // AD-17 binary-name gate: only the sshi-tui binary is allowed
         // to enter alternate screen, regardless of compiled features.
         #[cfg(feature = "tui")]
         {
-            if binary_is_ssync_tui() {
+            if binary_is_sshi_tui() {
                 return crate::tui::entry::run_or_fallback(cfg, cfg_path).await;
             }
         }
-        eprintln!("Interactive TUI not available. Use the `ssync-tui` binary.");
+        eprintln!("Interactive TUI not available. Use the `sshi-tui` binary.");
         std::process::exit(1);
     }
     Some(Commands::Init { .. }) => { /* unchanged */ }
@@ -279,7 +279,7 @@ match cli.command {
 
 `run_or_fallback` performs the §4 TTY / `TERM` detection and either
 launches the TUI (exit 0 on clean quit) or falls back to printing
-clap help with **exit 2**. The `ssync` binary never reaches
+clap help with **exit 2**. The `sshi` binary never reaches
 `run_or_fallback` — it always falls through to the eprintln + exit 1
 path above, even when the binary was compiled with the `tui` feature.
 
@@ -670,7 +670,7 @@ and require no additional synchronisation primitives.
 **External config changes:** If the user edits `config.toml` in a
 separate terminal while the TUI is open, the TUI does not automatically
 detect the change. For MVP, the user must press `E` (opens external
-editor flow) and then Esc to reload the config, or restart `ssync-tui`.
+editor flow) and then Esc to reload the config, or restart `sshi-tui`.
 No `inotify`/`FSEvents` file-watcher is implemented — this avoids
 platform-specific complexity. This expectation is documented in
 `README.md`.
@@ -1038,7 +1038,7 @@ Phase 0.5 alongside `toml_edit`.
 ### 12.1 Tab bar (always visible)
 
 ```
-[1:Config]  [2:Operate]  [3:Checkout]              ssync v0.9 | 12 hosts
+[1:Config]  [2:Operate]  [3:Checkout]              sshi v0.9 | 12 hosts
 ```
 
 ### 12.2 Config tab
@@ -1195,7 +1195,7 @@ Data sources:
   would produce confusing or empty results.
 
 Cold-start fallback: if no known groups/hosts exist (`config` empty),
-show "(No known hosts — run `ssync check` first)" with a manual-input
+show "(No known hosts — run `sshi check` first)" with a manual-input
 fallback row.
 
 ---
@@ -1354,7 +1354,7 @@ pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
     };
 
     let tmp_file = tempfile::Builder::new()
-        .prefix(".ssync-config-")
+        .prefix(".sshi-config-")
         .suffix(".tmp")
         .tempfile_in(path.parent().unwrap_or(Path::new(".")))?;
     tmp_file.as_file().write_all(new_content.as_bytes())?;
@@ -1463,8 +1463,8 @@ File: `{resolved_state_dir}/tui_state-{config_hash}.toml` (AD-16).
 - `resolved_state_dir` is the **same path the DB uses**: call
   `state::db::resolved_state_dir(config.settings.state_dir.as_deref())?`
   — a new `pub fn` to be added to `src/state/db.rs` (Phase 0.5) that
-  returns the OS default (`~/.local/state/ssync` on Unix,
-  `%LOCALAPPDATA%/ssync` on Windows) when the override is `None`, or
+  returns the OS default (`~/.local/state/sshi` on Unix,
+  `%LOCALAPPDATA%/sshi` on Windows) when the override is `None`, or
   the override path directly. `state::db::open` is refactored to call
   this helper internally so both paths stay in sync. **Note:** the
   existing `state::db::state_dir()` (no-arg variant) does not accept
@@ -1473,13 +1473,13 @@ File: `{resolved_state_dir}/tui_state-{config_hash}.toml` (AD-16).
 - `config_hash` is the first 8 hex chars of `blake3(effective_path_str)` where
   `effective_path_str` is derived with this exact sequence:
   1. **`let resolved = config::app::resolve_path(custom_path)?`** — applies
-     the same default path (`~/.config/ssync/config.toml`) that the runtime
+     the same default path (`~/.config/sshi/config.toml`) that the runtime
      uses when no custom path is given. **Note:** the current implementation
      does **not** expand `~` or normalize relative paths. Phase 0.5 must
      enhance `resolve_path` with tilde expansion (`dirs::home_dir()`
-     substitution) so that `None`, `~/.config/ssync/config.toml`, and an
+     substitution) so that `None`, `~/.config/sshi/config.toml`, and an
      explicit equivalent path all produce the **same hash**.
-     Without this fix, users passing `~/.config/ssync/config.toml` explicitly
+     Without this fix, users passing `~/.config/sshi/config.toml` explicitly
      would get a different state file than users relying on the default.
   2. `canonicalize(&resolved).to_str().to_owned()` — succeeds when the file
      exists; eliminates symlinks and double-slashes.
@@ -1488,7 +1488,7 @@ File: `{resolved_state_dir}/tui_state-{config_hash}.toml` (AD-16).
   `canonicalize()` is **never** a hard precondition for startup; the
   hash is stable for the typical case (file exists) and degrades
   gracefully when it does not. Most users see exactly one state file.
-  Users who run ssync against multiple distinct configs get one state
+  Users who run sshi against multiple distinct configs get one state
   file per config without manual setup.
 - File missing or unreadable → start with `TuiPersistedState::default()`,
   log a warning to the ring buffer, do not crash.
@@ -1877,7 +1877,7 @@ without updating docs is **not mergeable**.
 1. Branch `feat/tui` from `main`.
 2. Add `toml_edit = "0.22"` to `Cargo.toml` (always-on).
 3. Confirm `[features].default = []` (AD-1).
-4. Add the second `[[bin]] ssync-tui` with `required-features = ["tui"]`
+4. Add the second `[[bin]] sshi-tui` with `required-features = ["tui"]`
    and the `argv[0]` runtime gate in `main.rs` (AD-17).
 5. **Remove `tracing-appender` and update `tracing-subscriber` features**
    in a single `Cargo.toml` change to avoid a transient CI break:
@@ -1888,8 +1888,8 @@ without updating docs is **not mergeable**.
    required for AD-15 fmt-layer writer swap — see AD-4). If another feature
    requires `tracing-appender` in the future, update AD-4 with justification
    before landing.
-6. CI matrix: `cargo build --bin ssync` (headless) **and**
-   `cargo build --bin ssync-tui --features tui`; release CI uploads
+6. CI matrix: `cargo build --bin sshi` (headless) **and**
+   `cargo build --bin sshi-tui --features tui`; release CI uploads
    both artifacts under their built names.
 7. **Add `feat/tui` CI pipeline configuration:** update the CI workflow
    to trigger on every push to `feat/tui` and run the full matrix:
@@ -1905,8 +1905,8 @@ without updating docs is **not mergeable**.
    on `feat/tui` — the branch history is the rollback. Document this
    workflow in `AGENTS.md`.
 9. **Docs:** Update `README.md` to document the two-binary release
-   model (`ssync` vs `ssync-tui`) and `AGENTS.md` build commands
-   to include the `--bin ssync-tui --features tui` variant.
+   model (`sshi` vs `sshi-tui`) and `AGENTS.md` build commands
+   to include the `--bin sshi-tui --features tui` variant.
 
 ### Phase 0.5 — Schema & config save  *(pre-TUI refactor milestone, part 1)*
 
@@ -1945,7 +1945,7 @@ without updating docs is **not mergeable**.
    **Verify `dirs` is a direct dependency in `Cargo.toml`** (not merely
    transitive) before this step — add it explicitly if missing.
    **CLI regression test:** before changing `resolve_path`, add a
-   test that invokes `ssync check -c ~/custom.toml` (or the equivalent
+   test that invokes `sshi check -c ~/custom.toml` (or the equivalent
    path resolution) with a known `~`-prefixed path and asserts the
    resolved absolute path is correct. This guards against accidentally
    changing resolution behavior for existing CLI users who pass `~/`
@@ -2040,7 +2040,7 @@ without updating docs is **not mergeable**.
    — `collect_pooled` is a per-host function; the integration layer is
    `check_core` (see §7.5 for the rationale). CLI `run()` passes a
    `PrinterSink`; TUI `AsyncBridge` passes its own `ProgressSink` impl.
-5. Validate: `cargo test` + manual `ssync check --all` against the
+5. Validate: `cargo test` + manual `sshi check --all` against the
    existing test fixtures produces identical stdout to pre-refactor.
 6. **Validate `Context::from_tui_parts` fields:** before committing
    the Phase 0.7 code, do a line-by-line audit of every field in the
@@ -2096,7 +2096,7 @@ of `commands::checkout` does not yet support them either.
    `run_or_fallback` dispatch with binary-name + `IsTerminal` +
    `TERM` checks (§4, AD-3, AD-17). Exit codes: 1 / 2 / 0 per AD-3.
 3. `init_tracing` rewired to install the ring-buffer layer + reload
-   handle (AD-15). When `ssync` (non-tui) binary runs, behavior is
+   handle (AD-15). When `sshi` (non-tui) binary runs, behavior is
    unchanged (fmt layer stays attached to stderr).
 4. `src/tui/terminal.rs`: `TerminalGuard` + `install_panic_hook()`.
 5. `src/tui/entry.rs`: `pub async fn run_or_fallback()` — performs
@@ -2140,10 +2140,10 @@ of `commands::checkout` does not yet support them either.
     bindings. The full Phase 6 help popup replaces this; until then,
     this popup prevents "what does this app do?" confusion from Phase 1a
     onward. (~20 lines of code; `PopupState::Help { content: String }`).
-13. Validate: `ssync-tui` on TTY launches TUI; `ssync-tui | cat`
+13. Validate: `sshi-tui` on TTY launches TUI; `sshi-tui | cat`
     prints help and exits 2 (no ANSI escapes leak into the pipe);
-    `ssync` (the non-tui binary) prints "TUI not available" and
-    exits 1; `ssync check --all` and other CLI subcommands behave
+    `sshi` (the non-tui binary) prints "TUI not available" and
+    exits 1; `sshi check --all` and other CLI subcommands behave
     identically to pre-refactor.
 
 **Out of scope for this phase:** Config tab content (placeholder only),
@@ -2257,7 +2257,7 @@ Depends on Phase 0.7's `check_core` already existing.
     Checkout tab and verify the snapshot table shows updated data from
     the just-completed check (the `db_stale` → lazy-reopen →
     `fetch_latest_snapshots` chain must fire).
-12. **Docs:** Update `README.md` with TUI launch instructions (`ssync-tui`),
+12. **Docs:** Update `README.md` with TUI launch instructions (`sshi-tui`),
     keybinding quick-reference (tabs, `f`, `q`, `i`), and a note on the
     two-binary release model if not already added in Phase 0.  Update
     `AGENTS.md` with the `ProgressSink` / `AsyncBridge` patterns for
@@ -2519,14 +2519,14 @@ Cases:
 
 ### 20.5 Entry-point gating (Phase 1a)
 
-- `cargo build --bin ssync` + run with no subcommand → stderr
+- `cargo build --bin sshi` + run with no subcommand → stderr
   contains "Interactive TUI not available", **exit 1**.
-- `cargo build --bin ssync-tui --features tui` + run with no
+- `cargo build --bin sshi-tui --features tui` + run with no
   subcommand and stdout piped to `cat` → clap help, **exit 2**, no
   ANSI escape sequences in captured output (assert absent).
-- Same `ssync-tui` binary with `TERM=dumb` env override → "Terminal
+- Same `sshi-tui` binary with `TERM=dumb` env override → "Terminal
   does not support TUI", **exit 2**.
-- `argv[0]` rename test: copy `ssync-tui` to `ssync` and invoke →
+- `argv[0]` rename test: copy `sshi-tui` to `sshi` and invoke →
   must take the "TUI not available" path (exit 1) regardless of the
   `tui` feature being compiled in.
 
@@ -2573,8 +2573,8 @@ feature configurations.
 ### 20.9 Windows-specific tests
 
 **Windows CI scope for MVP:** The primary CI target is Unix (Linux/macOS).
-Windows is **best-effort for MVP** — the headless `ssync` binary and all
-existing CLI tests run on Windows CI, but the TUI (`ssync-tui`) is not
+Windows is **best-effort for MVP** — the headless `sshi` binary and all
+existing CLI tests run on Windows CI, but the TUI (`sshi-tui`) is not
 smoke-tested in automated CI on Windows. Confirm this is clearly
 documented in `AGENTS.md`.
 
@@ -2611,21 +2611,21 @@ that ship the corresponding phases.
 
 Run on a real terminal (not CI) before tagging the first TUI release.
 
-1. `cargo build --bin ssync-tui --features tui` compiles cleanly.
-2. `cargo build --bin ssync` (headless) compiles cleanly;
-   `ssync` (no subcommand) prints "Interactive TUI not available",
+1. `cargo build --bin sshi-tui --features tui` compiles cleanly.
+2. `cargo build --bin sshi` (headless) compiles cleanly;
+   `sshi` (no subcommand) prints "Interactive TUI not available",
    **exit 1**.
 3. `cargo clippy --all-targets --features tui` warns nothing.
 4. `cargo test --features tui` passes; `cargo test` (no features)
    passes.
-5. `ssync-tui` on a TTY launches TUI; `1`/`2`/`3` and Tab switch
+5. `sshi-tui` on a TTY launches TUI; `1`/`2`/`3` and Tab switch
    tabs; `q` quits with **exit 0**.
-6. `ssync-tui | cat` prints clap help and **exits 2** — does not
+6. `sshi-tui | cat` prints clap help and **exits 2** — does not
    corrupt the pipe with ANSI escapes.
-7. `ssync-tui -c custom.toml` launches TUI with custom config; the
+7. `sshi-tui -c custom.toml` launches TUI with custom config; the
    matching `tui_state-{hash}.toml` is created under
    `state::db::state_dir()` (or override).
-8. `ssync check --all` (existing CLI) is byte-for-byte identical
+8. `sshi check --all` (existing CLI) is byte-for-byte identical
    to pre-Phase-0.7 stdout (golden-diff).
 9. `i` key opens info popup; `i` again closes; Esc also closes.
 10. Quit and relaunch → last active tab, filter, and `[operate].operation`
@@ -2659,7 +2659,7 @@ Run on a real terminal (not CI) before tagging the first TUI release.
     condition).
 19. Color-blind mode (mono terminal): focused items still
     distinguishable via `▶` prefix and thick border characters.
-20. **tmux resize:** run `ssync-tui` inside a tmux session; resize the
+20. **tmux resize:** run `sshi-tui` inside a tmux session; resize the
     tmux window — TUI layout reflows correctly with no rendering
     artifacts. (Tests that `crossterm` resize events propagate through
     tmux correctly.)
@@ -2717,7 +2717,7 @@ demo-able and mergeable.
     screen — no code needed until this post-MVP item lands.
 13. **Evaluate single-binary with runtime detection** — the two-binary
     model (AD-17) doubles CI artifact count for the lifetime of the
-    project. Once the TUI is stable and the `ssync-tui` name is
+    project. Once the TUI is stable and the `sshi-tui` name is
     understood by users, evaluate merging to a single binary with
     a `--tui` flag or environment-variable detection. The ~1–2 MB
     linking cost of `ratatui`/`crossterm` is the primary tradeoff.
@@ -2729,7 +2729,7 @@ demo-able and mergeable.
 For posterity (so we don't relitigate):
 
 - `tui` in `[features].default` for source builds — **rejected** (AD-1).
-  Source builds default to headless; release CI ships `ssync-tui`.
+  Source builds default to headless; release CI ships `sshi-tui`.
 - Subprocess transport (`std::process::Command` + `Stdio::piped()` +
   `kill_on_drop`) — **rejected** (AD-13). The TUI reuses the existing
   russh `SshPool`; ProgressSink trait surfaces per-host events. No

@@ -1,11 +1,11 @@
-# ssync TUI Navigation & Bug-Fix Implementation Plan
+# sshi TUI Navigation & Bug-Fix Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Unify ssync into a single TUI binary, implement full arrow-key navigation (including NavBar escape), and fix five config/operate bugs.
+**Goal:** Unify sshi into a single TUI binary, implement full arrow-key navigation (including NavBar escape), and fix five config/operate bugs.
 
 **Architecture:**
-- Remove `ssync-tui` binary; `ssync` always launches TUI when invoked with no subcommand.
+- Remove `sshi-tui` binary; `sshi` always launches TUI when invoked with no subcommand.
 - Add `navbar_focused: bool` to `App` so the tab-bar can receive arrow focus; each tab's top boundary emits an escape signal handled in `app.rs`.
 - All config editing-state checks are hoisted to `app.rs::handle_key` so global hotkeys are suspended while inline edits are active.
 
@@ -17,8 +17,8 @@
 
 | File | Changes |
 |------|---------|
-| `Cargo.toml` | Remove `[[bin]] ssync-tui`, make `tui` the default feature |
-| `src/main.rs` | Remove `binary_is_ssync_tui`, always launch TUI on no-subcommand |
+| `Cargo.toml` | Remove `[[bin]] sshi-tui`, make `tui` the default feature |
+| `src/main.rs` | Remove `binary_is_sshi_tui`, always launch TUI on no-subcommand |
 | `src/tui/app.rs` | `navbar_focused` field; NavBar key handling; editing-state guard; `ApplicableEntries` trap fix; NavBar render highlight |
 | `src/tui/tabs/config_tab.rs` | `is_editing_active()` helper; Vec-field edit routes to entry form |
 
@@ -30,14 +30,14 @@
 - Modify: `Cargo.toml:7-14` (bin targets), `Cargo.toml:80-81` (features)
 - Modify: `src/main.rs:17-24` (binary detection), `src/main.rs:113-137` (main dispatch)
 
-- [ ] **Step 1: Edit Cargo.toml — remove ssync-tui, set default tui feature**
+- [ ] **Step 1: Edit Cargo.toml — remove sshi-tui, set default tui feature**
 
 Replace the `[[bin]]` block and `[features]` section:
 
 ```toml
 # In Cargo.toml — replace lines 7-14:
 [[bin]]
-name = "ssync"
+name = "sshi"
 path = "src/main.rs"
 
 # In Cargo.toml — replace lines 79-81:
@@ -46,22 +46,22 @@ default = ["tui"]
 tui = ["ratatui", "crossterm", "tokio-util"]
 ```
 
-- [ ] **Step 2: Edit src/main.rs — remove binary_is_ssync_tui, update dispatch**
+- [ ] **Step 2: Edit src/main.rs — remove binary_is_sshi_tui, update dispatch**
 
-Remove the function `binary_is_ssync_tui` (lines 17-24) and update the no-subcommand branch (lines 113-137):
+Remove the function `binary_is_sshi_tui` (lines 17-24) and update the no-subcommand branch (lines 113-137):
 
 ```rust
 // Remove entirely:
 // #[cfg(feature = "tui")]
-// fn binary_is_ssync_tui() -> bool { ... }
+// fn binary_is_sshi_tui() -> bool { ... }
 
 // Replace the no-subcommand branch in main():
 //   OLD (lines 113-137):
 //     #[cfg(feature = "tui")]
-//     let tui_silent = cli.command.is_none() && binary_is_ssync_tui();
+//     let tui_silent = cli.command.is_none() && binary_is_sshi_tui();
 //     ...
-//     if binary_is_ssync_tui() { ... }
-//     eprintln!("Interactive TUI not available. Use the `ssync-tui` binary.");
+//     if binary_is_sshi_tui() { ... }
+//     eprintln!("Interactive TUI not available. Use the `sshi-tui` binary.");
 //
 //   NEW:
 #[cfg(feature = "tui")]
@@ -95,23 +95,23 @@ let command = match cli.command {
 - [ ] **Step 3: Build and verify**
 
 ```bash
-cd /Volumes/Home/Users/wen/repos3/ssync
+cd /Volumes/Home/Users/wen/repos3/sshi
 cargo build 2>&1 | tail -5
 ```
 
 Expected: `Finished` with no errors. Verify only one binary exists:
 
 ```bash
-ls target/debug/ssync* 2>/dev/null | grep -v '\.d'
+ls target/debug/sshi* 2>/dev/null | grep -v '\.d'
 ```
 
-Expected output: only `target/debug/ssync` (no `ssync-tui`).
+Expected output: only `target/debug/sshi` (no `sshi-tui`).
 
 - [ ] **Step 4: Commit**
 
 ```bash
 git add Cargo.toml src/main.rs
-git commit -m "feat: unify into single ssync binary, tui is default feature"
+git commit -m "feat: unify into single sshi binary, tui is default feature"
 ```
 
 ---
@@ -481,7 +481,7 @@ Expected: `Finished` with no errors.
 Search for the tab-bar render function:
 
 ```bash
-grep -n "render_tab_bar\|TabId::Config.*label\|1:Config\|tab.*title" /Volumes/Home/Users/wen/repos3/ssync/src/tui/app.rs | head -20
+grep -n "render_tab_bar\|TabId::Config.*label\|1:Config\|tab.*title" /Volumes/Home/Users/wen/repos3/sshi/src/tui/app.rs | head -20
 ```
 
 In the tab-bar render, the currently active tab is highlighted (e.g. `Modifier::BOLD | REVERSED`). When `self.navbar_focused` is true, add an additional visual indicator: render a `▶` prefix or a distinct border/color around the entire tab row, AND highlight the `active_tab` label differently to show it is "selected" in the NavBar.
@@ -511,7 +511,7 @@ git commit -m "feat(nav): full arrow-key navigation — Up from top escapes to N
 
 **Files:**
 - Modify: `CHANGELOG.md` — prepend Unreleased entry
-- Modify: `README.md` — if it describes ssync-tui binary, update to ssync
+- Modify: `README.md` — if it describes sshi-tui binary, update to sshi
 
 - [ ] **Step 1: Prepend Unreleased entry to CHANGELOG.md**
 
@@ -521,7 +521,7 @@ Add at the top of the `## [Unreleased]` section (or create it):
 ## [Unreleased] — 2026-05-06
 
 ### Changed
-- **Binary unified**: `ssync` now launches TUI directly when invoked with no subcommand; `ssync-tui` binary removed.
+- **Binary unified**: `sshi` now launches TUI directly when invoked with no subcommand; `sshi-tui` binary removed.
 
 ### Added
 - **Full arrow-key navigation**: pressing ↑ at the top of any tab escapes to the tab NavBar; ←/→ switches tabs; ↓/Enter returns to content.
@@ -536,10 +536,10 @@ Add at the top of the `## [Unreleased]` section (or create it):
 - [ ] **Step 2: Update README if needed**
 
 ```bash
-grep -n "ssync-tui" /Volumes/Home/Users/wen/repos3/ssync/README.md | head -10
+grep -n "sshi-tui" /Volumes/Home/Users/wen/repos3/sshi/README.md | head -10
 ```
 
-Replace any mention of `ssync-tui` with `ssync`.
+Replace any mention of `sshi-tui` with `sshi`.
 
 - [ ] **Step 3: Commit**
 
@@ -555,7 +555,7 @@ git commit -m "docs: update CHANGELOG and README for binary unification and nav 
 ### Spec coverage
 | Requirement | Task |
 |-------------|------|
-| 1. Single binary (ssync = TUI) | Task 1 |
+| 1. Single binary (sshi = TUI) | Task 1 |
 | 2. ↑ from Config content → NavBar | Task 6 |
 | 3. ↑ from Operate/Checkout → NavBar | Task 6 |
 | 4a. Config Esc exits edit mode | Task 3 |

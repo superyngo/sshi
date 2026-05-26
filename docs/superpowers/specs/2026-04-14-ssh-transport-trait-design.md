@@ -2,7 +2,7 @@
 
 ## Problem
 
-The ssync codebase has SSH operations scattered across three modules (`executor.rs`, `connection.rs`, `pool.rs`) with no unified interface. Command modules directly import `executor::run_remote_pooled`, `executor::upload_pooled`, and `ConnectionManager`, creating tight coupling that prevents unit testing and makes future backend changes invasive.
+The sshi codebase has SSH operations scattered across three modules (`executor.rs`, `connection.rs`, `pool.rs`) with no unified interface. Command modules directly import `executor::run_remote_pooled`, `executor::upload_pooled`, and `ConnectionManager`, creating tight coupling that prevents unit testing and makes future backend changes invasive.
 
 **Current pain points:**
 - 0 tests on executor.rs (269 lines), 4 tests on connection.rs (only socket-path helpers)
