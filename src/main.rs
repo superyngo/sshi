@@ -140,9 +140,9 @@ async fn main() -> Result<()> {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
             commands::list::run(&ctx).await
         }
-        Commands::Check { target, output } => {
+        Commands::Check { target, dry_run, output } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::check::run(&ctx, &output).await
+            commands::check::run(&ctx, dry_run, &output).await
         }
         Commands::Checkout {
             target,

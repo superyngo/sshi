@@ -100,6 +100,11 @@ pub enum Commands {
     Check {
         #[command(flatten)]
         target: TargetArgs,
+
+        /// Preview which hosts/checks would run without collecting or writing
+        #[arg(long)]
+        dry_run: bool,
+
         #[command(flatten)]
         output: OutputArgs,
     },
@@ -279,6 +284,15 @@ mod tests {
         match cli.command.unwrap() {
             Commands::Run { dry_run, .. } => assert!(dry_run),
             _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn check_parses_dry_run() {
+        let cli = Cli::try_parse_from(["ssync", "check", "--all", "--dry-run"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Check { dry_run, .. } => assert!(dry_run),
+            _ => panic!("expected Check"),
         }
     }
 }

@@ -247,7 +247,25 @@ pub async fn check_core(
 
 /// Thin CLI wrapper: invokes `check_core` with a printer-driven
 /// `ProgressSink`, prints the run summary, and writes `--out` reports.
-pub async fn run(ctx: &Context, output: &crate::cli::OutputArgs) -> Result<()> {
+pub async fn run(ctx: &Context, dry_run: bool, output: &crate::cli::OutputArgs) -> Result<()> {
+    if dry_run {
+        let hosts = ctx.resolve_hosts()?;
+        let configs = build_host_check_configs(ctx, &hosts);
+        for host in &hosts {
+            match configs.get(&host.name) {
+                Some((enabled, _paths)) if !enabled.is_empty() => {
+                    printer::print_host_line(
+                        &host.name,
+                        "ok",
+                        &format!("would collect: {}", enabled.join(", ")),
+                    );
+                }
+                _ => printer::print_host_line(&host.name, "skip", "no checks apply"),
+            }
+        }
+        return Ok(());
+    }
+
     let host_configs_empty_hint = {
         // We need to detect the "no entries" case before invoking core to
         // print the same hint as before. Cheap: re-derive host_configs.
