@@ -678,68 +678,17 @@ impl ConfigTabState {
                     true
                 }
                 KeyCode::Left | KeyCode::BackTab => {
-                    let fields = self.current_descriptors(config);
-                    if let Some(f) = fields.get(self.field_vp.selected) {
-                        if matches!(f.kind, FieldKind::TriBool) {
-                            let new_val = tribool_cycle_back(&f.display_value);
-                            self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(new_val, config);
-                            self.mark_dirty();
-                            return true;
-                        }
-                        if matches!(f.kind, FieldKind::ShellEnum) {
-                            let new_val = shell_cycle_back(&f.display_value);
-                            self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(&new_val, config);
-                            self.mark_dirty();
-                            return true;
-                        }
-                        if let FieldKind::Enum { variants } = &f.kind {
-                            let new_val = enum_cycle(variants, &f.display_value, false);
-                            self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(&new_val, config);
-                            self.mark_dirty();
-                            return true;
-                        }
-                    }
+                    // Left/Right no longer cycle option fields (Space/Enter do
+                    // that now); Left returns to the sidebar zone.
                     self.zone = ConfigZone::Sidebar;
-                    true
-                }
-                KeyCode::Right => {
-                    let fields = self.current_descriptors(config);
-                    if let Some(f) = fields.get(self.field_vp.selected) {
-                        if matches!(f.kind, FieldKind::TriBool) {
-                            let new_val = tribool_cycle_fwd(&f.display_value);
-                            self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(new_val, config);
-                            self.mark_dirty();
-                        }
-                        if matches!(f.kind, FieldKind::ShellEnum) {
-                            let new_val = shell_cycle_fwd(&f.display_value);
-                            self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(&new_val, config);
-                            self.mark_dirty();
-                        }
-                        if let FieldKind::Enum { variants } = &f.kind {
-                            let new_val = enum_cycle(variants, &f.display_value, true);
-                            self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(&new_val, config);
-                            self.mark_dirty();
-                        }
-                    }
                     true
                 }
                 KeyCode::Char(' ') => {
                     let fields = self.current_descriptors(config);
                     if let Some(f) = fields.get(self.field_vp.selected) {
-                        if matches!(f.kind, FieldKind::Bool) {
-                            let new_val = if f.display_value == "true" {
-                                "false"
-                            } else {
-                                "true"
-                            };
+                        if let Some(new_val) = cycle_option_value(&f.kind, &f.display_value) {
                             self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(new_val, config);
+                            self.commit_inline_edit(&new_val, config);
                             self.mark_dirty();
                             return true;
                         }
@@ -750,40 +699,13 @@ impl ConfigTabState {
                     let field_idx = self.field_vp.selected;
                     let fields = self.current_descriptors(config);
                     if let Some(f) = fields.get(field_idx) {
+                        if let Some(new_val) = cycle_option_value(&f.kind, &f.display_value) {
+                            self.editing_field_index = field_idx;
+                            self.commit_inline_edit(&new_val, config);
+                            self.mark_dirty();
+                            return true;
+                        }
                         match &f.kind {
-                            FieldKind::TriBool => {
-                                let new_val = tribool_cycle_fwd(&f.display_value);
-                                self.editing_field_index = field_idx;
-                                self.commit_inline_edit(new_val, config);
-                                self.mark_dirty();
-                                return true;
-                            }
-                            FieldKind::Bool => {
-                                let new_val = if f.display_value == "true" {
-                                    "false"
-                                } else {
-                                    "true"
-                                };
-                                self.editing_field_index = field_idx;
-                                self.commit_inline_edit(new_val, config);
-                                self.mark_dirty();
-                                return true;
-                            }
-                            FieldKind::ShellEnum => {
-                                let new_val = shell_cycle_fwd(&f.display_value);
-                                self.editing_field_index = field_idx;
-                                self.commit_inline_edit(&new_val, config);
-                                self.mark_dirty();
-                                return true;
-                            }
-                            FieldKind::Enum { variants } => {
-                                let new_val =
-                                    enum_cycle(variants.as_slice(), &f.display_value, true);
-                                self.editing_field_index = field_idx;
-                                self.commit_inline_edit(&new_val, config);
-                                self.mark_dirty();
-                                return true;
-                            }
                             FieldKind::VecString
                             | FieldKind::VecCheckPath
                             | FieldKind::CheckEnabled => {
@@ -1040,75 +962,15 @@ impl ConfigTabState {
                 form.field_vp.move_down();
                 true
             }
-            KeyCode::Left => {
-                let idx = form.field_vp.selected;
-                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::TriBool) {
-                    let new_val = tribool_cycle_back(&form.fields[idx].display_value.clone());
-                    form.fields[idx].display_value = new_val.to_string();
-                    form.dirty = true;
-                    return true;
-                }
-                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum)
-                {
-                    let new_val = shell_cycle_back(&form.fields[idx].display_value);
-                    form.fields[idx].display_value = new_val.to_string();
-                    form.dirty = true;
-                    return true;
-                }
-                if idx < form.fields.len() {
-                    if let FieldKind::Enum { variants } = &form.fields[idx].kind {
-                        let new_val = enum_cycle(
-                            variants.as_slice(),
-                            &form.fields[idx].display_value.clone(),
-                            false,
-                        );
-                        form.fields[idx].display_value = new_val;
-                        form.dirty = true;
-                        return true;
-                    }
-                }
-                false
-            }
-            KeyCode::Right => {
-                let idx = form.field_vp.selected;
-                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::TriBool) {
-                    let new_val = tribool_cycle_fwd(&form.fields[idx].display_value.clone());
-                    form.fields[idx].display_value = new_val.to_string();
-                    form.dirty = true;
-                    return true;
-                }
-                if idx < form.fields.len() && matches!(form.fields[idx].kind, FieldKind::ShellEnum)
-                {
-                    let new_val = shell_cycle_fwd(&form.fields[idx].display_value);
-                    form.fields[idx].display_value = new_val.to_string();
-                    form.dirty = true;
-                    return true;
-                }
-                if idx < form.fields.len() {
-                    if let FieldKind::Enum { variants } = &form.fields[idx].kind {
-                        let new_val = enum_cycle(
-                            variants.as_slice(),
-                            &form.fields[idx].display_value.clone(),
-                            true,
-                        );
-                        form.fields[idx].display_value = new_val;
-                        form.dirty = true;
-                        return true;
-                    }
-                }
-                false
-            }
             KeyCode::Char(' ') => {
+                // Space cycles any option field (Bool, TriBool, ShellEnum,
+                // Enum); Left/Right are left free for navigation.
                 let idx = form.field_vp.selected;
-                if idx < form.fields.len() {
-                    let field = &form.fields[idx];
-                    if field.editable && matches!(field.kind, FieldKind::Bool) {
-                        let toggled = if form.fields[idx].display_value == "true" {
-                            "false"
-                        } else {
-                            "true"
-                        };
-                        form.fields[idx].display_value = toggled.to_string();
+                if idx < form.fields.len() && form.fields[idx].editable {
+                    if let Some(new_val) =
+                        cycle_option_value(&form.fields[idx].kind, &form.fields[idx].display_value)
+                    {
+                        form.fields[idx].display_value = new_val;
                         form.dirty = true;
                         return true;
                     }
@@ -1120,35 +982,14 @@ impl ConfigTabState {
                 if idx < form.fields.len() {
                     let field = &form.fields[idx];
                     if field.editable {
+                        if let Some(new_val) =
+                            cycle_option_value(&field.kind, &field.display_value)
+                        {
+                            form.fields[idx].display_value = new_val;
+                            form.dirty = true;
+                            return true;
+                        }
                         match &field.kind {
-                            FieldKind::TriBool => {
-                                let new_val = tribool_cycle_fwd(&form.fields[idx].display_value);
-                                form.fields[idx].display_value = new_val.to_string();
-                                form.dirty = true;
-                            }
-                            FieldKind::Bool => {
-                                let toggled = if form.fields[idx].display_value == "true" {
-                                    "false"
-                                } else {
-                                    "true"
-                                };
-                                form.fields[idx].display_value = toggled.to_string();
-                                form.dirty = true;
-                            }
-                            FieldKind::ShellEnum => {
-                                let new_val = shell_cycle_fwd(&form.fields[idx].display_value);
-                                form.fields[idx].display_value = new_val.to_string();
-                                form.dirty = true;
-                            }
-                            FieldKind::Enum { variants } => {
-                                let new_val = enum_cycle(
-                                    variants.as_slice(),
-                                    &form.fields[idx].display_value.clone(),
-                                    true,
-                                );
-                                form.fields[idx].display_value = new_val;
-                                form.dirty = true;
-                            }
                             FieldKind::CheckEnabled => {
                                 let current = parse_bracket_list(&form.fields[idx].display_value);
                                 let available: Vec<String> = CHECK_ENABLED_OPTIONS
@@ -1896,7 +1737,7 @@ impl ConfigTabState {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  [Enter/e] Edit  [Space] Toggle bool  [s] Save  [Esc] Cancel",
+            "  [Enter/e] Edit  [Space] Cycle option  [s] Save  [Esc] Cancel",
             Style::default().fg(theme.inactive),
         )));
 
@@ -2561,6 +2402,9 @@ fn tribool_cycle_fwd(s: &str) -> &'static str {
     }
 }
 
+/// Backward cycle, retained for symmetry with the forward helpers; no key
+/// currently triggers it since Left/Right were freed for navigation.
+#[allow(dead_code)]
 fn tribool_cycle_back(s: &str) -> &'static str {
     match s {
         "no" => "yes",
@@ -2591,11 +2435,28 @@ fn shell_cycle_fwd(s: &str) -> String {
     enum_cycle(SHELL_VARIANTS, s, true)
 }
 
+#[allow(dead_code)]
 fn shell_cycle_back(s: &str) -> String {
     if !SHELL_VARIANTS.contains(&s) {
         tracing::warn!(shell = s, "unknown shell value, defaulting to sh");
     }
     enum_cycle(SHELL_VARIANTS, s, false)
+}
+
+/// Forward-cycle a rotating/toggle option field's value, or `None` for kinds
+/// that aren't cycleable options (text, vec, path, …).
+///
+/// Single shared path behind both Space and Enter so every option kind (Bool,
+/// TriBool, ShellEnum, Enum) advances identically; Left/Right stay free for
+/// navigation.
+fn cycle_option_value(kind: &FieldKind, current: &str) -> Option<String> {
+    match kind {
+        FieldKind::Bool => Some(if current == "true" { "false" } else { "true" }.to_string()),
+        FieldKind::TriBool => Some(tribool_cycle_fwd(current).to_string()),
+        FieldKind::ShellEnum => Some(shell_cycle_fwd(current)),
+        FieldKind::Enum { variants } => Some(enum_cycle(variants, current, true)),
+        _ => None,
+    }
 }
 
 pub(crate) fn trunc(s: &str, max: usize) -> String {
@@ -2711,6 +2572,44 @@ mod tests {
         assert_eq!(shell_cycle_back("sh"), "cmd");
         assert_eq!(shell_cycle_back("cmd"), "powershell");
         assert_eq!(shell_cycle_back("powershell"), "sh");
+    }
+
+    #[test]
+    fn test_cycle_option_value_advances_each_option_kind() {
+        assert_eq!(
+            cycle_option_value(&FieldKind::Bool, "true").as_deref(),
+            Some("false")
+        );
+        assert_eq!(
+            cycle_option_value(&FieldKind::Bool, "false").as_deref(),
+            Some("true")
+        );
+        assert_eq!(
+            cycle_option_value(&FieldKind::TriBool, "inherit").as_deref(),
+            Some("yes")
+        );
+        assert_eq!(
+            cycle_option_value(&FieldKind::ShellEnum, "sh").as_deref(),
+            Some("powershell")
+        );
+        assert_eq!(
+            cycle_option_value(
+                &FieldKind::Enum {
+                    variants: vec!["newest", "skip"]
+                },
+                "newest"
+            )
+            .as_deref(),
+            Some("skip")
+        );
+    }
+
+    #[test]
+    fn test_cycle_option_value_none_for_non_option_kinds() {
+        assert_eq!(cycle_option_value(&FieldKind::String, "x"), None);
+        assert_eq!(cycle_option_value(&FieldKind::U64, "5"), None);
+        assert_eq!(cycle_option_value(&FieldKind::VecString, "[a]"), None);
+        assert_eq!(cycle_option_value(&FieldKind::CheckEnabled, "[online]"), None);
     }
 
     #[test]

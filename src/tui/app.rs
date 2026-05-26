@@ -2407,7 +2407,7 @@ impl App {
 
         let hints = match self.active_tab {
             TabId::Config => {
-                "↑↓:Rows ←→:Zones e:Edit E:Editor a:Add d:Del L:Log i:Info ?:Help q:Quit"
+                "↑↓:Rows ←→:Zones e:Edit E:Editor s:Save a:Add d:Del L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => "↑↓:Zones ←→:OpType f:Filter L:Log i:Info ?:Help q:Quit",
             TabId::Checkout => "↑↓/jk:Rows PgUp/PgDn Home/End f:Filter L:Log i:Info ?:Help q:Quit",
@@ -2468,10 +2468,11 @@ Config tab
   Tab         Switch zone (Sidebar → FieldTable)
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
-  e / Enter   Edit focused field inline (scalar / form)
+  e / Enter   Edit text field inline; cycle option fields (bool/shell/enum)
+  Space       Cycle the focused option field (bool/shell/tri-bool/enum)
   a           Add new entry (host / check / sync)
   d           Delete focused entry
-  S           Save config (format-preserving via toml_edit)
+  s           Save config (format-preserving via toml_edit)
   E           Open config in $VISUAL/$EDITOR (TUI suspends, reloads on change)
 
 Log overlay

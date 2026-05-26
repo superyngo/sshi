@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-26 — TUI Config tab: save hint + unified option-field cycling
+- fix(tui): main-view Config footer now shows the `s:Save` hint (was only on
+  the entry-form footer). `src/tui/app.rs` Config hints line.
+- change(tui): all rotating/toggle field kinds (`Bool`, `TriBool`, `ShellEnum`,
+  `Enum`) now cycle via Enter/Space through one shared `cycle_option_value`
+  helper; Left/Right no longer hijack value changes and are freed for
+  navigation. Previously `ShellEnum`/`TriBool`/`Enum` cycled on Left/Right,
+  unlike `Bool` (Space/Enter only). Applies to both the right-panel inline
+  editor and the entry-form popup. Backward-cycle helpers retained behind
+  `#[allow(dead_code)]` (no key triggers them now). Operate tab untouched.
+
 ### 2026-05-26 — CLI interface unification (sync/run/exec/check/checkout)
 - feat(cli): common `--skip <hosts>` on all five host commands; filtered
   centrally in `resolve_hosts` (unknown names no-op; skip-all → no-hosts error).
