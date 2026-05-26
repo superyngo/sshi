@@ -42,6 +42,10 @@ pub struct TargetArgs {
     #[arg(short = 's', long, value_delimiter = ',')]
     pub shell: Vec<crate::config::schema::ShellType>,
 
+    /// Skip specific hosts (comma-separated)
+    #[arg(long, value_delimiter = ',')]
+    pub skip: Vec<String>,
+
     /// Execute sequentially instead of in parallel
     #[arg(long)]
     pub serial: bool,
@@ -236,6 +240,23 @@ pub enum Commands {
         #[arg(short = 'H', long, action = clap::ArgAction::HelpLong)]
         help: Option<bool>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn skip_parses_as_comma_list_on_check() {
+        let cli = Cli::try_parse_from(["ssync", "check", "--all", "--skip", "h1,h2"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Check { target, .. } => {
+                assert_eq!(target.skip, vec!["h1".to_string(), "h2".to_string()]);
+            }
+            _ => panic!("expected Check"),
+        }
+    }
 }
 
 #[derive(Clone, clap::ValueEnum)]

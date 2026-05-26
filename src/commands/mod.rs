@@ -38,6 +38,7 @@ pub struct Context {
     pub timeout: u64,
     pub mode: TargetMode,
     pub serial: bool,
+    pub skip: Vec<String>,
     #[allow(dead_code)]
     pub verbose: bool,
 }
@@ -60,6 +61,7 @@ impl Context {
             timeout,
             mode,
             serial: target.serial,
+            skip: target.skip.clone(),
             verbose,
         })
     }
@@ -87,6 +89,7 @@ impl Context {
             timeout,
             mode,
             serial,
+            skip: Vec::new(),
             verbose,
         })
     }
@@ -108,6 +111,7 @@ impl Context {
             timeout,
             mode: TargetMode::All,
             serial: false,
+            skip: Vec::new(),
             verbose,
         })
     }
@@ -136,6 +140,8 @@ impl Context {
                 .filter(|h| shells.contains(&h.shell))
                 .collect(),
         };
+
+        let hosts = filter_skipped(hosts, &self.skip);
 
         if hosts.is_empty() {
             let mut hint = String::from("No hosts matched the specified filter.");
@@ -316,4 +322,51 @@ fn collect_available_groups(config: &AppConfig) -> BTreeSet<String> {
         }
     }
     groups
+}
+
+/// Drop any host whose name appears in `skip`. Unknown names are ignored.
+fn filter_skipped<'a>(hosts: Vec<&'a HostEntry>, skip: &[String]) -> Vec<&'a HostEntry> {
+    if skip.is_empty() {
+        return hosts;
+    }
+    hosts
+        .into_iter()
+        .filter(|h| !skip.iter().any(|s| s == &h.name))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::{HostEntry, ShellType};
+
+    fn host(name: &str) -> HostEntry {
+        HostEntry {
+            name: name.to_string(),
+            ssh_host: name.to_string(),
+            groups: vec![],
+            shell: ShellType::Sh,
+            proxy_jump: None,
+        }
+    }
+
+    #[test]
+    fn filter_skipped_removes_named_hosts() {
+        let h1 = host("h1");
+        let h2 = host("h2");
+        let h3 = host("h3");
+        let all: Vec<&HostEntry> = vec![&h1, &h2, &h3];
+
+        let kept = filter_skipped(all.clone(), &["h2".to_string()]);
+        let names: Vec<&str> = kept.iter().map(|h| h.name.as_str()).collect();
+        assert_eq!(names, vec!["h1", "h3"]);
+
+        // unknown skip is a no-op
+        let kept = filter_skipped(all.clone(), &["nope".to_string()]);
+        assert_eq!(kept.len(), 3);
+
+        // skip-all yields empty
+        let kept = filter_skipped(all, &["h1".into(), "h2".into(), "h3".into()]);
+        assert!(kept.is_empty());
+    }
 }

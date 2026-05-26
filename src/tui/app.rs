@@ -839,6 +839,7 @@ impl App {
                     timeout: self.last_timeout_secs,
                     mode: TargetMode::All,
                     serial: false,
+                    skip: Vec::new(),
                     verbose: false,
                 };
                 if let Ok(snaps) = fetch_latest_snapshots(&tmp_ctx, &host_names) {
