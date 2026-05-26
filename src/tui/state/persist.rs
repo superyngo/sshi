@@ -66,6 +66,7 @@ pub struct TargetFilterState {
     pub mode: TargetFilterMode,
     pub groups: Vec<String>,
     pub hosts: Vec<String>,
+    pub skip: Vec<String>,
     pub shell: ShellMode,
     pub serial: bool,
     pub timeout: u64,
@@ -77,6 +78,7 @@ impl Default for TargetFilterState {
             mode: TargetFilterMode::default(),
             groups: Vec::new(),
             hosts: Vec::new(),
+            skip: Vec::new(),
             shell: ShellMode::default(),
             serial: false,
             timeout: 30,
@@ -410,5 +412,17 @@ active_tab = "Config"
         let a = config_hash(Some(std::path::Path::new("/tmp/a.toml")));
         let b = config_hash(Some(std::path::Path::new("/tmp/b.toml")));
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn skip_field_round_trips_and_defaults_empty() {
+        let s: TuiPersistedState = toml::from_str("").unwrap();
+        assert!(s.target_filter.skip.is_empty());
+
+        let mut t = TargetFilterState::default();
+        t.skip = vec!["h9".into()];
+        let ser = toml::to_string(&t).unwrap();
+        let back: TargetFilterState = toml::from_str(&ser).unwrap();
+        assert_eq!(back.skip, vec!["h9".to_string()]);
     }
 }

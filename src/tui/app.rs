@@ -482,7 +482,7 @@ impl App {
         }
 
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config) {
+        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
             Ok(t) if !t.is_empty() => t,
             Ok(_) => {
                 self.error = Some("No hosts matched the current filter.".to_string());
@@ -579,7 +579,7 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config) {
+        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
             Ok(t) if !t.is_empty() => t,
             Ok(_) => {
                 self.error = Some("No hosts matched the current filter.".to_string());
@@ -664,7 +664,7 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config) {
+        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
             Ok(t) if !t.is_empty() => t,
             Ok(_) => {
                 self.error = Some("No hosts matched the current filter.".to_string());
@@ -746,7 +746,7 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config) {
+        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
             Ok(t) if !t.is_empty() => t,
             Ok(_) => {
                 self.error = Some("No hosts matched the current filter.".to_string());
@@ -859,7 +859,7 @@ impl App {
     fn apply_checkout_filter(&mut self) {
         let target_mode = build_target_mode(&self.target_filter, &self.config);
         let visible: std::collections::HashSet<String> =
-            resolve_target_names(&target_mode, &self.config)
+            resolve_target_names(&target_mode, &self.config, &self.target_filter.skip)
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
@@ -2062,6 +2062,7 @@ impl App {
         let target_count = match resolve_target_names(
             &build_target_mode(&self.target_filter, &self.config),
             &self.config,
+            &self.target_filter.skip,
         ) {
             Ok(t) => t.len(),
             Err(_) => 0,
@@ -2518,8 +2519,8 @@ fn build_target_mode(filter: &TargetFilterState, _config: &AppConfig) -> TargetM
 }
 
 /// Resolve the matching host names for a TargetMode against a config.
-fn resolve_target_names(mode: &TargetMode, config: &AppConfig) -> anyhow::Result<Vec<String>> {
-    let names: Vec<String> = match mode {
+fn resolve_target_names(mode: &TargetMode, config: &AppConfig, skip: &[String]) -> anyhow::Result<Vec<String>> {
+    let mut names: Vec<String> = match mode {
         TargetMode::All => config.host.iter().map(|h| h.name.clone()).collect(),
         TargetMode::Hosts(specs) => config
             .host
@@ -2540,6 +2541,7 @@ fn resolve_target_names(mode: &TargetMode, config: &AppConfig) -> anyhow::Result
             .map(|h| h.name.clone())
             .collect(),
     };
+    names.retain(|n| !skip.iter().any(|s| s == n));
     Ok(names)
 }
 
@@ -2639,5 +2641,39 @@ mod flush_tests {
             mtime_before, mtime_after,
             "file must not be touched when not dirty"
         );
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::{build_target_mode, resolve_target_names};
+    use crate::config::schema::{AppConfig, HostEntry, ShellType};
+    use crate::tui::state::persist::{TargetFilterMode, TargetFilterState};
+
+    fn cfg_with_group(hosts: &[(&str, &[&str])]) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        for (name, groups) in hosts {
+            cfg.host.push(HostEntry {
+                name: name.to_string(),
+                ssh_host: name.to_string(),
+                shell: ShellType::Sh,
+                groups: groups.iter().map(|s| s.to_string()).collect(),
+                proxy_jump: None,
+            });
+        }
+        cfg
+    }
+
+    #[test]
+    fn skip_subtracts_from_resolved_targets() {
+        let cfg = cfg_with_group(&[("h1", &["g"]), ("h2", &["g"]), ("h3", &["g"])]);
+        let filter = TargetFilterState {
+            mode: TargetFilterMode::All,
+            skip: vec!["h2".to_string()],
+            ..Default::default()
+        };
+        let mode = build_target_mode(&filter, &cfg);
+        let names = resolve_target_names(&mode, &cfg, &filter.skip).unwrap();
+        assert_eq!(names, vec!["h1".to_string(), "h3".to_string()]);
     }
 }
