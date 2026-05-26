@@ -1422,7 +1422,9 @@ impl App {
                         } else {
                             self.param_field = match self.operate_operation {
                                 OperationKind::Sync => ParamPanelField::SyncSourceInput,
-                                _ => ParamPanelField::SecondFlag,
+                                // Run has no SecondFlag row (--yes removed); enter at Sudo.
+                                OperationKind::Exec => ParamPanelField::SecondFlag,
+                                _ => ParamPanelField::Sudo,
                             };
                             OperateFocus::ParamPanel
                         }
@@ -1498,8 +1500,13 @@ impl App {
                                 OperateFocus::ParamPanel
                             }
                             ParamPanelField::Sudo => {
-                                self.param_field = ParamPanelField::SecondFlag;
-                                OperateFocus::ParamPanel
+                                // Run has no SecondFlag row (--yes removed); skip to TargetRow.
+                                if self.operate_operation == OperationKind::Exec {
+                                    self.param_field = ParamPanelField::SecondFlag;
+                                    OperateFocus::ParamPanel
+                                } else {
+                                    OperateFocus::TargetRow
+                                }
                             }
                             ParamPanelField::SecondFlag => OperateFocus::TargetRow,
                             _ => OperateFocus::TargetRow,
