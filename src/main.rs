@@ -158,7 +158,6 @@ async fn main() -> Result<()> {
             target,
             dry_run,
             files,
-            no_push_missing,
             source,
             output,
         } => {
@@ -167,7 +166,6 @@ async fn main() -> Result<()> {
                 &ctx,
                 dry_run,
                 &files,
-                no_push_missing,
                 source.as_deref(),
                 &output,
             )

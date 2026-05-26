@@ -56,7 +56,6 @@ pub async fn run(
     ctx: &Context,
     dry_run: bool,
     files: &[String],
-    no_push_missing: bool,
     cli_source: Option<&str>,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
@@ -64,7 +63,7 @@ pub async fn run(
     // Per-host (files_synced, files_skipped) accumulator
     let mut host_file_map: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
         std::collections::HashMap::new();
-    let push_missing = !no_push_missing;
+    let push_missing = true;
     let hosts = ctx.resolve_hosts()?;
     // Collect host names for the report (used after pool is consumed)
     let host_names: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();

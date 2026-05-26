@@ -136,10 +136,6 @@ pub enum Commands {
         #[arg(short = 'f', long, value_delimiter = ',')]
         files: Vec<String>,
 
-        /// Don't push files to hosts that are missing them
-        #[arg(long)]
-        no_push_missing: bool,
-
         /// Use a specific host as file source (bypasses auto-detection)
         #[arg(short = 'S', long)]
         source: Option<String>,
@@ -256,6 +252,18 @@ mod tests {
             }
             _ => panic!("expected Check"),
         }
+    }
+
+    #[test]
+    fn sync_rejects_no_push_missing() {
+        let result = Cli::try_parse_from(["ssync", "sync", "--all", "--no-push-missing"]);
+        assert!(result.is_err(), "--no-push-missing should be rejected");
+    }
+
+    #[test]
+    fn sync_still_parses_without_removed_flag() {
+        let cli = Cli::try_parse_from(["ssync", "sync", "--all"]).unwrap();
+        assert!(matches!(cli.command.unwrap(), Commands::Sync { .. }));
     }
 }
 
