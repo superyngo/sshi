@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-26 — CLI interface unification (sync/run/exec/check/checkout)
+- feat(cli): common `--skip <hosts>` on all five host commands; filtered
+  centrally in `resolve_hosts` (unknown names no-op; skip-all → no-hosts error).
+- feat(cli): `--dry-run` added to `run` (preview command + targets) and
+  `check` (preview per-host applicable checks); both return before any SSH/DB
+  side effect. `sync`/`exec` dry-run unchanged. `checkout` unaffected (read-only).
+- refactor(cli): removed `sync --no-push-missing` (push-missing always on,
+  matching prior default).
+- refactor(cli): removed `run`/`exec` `-y/--yes` (was a no-op; dead params and
+  TUI call-site args dropped). The TUI Operate "yes" checkbox is left inert
+  pending the #4 Operate refactor.
+- `-o/--out` retained on all five commands.
+
 ### 2026-05-21 — TOML serializer fix, explicit-save UX, vec_editor close fix
 - **fix(config): writer now persists `[[host]]` / `[[check]]` / `[[sync]]`
   sections.** Root cause of "edits look saved in TUI but vanish after
