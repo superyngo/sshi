@@ -1,11 +1,11 @@
 [package]
-name = "ssync"
+name = "sshi"
 version = "0.9.0"
 edition = "2021"
 description = "SSH-config-based cross-platform remote management tool"
 
 [[bin]]
-name = "ssync"
+name = "sshi"
 path = "src/main.rs"
 
 [dependencies]

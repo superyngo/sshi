@@ -2187,7 +2187,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "ssync"
+name = "sshi"
 version = "0.9.0"
 dependencies = [
  "anyhow",
