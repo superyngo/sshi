@@ -54,7 +54,6 @@ pub struct OperateRenderData<'a> {
     pub run_command: &'a InputField,
     pub exec_script: &'a InputField,
     pub run_sudo: bool,
-    pub run_yes: bool,
     pub exec_sudo: bool,
     pub exec_keep: bool,
     pub param_field: ParamPanelField,
@@ -119,7 +118,8 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         OperationKind::Run | OperationKind::Exec | OperationKind::Sync
     );
     let param_rows = match data.operation {
-        OperationKind::Run | OperationKind::Exec => 7u16,
+        OperationKind::Run => 5u16,
+        OperationKind::Exec => 7u16,
         OperationKind::Sync => {
             let adhoc_list_rows = data.sync_adhoc_files.len().min(5) as u16;
             8 + adhoc_list_rows
@@ -130,8 +130,8 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),          // OpRadio row
+            Constraint::Length(1),          // target summary line
             Constraint::Length(param_rows), // param panel (0 for check)
-            Constraint::Length(4),          // target row
             Constraint::Min(0),             // applicable entries / spacer
             Constraint::Length(3),          // execute button
         ])
@@ -139,20 +139,20 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
 
     render_op_radio(data, chunks[0], frame);
 
+    // Target summary line.
+    render_target_summary(data, chunks[1], frame);
+
     if has_params {
         match data.operation {
             OperationKind::Run | OperationKind::Exec => {
-                render_run_exec_params(data, chunks[1], frame);
+                render_run_exec_params(data, chunks[2], frame);
             }
             OperationKind::Sync => {
-                render_sync_params(data, chunks[1], frame);
+                render_sync_params(data, chunks[2], frame);
             }
             _ => {}
         }
     }
-
-    // Target row.
-    render_target_row(data, chunks[2], frame);
 
     // Applicable entries panel.
     render_applicable_entries(data, chunks[3], frame);
@@ -198,12 +198,13 @@ fn render_op_radio(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
 
 fn render_run_exec_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let param_focused = data.focus == OperateFocus::ParamPanel;
+    let show_second = data.operation == OperationKind::Exec;
     let param_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // text input
             Constraint::Length(1), // sudo
-            Constraint::Length(1), // yes / keep
+            Constraint::Length(if show_second { 1 } else { 0 }), // keep (exec only)
             Constraint::Min(0),
         ])
         .split(area);
@@ -241,33 +242,30 @@ fn render_run_exec_params(data: &OperateRenderData, area: Rect, frame: &mut Fram
         param_chunks[1],
     );
 
-    let flag2_focused = param_focused && data.param_field == ParamPanelField::SecondFlag;
-    let (flag2_label, flag2_val) = match data.operation {
-        OperationKind::Run => ("--yes (skip confirmation)", data.run_yes),
-        OperationKind::Exec => ("--keep (keep script after exec)", data.exec_keep),
-        _ => ("", false),
-    };
-    let flag2_style = if flag2_focused {
-        Style::default()
-            .fg(data.theme.accent_operate)
-            .add_modifier(Modifier::REVERSED)
-    } else {
-        Style::default()
-    };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                if flag2_val {
-                    format!("[✓] {flag2_label}")
-                } else {
-                    format!("[ ] {flag2_label}")
-                },
-                flag2_style,
-            ),
-        ])),
-        param_chunks[2],
-    );
+    if show_second {
+        let flag2_focused = param_focused && data.param_field == ParamPanelField::SecondFlag;
+        let flag2_style = if flag2_focused {
+            Style::default()
+                .fg(data.theme.accent_operate)
+                .add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default()
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    if data.exec_keep {
+                        "[✓] --keep (keep script after exec)".to_string()
+                    } else {
+                        "[ ] --keep (keep script after exec)".to_string()
+                    },
+                    flag2_style,
+                ),
+            ])),
+            param_chunks[2],
+        );
+    }
 }
 
 fn render_sync_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
@@ -542,26 +540,31 @@ fn render_execute_button(data: &OperateRenderData, area: Rect, frame: &mut Frame
     frame.render_widget(exec, area);
 }
 
-fn render_target_row(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let target_focused = data.focus == OperateFocus::TargetRow;
-    let mode_summary = match data.target_filter.mode {
-        TargetFilterMode::All => "all hosts".to_string(),
-        TargetFilterMode::Groups => format!("groups:{}", data.target_filter.groups.join(",")),
-        TargetFilterMode::Hosts => format!("hosts:{}", data.target_filter.hosts.join(",")),
+fn render_target_summary(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
+    let focused = data.focus == OperateFocus::TargetRow;
+    let mode = match data.target_filter.mode {
+        TargetFilterMode::All => "all hosts".into(),
+        TargetFilterMode::Groups => format!("groups:[{}]", data.target_filter.groups.join(",")),
+        TargetFilterMode::Hosts => format!("hosts:[{}]", data.target_filter.hosts.join(",")),
         TargetFilterMode::Shell => format!("shell:{:?}", data.target_filter.shell),
     };
-    let target_text = format!(
-        " Target: {}  ({} hosts)    [f] Filter   serial={}   timeout={}s",
-        mode_summary, data.target_count, data.target_filter.serial, data.target_filter.timeout,
+    let skip = if data.target_filter.skip.is_empty() {
+        String::new()
+    } else {
+        format!(" · skip:[{}]", data.target_filter.skip.join(","))
+    };
+    let line = format!(
+        " Target: {}  ({} hosts){} · serial={} · {}s    [f] filter",
+        mode, data.target_count, skip, data.target_filter.serial, data.target_filter.timeout,
     );
-    let target_p = Paragraph::new(target_text).style(if target_focused {
+    let style = if focused {
         Style::default()
             .fg(data.theme.accent_operate)
             .add_modifier(Modifier::REVERSED)
     } else {
         Style::default()
-    });
-    frame.render_widget(target_p, area);
+    };
+    frame.render_widget(Paragraph::new(line).style(style), area);
 }
 
 /// Render the progress popup showing running operation status.

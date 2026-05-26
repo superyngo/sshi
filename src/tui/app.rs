@@ -1554,10 +1554,6 @@ impl App {
                         self.run_sudo = !self.run_sudo;
                         self.save_state();
                     }
-                    (OperationKind::Run, ParamPanelField::SecondFlag) => {
-                        // run_yes removed; no-op placeholder until Task 8
-                        self.save_state();
-                    }
                     (OperationKind::Exec, ParamPanelField::Sudo) => {
                         self.exec_sudo = !self.exec_sudo;
                         self.save_state();
@@ -2075,7 +2071,6 @@ impl App {
             run_command: &self.run_command,
             exec_script: &self.exec_script,
             run_sudo: self.run_sudo,
-            run_yes: false,
             exec_sudo: self.exec_sudo,
             exec_keep: self.exec_keep,
             param_field: self.param_field,
