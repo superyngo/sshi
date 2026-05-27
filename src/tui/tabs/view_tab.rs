@@ -17,6 +17,7 @@ use crate::commands::checkout::{
 };
 use crate::commands::list::ListData;
 use crate::commands::log::LogRow;
+use crate::tui::components::input_field::InputField;
 
 use super::super::state::persist::ViewOperationKind;
 use super::super::theme::Theme;
@@ -37,6 +38,16 @@ pub struct ViewRenderData<'a> {
     pub result_scroll: usize,
     /// Selected row index for the Checkout table (highlighted with ▶ + reverse).
     pub checkout_selected: usize,
+    /// Log specific-params: text inputs.
+    pub log_last_input: &'a InputField,
+    pub log_since_input: &'a InputField,
+    pub log_host_input: &'a InputField,
+    /// Log specific-params: errors checkbox state.
+    pub log_errors: bool,
+    /// Log specific-params: action display string ("all", "sync", etc.).
+    pub log_action: &'static str,
+    /// Which specific field index (0..4) is focused, or None.
+    pub specific_focused: Option<usize>,
 }
 
 /// Entry point: render the entire View tab into `area`.
@@ -54,18 +65,40 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let specific_height: u16 = if data.view_op == ViewOperationKind::Log {
+        5
+    } else {
+        0
+    };
+
+    let constraints = if specific_height > 0 {
+        vec![
+            Constraint::Length(2), // op selector
+            Constraint::Length(1), // target summary
+            Constraint::Length(specific_height), // specific params
+            Constraint::Min(0),   // result area
+        ]
+    } else {
+        vec![
             Constraint::Length(2), // op selector
             Constraint::Length(1), // target summary
             Constraint::Min(0),    // result area
-        ])
+        ]
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
         .split(inner);
 
     render_view_selector(data, chunks[0], frame);
     render_view_target_summary(data, chunks[1], frame);
-    render_result_area(data, chunks[2], frame);
+    if specific_height > 0 {
+        render_log_specific_params(data, chunks[2], frame);
+        render_result_area(data, chunks[3], frame);
+    } else {
+        render_result_area(data, chunks[2], frame);
+    }
 }
 
 /// Horizontal radio selector for checkout / list / log.
@@ -116,6 +149,85 @@ fn render_view_target_summary(data: &ViewRenderData, area: Rect, frame: &mut Fra
         )
     };
     frame.render_widget(Paragraph::new(Line::from(vec![text])), area);
+}
+
+/// Render the 5-row Log specific-params panel (last, errors, action, since, host).
+fn render_log_specific_params(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
+    let fields: [(usize, &str); 5] = [
+        (0, "last"),
+        (1, "errors"),
+        (2, "action"),
+        (3, "since"),
+        (4, "host"),
+    ];
+
+    let row_height = 1u16;
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            fields
+                .iter()
+                .map(|_| Constraint::Length(row_height))
+                .collect::<Vec<_>>(),
+        )
+        .split(area);
+
+    for (idx, (field_idx, label)) in fields.iter().enumerate() {
+        let focused = data.specific_focused == Some(*field_idx);
+        let row_area = rows[idx];
+
+        match *field_idx {
+            0 => {
+                // last: text input
+                data.log_last_input.render(frame, row_area, label, focused);
+            }
+            1 => {
+                // errors: checkbox
+                let check = if data.log_errors { "[x]" } else { "[ ]" };
+                let val_style = if focused {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Reset)
+                };
+                let line = Line::from(vec![
+                    Span::styled(format!(" {} ", check), val_style),
+                    Span::styled(label.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(format!(" (space to toggle)")),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_area);
+            }
+            2 => {
+                // action: enum display
+                let val_style = if focused {
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::Reset)
+                };
+                let line = Line::from(vec![
+                    Span::styled(
+                        format!(" {} ", data.log_action),
+                        val_style,
+                    ),
+                    Span::styled(label.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::raw(" (←/→ to cycle)"),
+                ]);
+                frame.render_widget(Paragraph::new(line), row_area);
+            }
+            3 => {
+                // since: text input
+                data.log_since_input.render(frame, row_area, label, focused);
+            }
+            4 => {
+                // host: text input
+                data.log_host_input.render(frame, row_area, label, focused);
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Dispatch to the appropriate result renderer.

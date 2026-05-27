@@ -28,6 +28,7 @@ use ratatui::{
 
 use crate::cli::ActionFilter;
 use crate::commands::checkout::{fetch_latest_snapshots, DisplayColumns, HostSnapshot};
+use crate::tui::state::persist::ViewOperationKind;
 use crate::commands::report::{CommandReport, HostStatus};
 use crate::commands::{Context, TargetMode};
 use crate::config::schema::AppConfig;
@@ -72,6 +73,34 @@ fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std
 const MIN_COLS: u16 = 80;
 const MIN_ROWS: u16 = 24;
 const POLL_INTERVAL_MS: u64 = 50;
+
+/// Focus zone within the View tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewFocus {
+    OpSelector,
+    Specific(usize),
+    Result,
+}
+
+impl ViewFocus {
+    /// Return the ordered focus stops for the given view operation.
+    fn stops(op: ViewOperationKind) -> Vec<ViewFocus> {
+        match op {
+            ViewOperationKind::Checkout | ViewOperationKind::List => {
+                vec![ViewFocus::OpSelector, ViewFocus::Result]
+            }
+            ViewOperationKind::Log => vec![
+                ViewFocus::OpSelector,
+                ViewFocus::Specific(0),
+                ViewFocus::Specific(1),
+                ViewFocus::Specific(2),
+                ViewFocus::Specific(3),
+                ViewFocus::Specific(4),
+                ViewFocus::Result,
+            ],
+        }
+    }
+}
 
 /// State for the masked SSH auth credential popup.
 struct AuthPopup {
@@ -175,6 +204,14 @@ pub struct App {
     log_last: usize,
     /// View tab: log_errors filter flag.
     log_errors: bool,
+    /// View tab: log action filter.
+    log_action: Option<ActionFilter>,
+    /// View tab: text inputs for log params.
+    log_last_input: InputField,
+    log_since_input: InputField,
+    log_host_input: InputField,
+    /// View tab: which zone currently has focus.
+    view_focus: ViewFocus,
     /// Tracks the most recent timeout used (filter timeout or default).
     last_timeout_secs: u64,
     /// Log overlay open state (Phase 7, §17.3 item 3).
@@ -274,6 +311,15 @@ impl App {
                 persisted.operate.log_last
             },
             log_errors: persisted.operate.log_errors,
+            log_action: None,
+            log_last_input: InputField::new(&if persisted.operate.log_last == 0 {
+                "20".to_string()
+            } else {
+                persisted.operate.log_last.to_string()
+            }),
+            log_since_input: InputField::new(""),
+            log_host_input: InputField::new(""),
+            view_focus: ViewFocus::OpSelector,
             last_timeout_secs: timeout,
             log_overlay_open: false,
             log_overlay_vp: Viewport::new(),
@@ -965,6 +1011,42 @@ impl App {
             .set_dims(self.checkout_snapshots.len(), 0);
     }
 
+    fn view_focus_up(&mut self) {
+        if self.view_focus == ViewFocus::Result {
+            if self.checkout_viewport.selected == 0 && self.checkout_viewport.scroll_y == 0 {
+                // At top of result — move focus to previous stop.
+                let stops = ViewFocus::stops(self.view_op);
+                let idx = stops.iter().position(|s| *s == self.view_focus).unwrap_or(0);
+                if idx > 0 {
+                    self.view_focus = stops[idx - 1];
+                }
+            } else {
+                self.checkout_viewport.move_up();
+            }
+        } else {
+            let stops = ViewFocus::stops(self.view_op);
+            let idx = stops.iter().position(|s| *s == self.view_focus).unwrap_or(0);
+            if idx > 0 {
+                self.view_focus = stops[idx - 1];
+            } else {
+                // At first stop (OpSelector) — escape to navbar.
+                self.navbar_focused = true;
+            }
+        }
+    }
+
+    fn view_focus_down(&mut self) {
+        if self.view_focus == ViewFocus::Result {
+            self.checkout_viewport.move_down();
+        } else {
+            let stops = ViewFocus::stops(self.view_op);
+            let idx = stops.iter().position(|s| *s == self.view_focus).unwrap_or(0);
+            if idx + 1 < stops.len() {
+                self.view_focus = stops[idx + 1];
+            }
+        }
+    }
+
     /// Refresh the View tab result data for the active `view_op`.
     fn refresh_view(&mut self) {
         // Clear the dirty flag only on a successful read; a failed db::open
@@ -1009,12 +1091,20 @@ impl App {
                         skip: Vec::new(),
                         verbose: false,
                     };
+                    let since = {
+                        let v = self.log_since_input.value.trim().to_string();
+                        if v.is_empty() { None } else { Some(v) }
+                    };
+                    let host = {
+                        let v = self.log_host_input.value.trim().to_string();
+                        if v.is_empty() { None } else { Some(v) }
+                    };
                     self.view_log = crate::commands::log::log_core(
                         &ctx,
                         self.log_last,
-                        None,
-                        None,
-                        None,
+                        since,
+                        host,
+                        self.log_action.clone(),
                         self.log_errors,
                     )
                     .unwrap_or_default();
@@ -1111,6 +1201,46 @@ impl App {
                     self.sync_adhoc_files.push(path);
                 }
                 return Ok(changed);
+            }
+        }
+
+        // §14.3: while a View text input is active, suspend ALL other routing.
+        if self.active_tab == TabId::View && self.view_op == ViewOperationKind::Log {
+            let active_view_field: Option<&mut InputField> =
+                match self.view_focus {
+                    ViewFocus::Specific(0) if self.log_last_input.mode == InputMode::Active => {
+                        Some(&mut self.log_last_input)
+                    }
+                    ViewFocus::Specific(3) if self.log_since_input.mode == InputMode::Active => {
+                        Some(&mut self.log_since_input)
+                    }
+                    ViewFocus::Specific(4) if self.log_host_input.mode == InputMode::Active => {
+                        Some(&mut self.log_host_input)
+                    }
+                    _ => None,
+                };
+            // Route the key to the active field, then end its borrow before
+            // touching other `self` fields (commit handling needs `self`).
+            let committed = if let Some(field) = active_view_field {
+                field.handle_key(key);
+                Some(field.mode == InputMode::Normal)
+            } else {
+                None
+            };
+            if let Some(committed) = committed {
+                // Only Enter commits; Esc cancels (value already restored) and
+                // must not trigger a redundant refresh.
+                if committed && key.code == KeyCode::Enter {
+                    if matches!(self.view_focus, ViewFocus::Specific(0)) {
+                        match self.log_last_input.value.trim().parse::<usize>() {
+                            Ok(v) => self.log_last = v,
+                            // Non-numeric input — revert to the active value.
+                            Err(_) => self.log_last_input.value = self.log_last.to_string(),
+                        }
+                    }
+                    self.view_dirty = true;
+                }
+                return Ok(true);
             }
         }
 
@@ -1818,60 +1948,89 @@ impl App {
             }
 
             // ── View tab ───────────────────────────────────────────────
+
             KeyCode::Left if self.active_tab == TabId::View => {
-                self.view_op = match self.view_op {
-                    super::state::persist::ViewOperationKind::Checkout => {
-                        super::state::persist::ViewOperationKind::Log
-                    }
-                    super::state::persist::ViewOperationKind::List => {
-                        super::state::persist::ViewOperationKind::Checkout
-                    }
-                    super::state::persist::ViewOperationKind::Log => {
-                        super::state::persist::ViewOperationKind::List
-                    }
-                };
-                self.view_dirty = true;
+                if self.view_focus == ViewFocus::OpSelector {
+                    self.view_op = match self.view_op {
+                        ViewOperationKind::Checkout => ViewOperationKind::Log,
+                        ViewOperationKind::List => ViewOperationKind::Checkout,
+                        ViewOperationKind::Log => ViewOperationKind::List,
+                    };
+                    self.view_focus = ViewFocus::OpSelector;
+                    self.view_dirty = true;
+                } else if self.view_focus == ViewFocus::Specific(2) {
+                    // action enum: cycle backward
+                    self.log_action = match self.log_action {
+                        None => Some(ActionFilter::Check),
+                        Some(ActionFilter::Sync) => None,
+                        Some(ActionFilter::Run) => Some(ActionFilter::Sync),
+                        Some(ActionFilter::Exec) => Some(ActionFilter::Run),
+                        Some(ActionFilter::Check) => Some(ActionFilter::Exec),
+                    };
+                    self.view_dirty = true;
+                }
                 Ok(true)
             }
             KeyCode::Right if self.active_tab == TabId::View => {
-                self.view_op = match self.view_op {
-                    super::state::persist::ViewOperationKind::Checkout => {
-                        super::state::persist::ViewOperationKind::List
-                    }
-                    super::state::persist::ViewOperationKind::List => {
-                        super::state::persist::ViewOperationKind::Log
-                    }
-                    super::state::persist::ViewOperationKind::Log => {
-                        super::state::persist::ViewOperationKind::Checkout
-                    }
-                };
-                self.view_dirty = true;
+                if self.view_focus == ViewFocus::OpSelector {
+                    self.view_op = match self.view_op {
+                        ViewOperationKind::Checkout => ViewOperationKind::List,
+                        ViewOperationKind::List => ViewOperationKind::Log,
+                        ViewOperationKind::Log => ViewOperationKind::Checkout,
+                    };
+                    self.view_focus = ViewFocus::OpSelector;
+                    self.view_dirty = true;
+                } else if self.view_focus == ViewFocus::Specific(2) {
+                    // action enum: cycle forward
+                    self.log_action = match self.log_action {
+                        None => Some(ActionFilter::Sync),
+                        Some(ActionFilter::Sync) => Some(ActionFilter::Run),
+                        Some(ActionFilter::Run) => Some(ActionFilter::Exec),
+                        Some(ActionFilter::Exec) => Some(ActionFilter::Check),
+                        Some(ActionFilter::Check) => None,
+                    };
+                    self.view_dirty = true;
+                }
                 Ok(true)
             }
             KeyCode::Char('f') if self.active_tab == TabId::View => {
-                if !matches!(
-                    self.view_op,
-                    super::state::persist::ViewOperationKind::Log
-                ) {
+                if self.view_op != ViewOperationKind::Log {
                     let popup =
                         FilterPopup::new(self.target_filter.clone(), false, &self.config);
                     self.filter_popup = Some(popup);
                 }
                 Ok(true)
             }
-            // Up at top of result list escapes to NavBar.
-            KeyCode::Up | KeyCode::Char('k')
-                if self.active_tab == TabId::View && self.checkout_viewport.selected == 0 =>
-            {
-                self.navbar_focused = true;
+            // Enter on Specific text fields activates input; on OpSelector no-op.
+            KeyCode::Enter if self.active_tab == TabId::View => {
+                match self.view_focus {
+                    ViewFocus::Specific(0) => {
+                        self.log_last_input.activate();
+                    }
+                    ViewFocus::Specific(3) => {
+                        self.log_since_input.activate();
+                    }
+                    ViewFocus::Specific(4) => {
+                        self.log_host_input.activate();
+                    }
+                    _ => {}
+                }
+                Ok(true)
+            }
+            // Space toggles bool fields (errors) and opens filter for non-Log ops.
+            KeyCode::Char(' ') if self.active_tab == TabId::View => {
+                if self.view_focus == ViewFocus::Specific(1) {
+                    self.log_errors = !self.log_errors;
+                    self.view_dirty = true;
+                }
                 Ok(true)
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::View => {
-                self.checkout_viewport.move_up();
+                self.view_focus_up();
                 Ok(true)
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::View => {
-                self.checkout_viewport.move_down();
+                self.view_focus_down();
                 Ok(true)
             }
             KeyCode::PageUp if self.active_tab == TabId::View => {
@@ -1926,51 +2085,43 @@ impl App {
                 if self.view_dirty {
                     self.refresh_view();
                 }
-                // Dimension the shared scroll viewport for the active op so
-                // PgUp/PgDn and clamping work for all three views (block border
-                // + selector + summary + table header ≈ 6 rows of chrome).
-                // Checkout's table has a header row (1 extra), List/Log don't.
-                let view_h = match self.view_op {
-                    super::state::persist::ViewOperationKind::Checkout => {
-                        chunks[1].height.saturating_sub(6)
-                    }
-                    _ => chunks[1].height.saturating_sub(5),
-                } as usize;
+                // Chrome rows: block border (2) + selector (2) + summary (1) = 5.
+                // Log adds 5 for the specific-params panel.
+                // Checkout adds 1 for the table header.
+                let chrome = match self.view_op {
+                    ViewOperationKind::Checkout => 6,
+                    ViewOperationKind::Log => 10, // 5 base + 5 specific params
+                    ViewOperationKind::List => 5,
+                };
+                let view_h = chunks[1].height.saturating_sub(chrome as u16) as usize;
                 let row_count = match self.view_op {
-                    super::state::persist::ViewOperationKind::Checkout => {
-                        self.checkout_snapshots.len()
-                    }
-                    super::state::persist::ViewOperationKind::List => self
+                    ViewOperationKind::Checkout => self.checkout_snapshots.len(),
+                    ViewOperationKind::List => self
                         .view_list
                         .as_ref()
                         .map(super::tabs::view_tab::list_line_count)
                         .unwrap_or(0),
-                    super::state::persist::ViewOperationKind::Log => self.view_log.len(),
+                    ViewOperationKind::Log => self.view_log.len(),
                 };
                 self.checkout_viewport.set_dims(row_count, view_h);
-                let checkout = if matches!(
-                    self.view_op,
-                    super::state::persist::ViewOperationKind::Checkout
-                ) {
+                let checkout = if matches!(self.view_op, ViewOperationKind::Checkout) {
                     Some((&*self.checkout_snapshots, &self.checkout_columns))
                 } else {
                     None
                 };
-                let list = if matches!(
-                    self.view_op,
-                    super::state::persist::ViewOperationKind::List
-                ) {
+                let list = if matches!(self.view_op, ViewOperationKind::List) {
                     self.view_list.as_ref()
                 } else {
                     None
                 };
-                let log = if matches!(
-                    self.view_op,
-                    super::state::persist::ViewOperationKind::Log
-                ) {
+                let log = if matches!(self.view_op, ViewOperationKind::Log) {
                     Some(&*self.view_log)
                 } else {
                     None
+                };
+                let specific_focused = match self.view_focus {
+                    ViewFocus::Specific(i) if self.view_op == ViewOperationKind::Log => Some(i),
+                    _ => None,
                 };
                 let data = super::tabs::view_tab::ViewRenderData {
                     view_op: self.view_op,
@@ -1982,6 +2133,12 @@ impl App {
                     log,
                     result_scroll: self.checkout_viewport.scroll_y,
                     checkout_selected: self.checkout_viewport.selected,
+                    log_last_input: &self.log_last_input,
+                    log_since_input: &self.log_since_input,
+                    log_host_input: &self.log_host_input,
+                    log_errors: self.log_errors,
+                    log_action: operate_schema::action_str(self.log_action.as_ref()),
+                    specific_focused,
                 };
                 super::tabs::view_tab::render_view(&data, chunks[1], frame);
             }
@@ -2887,5 +3044,34 @@ mod resolve_tests {
         let mode = build_target_mode(&filter, &cfg);
         let names = resolve_target_names(&mode, &cfg, &filter.skip).unwrap();
         assert_eq!(names, vec!["h1".to_string(), "h3".to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod view_focus_tests {
+    use super::{ViewFocus, ViewOperationKind};
+
+    #[test]
+    fn checkout_list_have_no_specific_stops() {
+        let stops = ViewFocus::stops(ViewOperationKind::Checkout);
+        assert_eq!(stops.len(), 2);
+        assert_eq!(stops[0], ViewFocus::OpSelector);
+        assert_eq!(stops[1], ViewFocus::Result);
+
+        let stops = ViewFocus::stops(ViewOperationKind::List);
+        assert_eq!(stops.len(), 2);
+        assert_eq!(stops[0], ViewFocus::OpSelector);
+        assert_eq!(stops[1], ViewFocus::Result);
+    }
+
+    #[test]
+    fn log_has_seven_stops_with_five_specifics() {
+        let stops = ViewFocus::stops(ViewOperationKind::Log);
+        assert_eq!(stops.len(), 7);
+        assert_eq!(stops[0], ViewFocus::OpSelector);
+        for i in 0..5 {
+            assert_eq!(stops[i + 1], ViewFocus::Specific(i));
+        }
+        assert_eq!(stops[6], ViewFocus::Result);
     }
 }
