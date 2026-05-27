@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-05-27 — Wire View tab core (checkout/list/log) with live refresh
+- feat(tui): View tab now cycles between checkout, list, and log operations
+  using ←/→ keys with automatic data refresh on operation switch.
+- refactor(tui): replaced inline `App::render_checkout` with `view_tab::render_view`
+  dispatch, unifying the View tab rendering through `ViewRenderData`.
+- fix(tui): filter popup (`f` key) is now disabled when Log operation is active
+  (log queries all hosts — target filter not applicable).
+- chore(tui): updated help text, info popup, and footer hints from "Checkout"
+  to "View" naming throughout.
+
 ### 2026-05-26 — TUI navbar quit fix + CLI help ordering
 - fix(tui): pressing `q` while the top navigation bar has focus now quits
   (state saved). Previously the navbar key handler's catch-all swallowed `q`,

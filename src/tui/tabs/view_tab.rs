@@ -35,6 +35,8 @@ pub struct ViewRenderData<'a> {
     pub log: Option<&'a [LogRow]>,
     /// Number of lines to skip at the top of the result area (scroll offset).
     pub result_scroll: usize,
+    /// Selected row index for the Checkout table (highlighted with ▶ + reverse).
+    pub checkout_selected: usize,
 }
 
 /// Entry point: render the entire View tab into `area`.
@@ -179,7 +181,8 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
     let end = (start + visible_height).min(snapshots.len());
 
     let mut rows: Vec<Row> = Vec::new();
-    for snap in &snapshots[start..end] {
+    for (i, snap) in snapshots[start..end].iter().enumerate() {
+        let selected = start + i == data.checkout_selected;
         let status_text = if snap.online { "✓ online" } else { "✗ offline" };
         let status_style = Style::default().fg(if snap.online {
             data.theme.accent_checkout
@@ -187,8 +190,13 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
             data.theme.error
         });
 
+        let host_cell = if selected {
+            format!("▶ {}", snap.host)
+        } else {
+            format!("  {}", snap.host)
+        };
         let mut cells: Vec<Cell> =
-            vec![Cell::from(snap.host.clone()), Cell::from(status_text).style(status_style)];
+            vec![Cell::from(host_cell), Cell::from(status_text).style(status_style)];
         for metric in &columns.metrics {
             let (val, critical) = extract_metric_value(&snap.data, metric);
             let style = if critical {
@@ -199,7 +207,11 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
             cells.push(Cell::from(val).style(style));
         }
         cells.push(Cell::from(format_relative_time(snap.last_online)));
-        rows.push(Row::new(cells));
+        let mut row = Row::new(cells);
+        if selected {
+            row = row.style(Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED));
+        }
+        rows.push(row);
     }
 
     let table = Table::new(rows, &constraints)
@@ -316,6 +328,34 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
     let skip = data.result_scroll.min(lines.len());
     let visible: Vec<Line> = lines.into_iter().skip(skip).collect();
     frame.render_widget(Paragraph::new(visible), area);
+}
+
+/// Number of lines `render_list_result` produces for this data, so the scroll
+/// viewport can be dimensioned correctly. Must mirror the structure above.
+pub fn list_line_count(list: &ListData) -> usize {
+    // Hosts: title + column header + separator + one per host.
+    let mut n = 3 + list.hosts.len();
+    // Checks: blank + title + body.
+    n += 2;
+    if list.checks.is_empty() {
+        n += 1;
+    } else {
+        for entry in &list.checks {
+            n += 1; // scope line
+            if !entry.enabled.is_empty() {
+                n += 1;
+            }
+            n += entry.path.len();
+        }
+    }
+    // Syncs: blank + title + body.
+    n += 2;
+    if list.syncs.is_empty() {
+        n += 1;
+    } else {
+        n += list.syncs.len();
+    }
+    n
 }
 
 fn format_scope(groups: &[String], enable_hosts: bool, enable_all: bool) -> String {

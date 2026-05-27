@@ -22,15 +22,12 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Tabs, Wrap},
     Terminal,
 };
 
 use crate::cli::ActionFilter;
-use crate::commands::checkout::{
-    extract_metric_value, fetch_latest_snapshots, format_relative_time, metric_header,
-    metric_width, DisplayColumns, HostSnapshot,
-};
+use crate::commands::checkout::{fetch_latest_snapshots, DisplayColumns, HostSnapshot};
 use crate::commands::report::{CommandReport, HostStatus};
 use crate::commands::{Context, TargetMode};
 use crate::config::schema::AppConfig;
@@ -164,6 +161,20 @@ pub struct App {
     /// True when a snapshot DB write happened in this session and the
     /// Checkout tab needs to reload before its next render (§18.3).
     db_stale: bool,
+    /// View tab: currently selected operation.
+    view_op: super::state::persist::ViewOperationKind,
+    /// View tab: cached list result.
+    view_list: Option<crate::commands::list::ListData>,
+    /// View tab: cached log result rows.
+    view_log: Vec<crate::commands::log::LogRow>,
+    /// View tab: stale flag — triggers refresh on next render.
+    view_dirty: bool,
+    /// View tab: loading spinner (unused stub for 11a).
+    view_loading: bool,
+    /// View tab: log_last parameter (0 → 20 default).
+    log_last: usize,
+    /// View tab: log_errors filter flag.
+    log_errors: bool,
     /// Tracks the most recent timeout used (filter timeout or default).
     last_timeout_secs: u64,
     /// Log overlay open state (Phase 7, §17.3 item 3).
@@ -252,6 +263,17 @@ impl App {
             event_rx: Some(event_rx),
             completed_report: None,
             db_stale: false,
+            view_op: persisted.operate.view_operation,
+            view_list: None,
+            view_log: Vec::new(),
+            view_dirty: true,
+            view_loading: false,
+            log_last: if persisted.operate.log_last == 0 {
+                20
+            } else {
+                persisted.operate.log_last
+            },
+            log_errors: persisted.operate.log_errors,
             last_timeout_secs: timeout,
             log_overlay_open: false,
             log_overlay_vp: Viewport::new(),
@@ -386,6 +408,9 @@ impl App {
                 exec_keep: self.exec_keep,
                 sync_mode: self.sync_mode,
                 sync_dry_run: self.sync_dry_run,
+                view_operation: self.view_op,
+                log_last: self.log_last,
+                log_errors: self.log_errors,
                 ..Default::default()
             },
         };
@@ -508,6 +533,8 @@ impl App {
             TuiEvent::OperationFinished(report) => {
                 self.running_op = None;
                 self.db_stale = true;
+                // View tab data is now stale — force a refresh on next render.
+                self.view_dirty = true;
                 self.completed_report = Some(report);
                 true
             }
@@ -938,6 +965,65 @@ impl App {
             .set_dims(self.checkout_snapshots.len(), 0);
     }
 
+    /// Refresh the View tab result data for the active `view_op`.
+    fn refresh_view(&mut self) {
+        // Clear the dirty flag only on a successful read; a failed db::open
+        // leaves it set so the next render retries instead of showing stale/empty.
+        match self.view_op {
+            super::state::persist::ViewOperationKind::Checkout => {
+                self.maybe_reload_checkout();
+                self.apply_checkout_filter();
+                self.view_dirty = false;
+            }
+            super::state::persist::ViewOperationKind::List => {
+                if let Ok(conn) =
+                    crate::state::db::open(self.config.settings.state_dir.as_deref())
+                {
+                    // List honors the target filter (the `f` popup applies to it).
+                    let ctx = Context {
+                        config: self.config.clone(),
+                        config_path: self.config_path.clone(),
+                        db: conn,
+                        timeout: self.last_timeout_secs,
+                        mode: build_target_mode(&self.target_filter, &self.config),
+                        serial: false,
+                        skip: self.target_filter.skip.clone(),
+                        verbose: false,
+                    };
+                    self.view_list =
+                        Some(crate::commands::list::list_core(&ctx).unwrap_or_default());
+                    self.view_dirty = false;
+                }
+            }
+            super::state::persist::ViewOperationKind::Log => {
+                if let Ok(conn) =
+                    crate::state::db::open(self.config.settings.state_dir.as_deref())
+                {
+                    let ctx = Context {
+                        config: self.config.clone(),
+                        config_path: self.config_path.clone(),
+                        db: conn,
+                        timeout: self.last_timeout_secs,
+                        mode: TargetMode::All,
+                        serial: false,
+                        skip: Vec::new(),
+                        verbose: false,
+                    };
+                    self.view_log = crate::commands::log::log_core(
+                        &ctx,
+                        self.log_last,
+                        None,
+                        None,
+                        None,
+                        self.log_errors,
+                    )
+                    .unwrap_or_default();
+                    self.view_dirty = false;
+                }
+            }
+        }
+    }
+
     /// Returns true if the event mutated state (frame should redraw).
     fn handle_event(&mut self, ev: Event) -> Result<bool> {
         match ev {
@@ -1043,6 +1129,8 @@ impl App {
                     self.save_state();
                     // Re-filter checkout snapshots from the unfiltered cache.
                     self.apply_checkout_filter();
+                    // List honors the target filter too — force a View refresh.
+                    self.view_dirty = true;
                     return Ok(true);
                 }
             }
@@ -1729,13 +1817,49 @@ impl App {
                 Ok(true)
             }
 
-            // ── Checkout tab ───────────────────────────────────────────────
-            KeyCode::Char('f') if self.active_tab == TabId::View => {
-                let popup = FilterPopup::new(self.target_filter.clone(), false, &self.config);
-                self.filter_popup = Some(popup);
+            // ── View tab ───────────────────────────────────────────────
+            KeyCode::Left if self.active_tab == TabId::View => {
+                self.view_op = match self.view_op {
+                    super::state::persist::ViewOperationKind::Checkout => {
+                        super::state::persist::ViewOperationKind::Log
+                    }
+                    super::state::persist::ViewOperationKind::List => {
+                        super::state::persist::ViewOperationKind::Checkout
+                    }
+                    super::state::persist::ViewOperationKind::Log => {
+                        super::state::persist::ViewOperationKind::List
+                    }
+                };
+                self.view_dirty = true;
                 Ok(true)
             }
-            // Up at top of Checkout list escapes to NavBar.
+            KeyCode::Right if self.active_tab == TabId::View => {
+                self.view_op = match self.view_op {
+                    super::state::persist::ViewOperationKind::Checkout => {
+                        super::state::persist::ViewOperationKind::List
+                    }
+                    super::state::persist::ViewOperationKind::List => {
+                        super::state::persist::ViewOperationKind::Log
+                    }
+                    super::state::persist::ViewOperationKind::Log => {
+                        super::state::persist::ViewOperationKind::Checkout
+                    }
+                };
+                self.view_dirty = true;
+                Ok(true)
+            }
+            KeyCode::Char('f') if self.active_tab == TabId::View => {
+                if !matches!(
+                    self.view_op,
+                    super::state::persist::ViewOperationKind::Log
+                ) {
+                    let popup =
+                        FilterPopup::new(self.target_filter.clone(), false, &self.config);
+                    self.filter_popup = Some(popup);
+                }
+                Ok(true)
+            }
+            // Up at top of result list escapes to NavBar.
             KeyCode::Up | KeyCode::Char('k')
                 if self.active_tab == TabId::View && self.checkout_viewport.selected == 0 =>
             {
@@ -1799,8 +1923,67 @@ impl App {
             TabId::Config => self.render_config(chunks[1], frame),
             TabId::Operate => self.render_operate(chunks[1], frame),
             TabId::View => {
-                self.maybe_reload_checkout();
-                self.render_checkout(chunks[1], frame);
+                if self.view_dirty {
+                    self.refresh_view();
+                }
+                // Dimension the shared scroll viewport for the active op so
+                // PgUp/PgDn and clamping work for all three views (block border
+                // + selector + summary + table header ≈ 6 rows of chrome).
+                // Checkout's table has a header row (1 extra), List/Log don't.
+                let view_h = match self.view_op {
+                    super::state::persist::ViewOperationKind::Checkout => {
+                        chunks[1].height.saturating_sub(6)
+                    }
+                    _ => chunks[1].height.saturating_sub(5),
+                } as usize;
+                let row_count = match self.view_op {
+                    super::state::persist::ViewOperationKind::Checkout => {
+                        self.checkout_snapshots.len()
+                    }
+                    super::state::persist::ViewOperationKind::List => self
+                        .view_list
+                        .as_ref()
+                        .map(super::tabs::view_tab::list_line_count)
+                        .unwrap_or(0),
+                    super::state::persist::ViewOperationKind::Log => self.view_log.len(),
+                };
+                self.checkout_viewport.set_dims(row_count, view_h);
+                let checkout = if matches!(
+                    self.view_op,
+                    super::state::persist::ViewOperationKind::Checkout
+                ) {
+                    Some((&*self.checkout_snapshots, &self.checkout_columns))
+                } else {
+                    None
+                };
+                let list = if matches!(
+                    self.view_op,
+                    super::state::persist::ViewOperationKind::List
+                ) {
+                    self.view_list.as_ref()
+                } else {
+                    None
+                };
+                let log = if matches!(
+                    self.view_op,
+                    super::state::persist::ViewOperationKind::Log
+                ) {
+                    Some(&*self.view_log)
+                } else {
+                    None
+                };
+                let data = super::tabs::view_tab::ViewRenderData {
+                    view_op: self.view_op,
+                    theme: &self.theme,
+                    navbar_focused: self.navbar_focused,
+                    loading: self.view_loading,
+                    checkout,
+                    list,
+                    log,
+                    result_scroll: self.checkout_viewport.scroll_y,
+                    checkout_selected: self.checkout_viewport.selected,
+                };
+                super::tabs::view_tab::render_view(&data, chunks[1], frame);
             }
         }
         self.render_status_bar(chunks[2], frame);
@@ -2397,7 +2580,7 @@ impl App {
                 "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts (Phase 6).\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nEsc cancels a running operation (may take up to {}s per host).\n\nResults appear in a popup when the operation completes.",
                 self.last_timeout_secs
             ),
-            TabId::View => "Checkout tab\n\nLatest snapshot per host. Use ↑↓/jk/PgUp/PgDn/Home/End to scroll.\nData refreshes automatically after each `check` run from Operate.".to_string(),
+            TabId::View => "View tab\n\nView checkout snapshots, host/config list, or operation log.\nUse ← → to switch between checkout / list / log.\nUse ↑↓/jk/PgUp/PgDn/Home/End to scroll.\nPress f to open the target filter (disabled for Log).\nData refreshes automatically on op switch and after operations.".to_string(),
             TabId::Config => format!(
                 "Config tab (read-only browser)\n\n\
                  Sidebar: ↑↓ / jk to move between sections and entries.\n\
@@ -2418,87 +2601,6 @@ impl App {
             .title(" Info (i) ");
         let p = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
         frame.render_widget(p, popup_area);
-    }
-
-    fn render_checkout(&mut self, area: Rect, frame: &mut ratatui::Frame) {
-        let border_col = if self.navbar_focused {
-            self.theme.border_inactive
-        } else {
-            self.theme.border_active
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(border_col))
-            .title(" Checkout (latest snapshots) ");
-        let inner = block.inner(area);
-        frame.render_widget(block, area);
-
-        // visible_height = inner.height - 1 (header row).
-        let visible_height = inner.height.saturating_sub(1) as usize;
-        self.checkout_viewport
-            .set_dims(self.checkout_snapshots.len(), visible_height);
-
-        if self.checkout_snapshots.is_empty() {
-            let p = Paragraph::new(
-                "No snapshots available. Run `sshi check --all` to populate the database.",
-            )
-            .style(Style::default().fg(self.theme.inactive))
-            .wrap(Wrap { trim: false });
-            frame.render_widget(p, inner);
-            return;
-        }
-
-        let mut header_cells: Vec<Cell> = vec![Cell::from("Host"), Cell::from("Status")];
-        let mut constraints: Vec<Constraint> = vec![Constraint::Length(16), Constraint::Length(12)];
-        for metric in &self.checkout_columns.metrics {
-            header_cells.push(Cell::from(metric_header(metric)));
-            constraints.push(Constraint::Length(metric_width(metric) as u16));
-        }
-        header_cells.push(Cell::from("Last Seen"));
-        constraints.push(Constraint::Min(10));
-
-        let (start, end) = self.checkout_viewport.visible_range();
-        let mut rows = Vec::with_capacity(end - start);
-        for (idx, snap) in self.checkout_snapshots[start..end].iter().enumerate() {
-            let absolute_idx = start + idx;
-            let is_focused = absolute_idx == self.checkout_viewport.selected;
-            let prefix = if is_focused { "▶ " } else { "  " };
-            let status_text = if snap.online {
-                "✓ online"
-            } else {
-                "✗ offline"
-            };
-            let status_style = Style::default().fg(if snap.online {
-                self.theme.accent_checkout
-            } else {
-                self.theme.error
-            });
-
-            let mut cells: Vec<Cell> = vec![
-                Cell::from(format!("{}{}", prefix, snap.host)),
-                Cell::from(status_text).style(status_style),
-            ];
-            for metric in &self.checkout_columns.metrics {
-                let (val, critical) = extract_metric_value(&snap.data, metric);
-                let style = if critical {
-                    Style::default().fg(self.theme.error)
-                } else {
-                    Style::default()
-                };
-                cells.push(Cell::from(val).style(style));
-            }
-            cells.push(Cell::from(format_relative_time(snap.last_online)));
-
-            let mut row = Row::new(cells);
-            if is_focused {
-                row = row.style(Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED));
-            }
-            rows.push(row);
-        }
-
-        let table = Table::new(rows, &constraints)
-            .header(Row::new(header_cells).style(Style::default().add_modifier(Modifier::BOLD)));
-        frame.render_widget(table, inner);
     }
 
     fn render_status_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
@@ -2524,7 +2626,7 @@ impl App {
                 "↑↓:Rows ←→:Zones e:Edit E:Editor s:Save a:Add d:Del L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => "↑↓:Zones ←→:OpType f:Filter L:Log i:Info ?:Help q:Quit",
-            TabId::View => "↑↓/jk:Rows PgUp/PgDn Home/End f:Filter L:Log i:Info ?:Help q:Quit",
+            TabId::View => "←→:OpType ↑↓/jk:Rows PgUp/PgDn Home/End f:Filter L:Log i:Info ?:Help q:Quit",
         };
         let p = Paragraph::new(Line::from(vec![Span::styled(
             hints,
@@ -2538,7 +2640,7 @@ impl App {
         frame.render_widget(Clear, popup_area);
         let body = "\
 Global keys
-  1 / 2 / 3   Switch to Config / Operate / Checkout
+  1 / 2 / 3   Switch to Config / Operate / View
   Tab         Cycle to next tab
   Shift+Tab   Cycle to previous tab
   q           Quit (state saved)
@@ -2564,11 +2666,12 @@ Sync operation (ParamPanel)
   Del on Ad-hoc input    Remove last path from the list
   Space on Dry-run       Toggle dry-run flag
 
-Checkout tab
+View tab
+  ← →         Cycle checkout / list / log
   ↑↓ / j k    Move row selection
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
-  f           Open Filter popup (filter by group / host)
+  f           Open Filter popup (disabled for Log)
 
 Filter popup
   ↑↓ / Tab    Move between fields
