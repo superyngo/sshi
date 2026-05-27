@@ -26,6 +26,7 @@ use ratatui::{
     Terminal,
 };
 
+use crate::cli::ActionFilter;
 use crate::commands::checkout::{
     extract_metric_value, fetch_latest_snapshots, format_relative_time, metric_header,
     metric_width, DisplayColumns, HostSnapshot,
@@ -47,6 +48,7 @@ use super::state::persist::{
 use super::tabs::config_tab::trunc;
 use super::tabs::config_tab::ConfigTabState;
 use super::tabs::config_tab::ConfigZone;
+use super::tabs::operate_schema::{self, OpSpecific};
 use super::tabs::operate_tab::{self, OperateFocus, OperateRenderData, ParamPanelField};
 use super::tabs::TabId;
 use super::theme::Theme;
@@ -313,6 +315,62 @@ impl App {
             (pos + effective.len() - 1) % effective.len()
         };
         self.operate_focus = effective[next_pos];
+    }
+
+    fn apply_operate_toggle(&mut self, op: OperationKind, key: &str, val: &str) {
+        // Named scratch slots for OpSpecific fields this op doesn't own, so a
+        // future apply_specific write lands somewhere visible instead of
+        // silently vanishing into an rvalue temporary.
+        let mut scratch_sudo = false;
+        let mut scratch_keep = false;
+        let mut scratch_dry_run = false;
+        let mut scratch_sync_mode = SyncMode::ConfigEntries;
+        let mut scratch_checkout_history = false;
+        let mut scratch_log_last = 0usize;
+        let mut scratch_log_errors = false;
+        let mut scratch_log_action: Option<ActionFilter> = None;
+        match op {
+            OperationKind::Run => {
+                let mut spec = OpSpecific {
+                    sudo: &mut self.run_sudo,
+                    keep: &mut scratch_keep,
+                    dry_run: &mut scratch_dry_run,
+                    sync_mode: &mut scratch_sync_mode,
+                    checkout_history: &mut scratch_checkout_history,
+                    log_last: &mut scratch_log_last,
+                    log_errors: &mut scratch_log_errors,
+                    log_action: &mut scratch_log_action,
+                };
+                operate_schema::apply_specific(&mut spec, op, key, val);
+            }
+            OperationKind::Exec => {
+                let mut spec = OpSpecific {
+                    sudo: &mut self.exec_sudo,
+                    keep: &mut self.exec_keep,
+                    dry_run: &mut scratch_dry_run,
+                    sync_mode: &mut scratch_sync_mode,
+                    checkout_history: &mut scratch_checkout_history,
+                    log_last: &mut scratch_log_last,
+                    log_errors: &mut scratch_log_errors,
+                    log_action: &mut scratch_log_action,
+                };
+                operate_schema::apply_specific(&mut spec, op, key, val);
+            }
+            OperationKind::Sync => {
+                let mut spec = OpSpecific {
+                    sudo: &mut scratch_sudo,
+                    keep: &mut scratch_keep,
+                    dry_run: &mut self.sync_dry_run,
+                    sync_mode: &mut self.sync_mode,
+                    checkout_history: &mut scratch_checkout_history,
+                    log_last: &mut scratch_log_last,
+                    log_errors: &mut scratch_log_errors,
+                    log_action: &mut scratch_log_action,
+                };
+                operate_schema::apply_specific(&mut spec, op, key, val);
+            }
+            _ => {}
+        }
     }
 
     fn save_state(&self) {
@@ -1581,26 +1639,43 @@ impl App {
             {
                 match (self.operate_operation, self.param_field) {
                     (OperationKind::Run, ParamPanelField::Sudo) => {
-                        self.run_sudo = !self.run_sudo;
+                        self.apply_operate_toggle(
+                            OperationKind::Run,
+                            "sudo",
+                            if self.run_sudo { "false" } else { "true" },
+                        );
                         self.save_state();
                     }
                     (OperationKind::Exec, ParamPanelField::Sudo) => {
-                        self.exec_sudo = !self.exec_sudo;
+                        self.apply_operate_toggle(
+                            OperationKind::Exec,
+                            "sudo",
+                            if self.exec_sudo { "false" } else { "true" },
+                        );
                         self.save_state();
                     }
                     (OperationKind::Exec, ParamPanelField::SecondFlag) => {
-                        self.exec_keep = !self.exec_keep;
+                        self.apply_operate_toggle(
+                            OperationKind::Exec,
+                            "keep",
+                            if self.exec_keep { "false" } else { "true" },
+                        );
                         self.save_state();
                     }
                     (OperationKind::Sync, ParamPanelField::SyncModeToggle) => {
-                        self.sync_mode = match self.sync_mode {
-                            SyncMode::ConfigEntries => SyncMode::AdHoc,
-                            SyncMode::AdHoc => SyncMode::ConfigEntries,
+                        let next = match self.sync_mode {
+                            SyncMode::ConfigEntries => "adhoc",
+                            SyncMode::AdHoc => "config",
                         };
+                        self.apply_operate_toggle(OperationKind::Sync, "mode", next);
                         self.save_state();
                     }
                     (OperationKind::Sync, ParamPanelField::SyncDryRun) => {
-                        self.sync_dry_run = !self.sync_dry_run;
+                        self.apply_operate_toggle(
+                            OperationKind::Sync,
+                            "dry_run",
+                            if self.sync_dry_run { "false" } else { "true" },
+                        );
                         self.save_state();
                     }
                     _ => {}
