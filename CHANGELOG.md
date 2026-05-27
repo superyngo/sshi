@@ -7,15 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### 2026-05-27 — Wire View tab core (checkout/list/log) with live refresh
-- feat(tui): View tab now cycles between checkout, list, and log operations
-  using ←/→ keys with automatic data refresh on operation switch.
-- refactor(tui): replaced inline `App::render_checkout` with `view_tab::render_view`
-  dispatch, unifying the View tab rendering through `ViewRenderData`.
-- fix(tui): filter popup (`f` key) is now disabled when Log operation is active
-  (log queries all hosts — target filter not applicable).
-- chore(tui): updated help text, info popup, and footer hints from "Checkout"
-  to "View" naming throughout.
+### 2026-05-27 — TUI Operate/View refactor
+- feat(tui): the **Operate** tab now launches `check`/`run`/`exec`/`sync` in a
+  single-column "Approach-B" layout (op selector → target summary line →
+  operation-specific params → Execute). Param toggles (sudo/keep/sync-mode/
+  sync-dry-run) flip through `operate_schema::apply_specific` for Config-consistent
+  behavior; the param panel itself still uses the existing renderer
+  (`FieldDescriptor`-driven Operate rendering is deferred).
+- feat(tui): new **View** tab hosts `checkout`/`list`/`log` with a live
+  auto-refreshing result area (cycle ops with ←/→; refreshes on op switch and
+  after each operation). The View tab absorbs and replaces the former Checkout
+  tab; a persisted `[tui_state] active_tab = "Checkout"` auto-migrates to `View`
+  (serde alias) without resetting.
+- feat(tui): `log` in the View tab exposes editable `last`/`errors`/`action`/
+  `since`/`host` params; `checkout`/`list` honor the target filter, while `log`
+  queries all hosts (its target row is inert).
+- feat(tui): the target-filter popup gains a `skip` modifier (hosts excluded
+  from the resolved set, applied as a final subtraction in resolution).
+- feat(tui): the `sync` operation's `source` override input is now wired
+  (previously dormant) and passed through to `sync_core`.
+- refactor(commands): extracted `list_core`/`log_core` data functions from
+  `list::run`/`log::run`; the `run` wrappers print from them with identical
+  output (and `list` still surfaces the no-hosts diagnostic).
+- remove(tui): the dead `run --yes` toggle is gone (the CLI removed `-y/--yes`).
+- note: `init` stays CLI-only (its interactive stdin prompts can't run in the
+  raw-mode TUI). `dry_run` for `check`/`run`/`exec`, the `-o/--out` field, and
+  `checkout` `history`/`since` are intentionally **not** surfaced in the TUI this
+  cycle — those paths aren't wired in the cores (deferred to a follow-up).
 
 ### 2026-05-26 — TUI navbar quit fix + CLI help ordering
 - fix(tui): pressing `q` while the top navigation bar has focus now quits

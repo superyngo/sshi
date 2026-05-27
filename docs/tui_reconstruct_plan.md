@@ -1108,6 +1108,12 @@ Notes:
 
 ### 12.4 Checkout tab — MVP layout (Phase 1a + 2)
 
+> **Superseded (2026-05-27):** The Checkout tab is replaced by the **View tab**,
+> which hosts `checkout`/`list`/`log` and renames `TabId::Checkout` → `TabId::View`
+> (persisted `active_tab = "Checkout"` auto-migrates via serde alias). See
+> `docs/superpowers/specs/2026-05-26-tui-operate-refactor-design.md`. The layout
+> below describes the original Checkout-only tab.
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │[[f] Filter]                                         │ ← L1 controls (MVP: filter only)
