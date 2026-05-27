@@ -4,6 +4,7 @@ pub mod config_schema;
 pub mod config_tab;
 pub mod operate_schema;
 pub mod operate_tab;
+pub mod view_tab;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabId {
