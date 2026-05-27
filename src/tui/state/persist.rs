@@ -361,11 +361,19 @@ active_tab = "Config"
         s.tui_state.active_tab = ActiveTab::Config;
         s.target_filter.mode = TargetFilterMode::Hosts;
         s.target_filter.hosts = vec!["web1".to_string()];
+        s.target_filter.skip = vec!["h9".to_string()];
+        s.operate.view_operation = ViewOperationKind::Log;
+        s.operate.log_last = 75;
+        s.operate.log_errors = true;
         save(&path, &s).unwrap();
         let loaded = load(&path);
         assert_eq!(loaded.tui_state.active_tab, ActiveTab::Config);
         assert_eq!(loaded.target_filter.mode, TargetFilterMode::Hosts);
         assert_eq!(loaded.target_filter.hosts, vec!["web1"]);
+        assert_eq!(loaded.target_filter.skip, vec!["h9"]);
+        assert_eq!(loaded.operate.view_operation, ViewOperationKind::Log);
+        assert_eq!(loaded.operate.log_last, 75);
+        assert!(loaded.operate.log_errors);
     }
 
     fn cfg_with_hosts(specs: &[(&str, &[&str])]) -> AppConfig {
