@@ -101,6 +101,12 @@ impl FilterPopup {
                 self.toggle_focused();
                 FilterPopupResult::Continue
             }
+            KeyCode::Delete | KeyCode::Backspace if self.field == Field::Skip => {
+                // Skip is a subtraction modifier; allow removing the last entry
+                // so an accidental add isn't stuck until the state file is edited.
+                self.state.skip.pop();
+                FilterPopupResult::Continue
+            }
             KeyCode::Enter => self.activate_focused(),
             KeyCode::Left | KeyCode::Right => {
                 // Cycle within Mode group; for Hosts/Groups/Shell this also
