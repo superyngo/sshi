@@ -194,7 +194,7 @@ fn render_log_specific_params(data: &ViewRenderData, area: Rect, frame: &mut Fra
                 let line = Line::from(vec![
                     Span::styled(format!(" {} ", check), val_style),
                     Span::styled(label.to_string(), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(format!(" (space to toggle)")),
+                    Span::raw(" (space to toggle)"),
                 ]);
                 frame.render_widget(Paragraph::new(line), row_area);
             }
