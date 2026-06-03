@@ -136,11 +136,15 @@ async fn main() -> Result<()> {
             commands::init::run(&ctx, update, dry_run, skip).await
         }
         Commands::Config { .. } => commands::config::run(cfg).await,
-        Commands::List { target } => {
+        Commands::List { target, output } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::list::run(&ctx).await
+            commands::list::run(&ctx, &output).await
         }
-        Commands::Check { target, dry_run, output } => {
+        Commands::Check {
+            target,
+            dry_run,
+            output,
+        } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
             commands::check::run(&ctx, dry_run, &output).await
         }
@@ -162,14 +166,7 @@ async fn main() -> Result<()> {
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::sync::run(
-                &ctx,
-                dry_run,
-                &files,
-                source.as_deref(),
-                &output,
-            )
-            .await
+            commands::sync::run(&ctx, dry_run, &files, source.as_deref(), &output).await
         }
         Commands::Run {
             target,
@@ -198,10 +195,11 @@ async fn main() -> Result<()> {
             host,
             action,
             errors,
+            output,
             ..
         } => {
             let ctx = commands::Context::new_without_targets(cli.verbose, cfg, None).await?;
-            commands::log::run(&ctx, last, since, host, action, errors).await
+            commands::log::run(&ctx, last, since, host, action, errors, &output).await
         }
     }
 }

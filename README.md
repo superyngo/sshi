@@ -80,6 +80,7 @@ cargo build --bin sshi --features tui             # TUI build
 | Checkout | `↑` `↓` `j` `k` | Move row selection |
 | Checkout | `PgUp` `PgDn` `Home` `End` | Page / jump navigation |
 | Checkout | `Tab` / `Shift+Tab` | Cycle tabs |
+| View (all) | `o` | Export the currently viewed data to a report file (.json or .html) |
 
 > **Note:** On the Config tab, `Tab` switches between the Sidebar and FieldTable zones rather than cycling to the next tab. Use `1` / `2` / `3` to switch tabs from Config.
 >
@@ -210,6 +211,9 @@ sshi log --action sync
 
 # Show only errors
 sshi log --errors
+
+# Export logs to HTML report
+sshi log --out report.html
 ```
 
 ### Config

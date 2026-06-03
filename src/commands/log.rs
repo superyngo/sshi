@@ -68,7 +68,8 @@ pub fn log_core(
             note: row.get(6)?,
         })
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(Into::into)
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 pub async fn run(
@@ -78,8 +79,16 @@ pub async fn run(
     host: Option<String>,
     action: Option<ActionFilter>,
     errors: bool,
+    output: &crate::cli::OutputArgs,
 ) -> Result<()> {
-    let rows = log_core(ctx, last, since, host, action, errors)?;
+    let rows = log_core(
+        ctx,
+        last,
+        since.clone(),
+        host.clone(),
+        action.clone(),
+        errors,
+    )?;
     if rows.is_empty() {
         println!("No log entries found.");
         return Ok(());
@@ -108,6 +117,62 @@ pub async fn run(
             time, status_icon, r.host, r.command, r.action, duration, note_str
         );
     }
+
+    if let Some(ref out) = output.out {
+        use crate::commands::report::{
+            CommandReport, HostStatus, LogHostResult, LogQueryParams, LogReport,
+        };
+
+        let entries: Vec<LogHostResult> = rows
+            .iter()
+            .map(|r| {
+                let status = match r.status.as_str() {
+                    "ok" => HostStatus::Online,
+                    "skipped" => HostStatus::Skipped,
+                    _ => HostStatus::Error,
+                };
+                let time_str = chrono::DateTime::from_timestamp(r.ts, 0)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| r.ts.to_string());
+                LogHostResult {
+                    host: r.host.clone(),
+                    status,
+                    duration_ms: r.duration_ms,
+                    timestamp: time_str,
+                    command: r.command.clone(),
+                    action: r.action.clone(),
+                    note: r.note.clone(),
+                }
+            })
+            .collect();
+
+        let report = CommandReport::Log(LogReport {
+            executed_at: chrono::Local::now().to_rfc3339(),
+            query_params: LogQueryParams {
+                last,
+                since,
+                host,
+                action: action.map(|a| match a {
+                    ActionFilter::Sync => "sync".to_string(),
+                    ActionFilter::Run => "run".to_string(),
+                    ActionFilter::Exec => "exec".to_string(),
+                    ActionFilter::Check => "check".to_string(),
+                }),
+                errors,
+            },
+            entries,
+        });
+
+        let op_report = crate::output::report::to_operation_report(&report, &ctx.mode);
+        let path = crate::output::report::write_report(
+            &op_report,
+            out,
+            "log",
+            ctx.config.settings.default_output_format.as_deref(),
+        )?;
+        println!("Report written to {}", path);
+    }
+
     Ok(())
 }
 
@@ -156,5 +221,47 @@ mod tests {
         };
         let rows = log_core(&ctx, 20, None, None, None, false).unwrap();
         assert!(rows.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_log_run_with_output() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&db);
+
+        db.execute(
+            "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![1717000000i64, "check", "host-a", "metrics_batch", "ok", 1500i64, "all good"],
+        ).unwrap();
+
+        let ctx = crate::commands::Context {
+            config: crate::config::schema::AppConfig::default(),
+            config_path: None,
+            db,
+            timeout: 30,
+            mode: crate::commands::TargetMode::All,
+            serial: false,
+            skip: vec![],
+            verbose: false,
+        };
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let out_path = temp_dir.path().join("log_report.json");
+        let output = crate::cli::OutputArgs {
+            out: Some(out_path.to_str().unwrap().to_string()),
+        };
+
+        run(&ctx, 20, None, None, None, false, &output)
+            .await
+            .unwrap();
+
+        assert!(out_path.exists());
+        let content = std::fs::read_to_string(&out_path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["command"], "log");
+        assert_eq!(v["results"][0]["host"], "host-a");
+        assert_eq!(v["results"][0]["command"], "check");
+        assert_eq!(v["results"][0]["action"], "metrics_batch");
+        assert_eq!(v["results"][0]["note"], "all good");
     }
 }

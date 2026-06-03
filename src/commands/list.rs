@@ -25,7 +25,7 @@ pub fn list_core(ctx: &Context) -> Result<ListData> {
     })
 }
 
-pub async fn run(ctx: &Context) -> Result<()> {
+pub async fn run(ctx: &Context, output: &crate::cli::OutputArgs) -> Result<()> {
     let ListData {
         hosts,
         checks,
@@ -81,7 +81,60 @@ pub async fn run(ctx: &Context) -> Result<()> {
         }
     }
 
+    if let Some(ref out) = output.out {
+        use crate::commands::report::{CommandReport, ListHostResult, ListReport};
+
+        let list_hosts: Vec<ListHostResult> = hosts
+            .iter()
+            .map(|h| ListHostResult {
+                host: h.name.clone(),
+                ssh_host: h.ssh_host.clone(),
+                shell: h.shell.to_string(),
+                groups: h.groups.clone(),
+            })
+            .collect();
+
+        let report = CommandReport::List(ListReport {
+            executed_at: chrono::Local::now().to_rfc3339(),
+            targets: ctx
+                .resolve_hosts()?
+                .iter()
+                .map(|h| h.name.clone())
+                .collect(),
+            hosts: list_hosts,
+            checks: checks.clone(),
+            syncs: syncs.clone(),
+        });
+
+        let op_report = crate::output::report::to_operation_report(&report, &ctx.mode);
+        let path = crate::output::report::write_report(
+            &op_report,
+            out,
+            "list",
+            ctx.config.settings.default_output_format.as_deref(),
+        )?;
+        println!("Report written to {}", path);
+    }
+
     Ok(())
+}
+
+fn format_scope(groups: &[String], enable_hosts: bool, enable_all: bool) -> String {
+    let mut parts = Vec::new();
+    if !groups.is_empty() {
+        parts.push(format!("groups=[{}]", groups.join(", ")));
+    }
+    if !enable_hosts {
+        parts.push("hosts=off".to_string());
+    }
+    if !enable_all {
+        parts.push("all=off".to_string());
+    }
+    if parts.is_empty() {
+        "global".to_string()
+    } else {
+        parts.join(" ")
+    }
 }
 
 #[cfg(test)]
@@ -123,22 +176,25 @@ mod tests {
         assert!(data.checks.is_empty());
         assert!(data.syncs.is_empty());
     }
-}
 
-fn format_scope(groups: &[String], enable_hosts: bool, enable_all: bool) -> String {
-    let mut parts = Vec::new();
-    if !groups.is_empty() {
-        parts.push(format!("groups=[{}]", groups.join(", ")));
-    }
-    if !enable_hosts {
-        parts.push("hosts=off".to_string());
-    }
-    if !enable_all {
-        parts.push("all=off".to_string());
-    }
-    if parts.is_empty() {
-        "global".to_string()
-    } else {
-        parts.join(" ")
+    #[tokio::test]
+    async fn test_list_run_with_output() {
+        let ctx = make_ctx(&[("h1", &["web"]), ("h2", &[])]);
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let out_path = temp_dir.path().join("list_report.json");
+        let output = crate::cli::OutputArgs {
+            out: Some(out_path.to_str().unwrap().to_string()),
+        };
+
+        run(&ctx, &output).await.unwrap();
+
+        assert!(out_path.exists());
+        let content = std::fs::read_to_string(&out_path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(v["command"], "list");
+        assert_eq!(v["results"][0]["host"], "h1");
+        assert_eq!(v["results"][0]["ssh_host"], "h1");
+        assert_eq!(v["results"][0]["shell"], "sh");
+        assert_eq!(v["results"][1]["host"], "h2");
     }
 }

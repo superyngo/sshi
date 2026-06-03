@@ -219,7 +219,12 @@ mod tests {
     #[test]
     fn apply_view_checkout_history_and_log_fields() {
         let mut sc = Scratch::default();
-        apply_view_specific(ViewOperationKind::Checkout, &mut sc.view(), "history", "true");
+        apply_view_specific(
+            ViewOperationKind::Checkout,
+            &mut sc.view(),
+            "history",
+            "true",
+        );
         apply_view_specific(ViewOperationKind::Log, &mut sc.view(), "last", "50");
         apply_view_specific(ViewOperationKind::Log, &mut sc.view(), "errors", "true");
         apply_view_specific(ViewOperationKind::Log, &mut sc.view(), "action", "exec");

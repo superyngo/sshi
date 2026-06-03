@@ -305,8 +305,10 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     }
 
     // ── Layout: fixed rows, entries (Min 0), execute bar (2) ──
-    let mut constraints: Vec<Constraint> =
-        rows.iter().map(|r| Constraint::Length(r.height())).collect();
+    let mut constraints: Vec<Constraint> = rows
+        .iter()
+        .map(|r| Constraint::Length(r.height()))
+        .collect();
     constraints.push(Constraint::Min(0)); // entries
     constraints.push(Constraint::Length(2)); // execute bar
     let chunks = Layout::default()
@@ -333,7 +335,9 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
 fn zone_header<'a>(text: &str, theme: &Theme) -> Line<'a> {
     Line::from(Span::styled(
         format!(" {text}"),
-        Style::default().fg(theme.inactive).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(theme.inactive)
+            .add_modifier(Modifier::BOLD),
     ))
 }
 
@@ -673,7 +677,6 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
 }
-
 
 /// Render the progress popup showing running operation status.
 #[allow(clippy::too_many_arguments)]

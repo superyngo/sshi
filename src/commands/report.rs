@@ -7,6 +7,7 @@
 //! in `commands::report` keeps `*_core` functions independent of the
 //! output layer; `output::report` is a thin downstream consumer.
 
+use crate::config::schema::{CheckEntry, SyncEntry};
 use serde::Serialize;
 
 /// Per-host outcome of a command operation.
@@ -84,6 +85,56 @@ pub enum CommandReport {
     Run(RunReport),
     Exec(ExecReport),
     Sync(SyncReport),
+    Log(LogReport),
+    List(ListReport),
+}
+
+// ── Log ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogQueryParams {
+    pub last: usize,
+    pub since: Option<String>,
+    pub host: Option<String>,
+    pub action: Option<String>,
+    pub errors: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogHostResult {
+    pub host: String,
+    pub status: HostStatus,
+    pub duration_ms: Option<i64>,
+    pub timestamp: String,
+    pub command: String,
+    pub action: String,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct LogReport {
+    pub executed_at: String,
+    pub query_params: LogQueryParams,
+    pub entries: Vec<LogHostResult>,
+}
+
+// ── List ─────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListHostResult {
+    pub host: String,
+    pub ssh_host: String,
+    pub shell: String,
+    pub groups: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ListReport {
+    pub executed_at: String,
+    pub targets: Vec<String>,
+    pub hosts: Vec<ListHostResult>,
+    pub checks: Vec<CheckEntry>,
+    pub syncs: Vec<SyncEntry>,
 }
 
 // ── Run ──────────────────────────────────────────────────────────────────────

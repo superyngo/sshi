@@ -982,8 +982,7 @@ impl ConfigTabState {
                 if idx < form.fields.len() {
                     let field = &form.fields[idx];
                     if field.editable {
-                        if let Some(new_val) =
-                            cycle_option_value(&field.kind, &field.display_value)
+                        if let Some(new_val) = cycle_option_value(&field.kind, &field.display_value)
                         {
                             form.fields[idx].display_value = new_val;
                             form.dirty = true;
@@ -2609,7 +2608,10 @@ mod tests {
         assert_eq!(cycle_option_value(&FieldKind::String, "x"), None);
         assert_eq!(cycle_option_value(&FieldKind::U64, "5"), None);
         assert_eq!(cycle_option_value(&FieldKind::VecString, "[a]"), None);
-        assert_eq!(cycle_option_value(&FieldKind::CheckEnabled, "[online]"), None);
+        assert_eq!(
+            cycle_option_value(&FieldKind::CheckEnabled, "[online]"),
+            None
+        );
     }
 
     #[test]

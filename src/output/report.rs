@@ -204,6 +204,67 @@ pub fn to_operation_report(report: &CommandReport, mode: &TargetMode) -> Operati
                 results,
             }
         }
+        CommandReport::Log(r) => {
+            let results: Vec<HostResult> = r
+                .entries
+                .iter()
+                .map(|e| {
+                    let status = match e.status {
+                        HostStatus::Online => "success",
+                        HostStatus::Skipped => "skipped",
+                        _ => "error",
+                    };
+                    HostResult {
+                        host: e.host.clone(),
+                        status: status.to_string(),
+                        duration_ms: e.duration_ms.map(|d| d as u64),
+                        output: serde_json::json!({
+                            "timestamp": e.timestamp,
+                            "command": e.command,
+                            "action": e.action,
+                            "note": e.note,
+                        }),
+                    }
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "log".to_string(),
+                filter,
+                task: serde_json::to_value(&r.query_params).unwrap_or(serde_json::Value::Null),
+                targets: vec![],
+                summary: summarize(&results),
+                results,
+            }
+        }
+        CommandReport::List(r) => {
+            let results: Vec<HostResult> = r
+                .hosts
+                .iter()
+                .map(|h| HostResult {
+                    host: h.host.clone(),
+                    status: "success".to_string(),
+                    duration_ms: None,
+                    output: serde_json::json!({
+                        "ssh_host": h.ssh_host,
+                        "shell": h.shell,
+                        "groups": h.groups,
+                    }),
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "list".to_string(),
+                filter,
+                task: serde_json::json!({
+                    "checks": r.checks,
+                    "syncs": r.syncs,
+                }),
+                targets: r.targets.clone(),
+                summary: summarize(&results),
+                results,
+            }
+        }
     }
 }
 
@@ -401,6 +462,48 @@ fn render_html_report(report: &OperationReport) -> String {
 }
 
 fn render_output_html(output: &serde_json::Value) -> String {
+    // log command: has "timestamp", "command", "action"
+    if let Some(cmd) = output.get("command") {
+        if output.get("timestamp").is_some() && output.get("action").is_some() {
+            let timestamp = output
+                .get("timestamp")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let action = output.get("action").and_then(|v| v.as_str()).unwrap_or("");
+            let note = output.get("note").and_then(|v| v.as_str()).unwrap_or("");
+            let cmd_str = cmd.as_str().unwrap_or("");
+            let mut html = format!(
+                "<strong>Time:</strong> {}<br><strong>Cmd:</strong> {}<br><strong>Action:</strong> {}",
+                html_escape(timestamp), html_escape(cmd_str), html_escape(action)
+            );
+            if !note.is_empty() {
+                html.push_str(&format!("<br><strong>Note:</strong> {}", html_escape(note)));
+            }
+            return html;
+        }
+    }
+
+    // list command: has "ssh_host", "shell", "groups"
+    if let Some(ssh_host) = output.get("ssh_host") {
+        let shell = output.get("shell").and_then(|v| v.as_str()).unwrap_or("");
+        let groups = output
+            .get("groups")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| v.as_str().unwrap_or(""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        return format!(
+            "<strong>SSH Host:</strong> {}<br><strong>Shell:</strong> {}<br><strong>Groups:</strong> {}",
+            html_escape(ssh_host.as_str().unwrap_or("")),
+            html_escape(shell),
+            html_escape(&groups)
+        );
+    }
+
     // check command: has "metrics" and "probe_outputs"
     if let Some(metrics) = output.get("metrics") {
         let mut html = String::from("<strong>Metrics:</strong><br>");

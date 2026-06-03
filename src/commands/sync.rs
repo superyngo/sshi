@@ -1237,10 +1237,8 @@ fn build_sync_report(
     let hosts: Vec<SyncHostResult> = host_names
         .iter()
         .map(|name| {
-            let (synced_paths, skipped_paths) = host_file_map
-                .get(name)
-                .cloned()
-                .unwrap_or_default();
+            let (synced_paths, skipped_paths) =
+                host_file_map.get(name).cloned().unwrap_or_default();
             let (synced, skipped) = (synced_paths.len(), skipped_paths.len());
             let errors = host_errors.get(name).cloned().unwrap_or_default();
             let status = if failed_hosts.contains(name) {

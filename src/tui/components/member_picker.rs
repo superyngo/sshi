@@ -55,9 +55,17 @@ impl MemberPicker {
     /// Build a picker. `options` are all available values; `current` are the
     /// ones already chosen (pre-checked). `accent` themes the popup to match the
     /// originating tab.
-    pub fn new(target: PickerTarget, options: Vec<String>, current: &[String], accent: Color) -> Self {
+    pub fn new(
+        target: PickerTarget,
+        options: Vec<String>,
+        current: &[String],
+        accent: Color,
+    ) -> Self {
         let multi = !matches!(target, PickerTarget::Shell);
-        let selected = options.iter().map(|o| current.iter().any(|c| c == o)).collect();
+        let selected = options
+            .iter()
+            .map(|o| current.iter().any(|c| c == o))
+            .collect();
         // Place the cursor on the first already-selected option, if any.
         let cursor = options
             .iter()

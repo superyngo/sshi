@@ -325,27 +325,15 @@ mod tests {
             EscapeOutcome::SwitchZone(FocusZone::CheckoutControls),
         );
         assert_eq!(
-            escape_to_parent(
-                TabId::View,
-                FocusZone::CheckoutHostTable,
-                Direction::Down
-            ),
+            escape_to_parent(TabId::View, FocusZone::CheckoutHostTable, Direction::Down),
             EscapeOutcome::Stop,
         );
         assert_eq!(
-            escape_to_parent(
-                TabId::View,
-                FocusZone::CheckoutHostTable,
-                Direction::Left
-            ),
+            escape_to_parent(TabId::View, FocusZone::CheckoutHostTable, Direction::Left),
             EscapeOutcome::Stop,
         );
         assert_eq!(
-            escape_to_parent(
-                TabId::View,
-                FocusZone::CheckoutControls,
-                Direction::Down
-            ),
+            escape_to_parent(TabId::View, FocusZone::CheckoutControls, Direction::Down),
             EscapeOutcome::SwitchZone(FocusZone::CheckoutHostTable),
         );
         assert_eq!(

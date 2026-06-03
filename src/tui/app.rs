@@ -28,10 +28,10 @@ use ratatui::{
 
 use crate::cli::ActionFilter;
 use crate::commands::checkout::{fetch_latest_snapshots, DisplayColumns, HostSnapshot};
-use crate::tui::state::persist::ViewOperationKind;
 use crate::commands::report::{CommandReport, HostStatus};
 use crate::commands::{Context, TargetMode};
 use crate::config::schema::AppConfig;
+use crate::tui::state::persist::ViewOperationKind;
 
 use super::async_bridge::{EventSender, RunningOp, TuiEvent};
 use super::components::input_field::{InputField, InputMode};
@@ -150,8 +150,23 @@ impl AuthPopup {
     }
 }
 
+/// State for the "Export to file" popup in View tab.
+struct ExportPopup {
+    input: InputField,
+    source: ViewOperationKind,
+}
+
+impl ExportPopup {
+    fn new(source: ViewOperationKind) -> Self {
+        let mut input = InputField::new("");
+        input.activate();
+        Self { input, source }
+    }
+}
+
 pub struct App {
     pub active_tab: TabId,
+    export_popup: Option<ExportPopup>,
     navbar_focused: bool,
     pub theme: Theme,
     pub error: Option<String>,
@@ -348,6 +363,7 @@ impl App {
             log_overlay_vp: Viewport::new(),
             log_buffer,
             auth_popup: None,
+            export_popup: None,
             auth_bridge_tx: None,
             entries_scroll: 0,
             progress_popup_scroll: None,
@@ -401,8 +417,18 @@ impl App {
             .host
             .iter()
             .flat_map(|h| h.groups.iter().cloned())
-            .chain(self.config.check.iter().flat_map(|c| c.groups.iter().cloned()))
-            .chain(self.config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
+            .chain(
+                self.config
+                    .check
+                    .iter()
+                    .flat_map(|c| c.groups.iter().cloned()),
+            )
+            .chain(
+                self.config
+                    .sync
+                    .iter()
+                    .flat_map(|s| s.groups.iter().cloned()),
+            )
             .filter(|g| !g.is_empty())
             .collect();
         for g in &self.target_filter.groups {
@@ -634,6 +660,8 @@ impl App {
                             CommandReport::Run(_) => "run",
                             CommandReport::Exec(_) => "exec",
                             CommandReport::Sync(_) => "sync",
+                            CommandReport::Log(_) => "log",
+                            CommandReport::List(_) => "list",
                         };
                         let op_report =
                             crate::output::report::to_operation_report(&report, &op.mode);
@@ -683,6 +711,174 @@ impl App {
         }
     }
 
+    fn execute_view_export(&mut self, path: &str) -> Result<()> {
+        let target_mode = build_target_mode(&self.target_filter, &self.config);
+        let executed_at = chrono::Local::now().to_rfc3339();
+
+        let (op_report, command) = match self.view_op {
+            ViewOperationKind::Checkout => {
+                use crate::output::report::{
+                    FilterInfo, HostResult, OperationReport, ReportSummary,
+                };
+
+                let report_results: Vec<HostResult> = self
+                    .checkout_snapshots
+                    .iter()
+                    .map(|snap| {
+                        let collected_at_str = if snap.collected_at > 0 {
+                            chrono::DateTime::from_timestamp(snap.collected_at, 0)
+                                .map(|dt| dt.to_rfc3339())
+                                .unwrap_or_else(|| snap.collected_at.to_string())
+                        } else {
+                            "never".to_string()
+                        };
+                        HostResult {
+                            host: snap.host.clone(),
+                            status: if snap.online { "success" } else { "error" }.to_string(),
+                            duration_ms: None,
+                            output: serde_json::json!({
+                                "collected_at": collected_at_str,
+                                "online": snap.online,
+                                "snapshot": snap.data,
+                            }),
+                        }
+                    })
+                    .collect();
+
+                let rep_summary = ReportSummary {
+                    total: report_results.len(),
+                    success: report_results
+                        .iter()
+                        .filter(|r| r.status == "success")
+                        .count(),
+                    failed: report_results
+                        .iter()
+                        .filter(|r| r.status == "error")
+                        .count(),
+                    skipped: 0,
+                };
+
+                let targets: Vec<String> = self
+                    .checkout_snapshots
+                    .iter()
+                    .map(|s| s.host.clone())
+                    .collect();
+
+                let op_report = OperationReport {
+                    executed_at,
+                    command: "checkout".to_string(),
+                    filter: FilterInfo::from_mode(&target_mode),
+                    task: serde_json::json!({}),
+                    targets,
+                    results: report_results,
+                    summary: rep_summary,
+                };
+                (op_report, "checkout")
+            }
+            ViewOperationKind::Log => {
+                use crate::commands::report::{
+                    CommandReport, HostStatus, LogHostResult, LogQueryParams, LogReport,
+                };
+
+                let entries: Vec<LogHostResult> = self
+                    .view_log
+                    .iter()
+                    .map(|r| {
+                        let status = match r.status.as_str() {
+                            "ok" => HostStatus::Online,
+                            "skipped" => HostStatus::Skipped,
+                            _ => HostStatus::Error,
+                        };
+                        let time_str = chrono::DateTime::from_timestamp(r.ts, 0)
+                            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                            .unwrap_or_else(|| r.ts.to_string());
+                        LogHostResult {
+                            host: r.host.clone(),
+                            status,
+                            duration_ms: r.duration_ms,
+                            timestamp: time_str,
+                            command: r.command.clone(),
+                            action: r.action.clone(),
+                            note: r.note.clone(),
+                        }
+                    })
+                    .collect();
+
+                let action_filter_str = self.log_action.as_ref().map(|a| match a {
+                    ActionFilter::Sync => "sync".to_string(),
+                    ActionFilter::Run => "run".to_string(),
+                    ActionFilter::Exec => "exec".to_string(),
+                    ActionFilter::Check => "check".to_string(),
+                });
+
+                let report = CommandReport::Log(LogReport {
+                    executed_at: executed_at.clone(),
+                    query_params: LogQueryParams {
+                        last: self.log_last,
+                        since: {
+                            let val = self.log_since_input.value.trim().to_string();
+                            if val.is_empty() {
+                                None
+                            } else {
+                                Some(val)
+                            }
+                        },
+                        host: {
+                            let val = self.log_host_input.value.trim().to_string();
+                            if val.is_empty() {
+                                None
+                            } else {
+                                Some(val)
+                            }
+                        },
+                        action: action_filter_str,
+                        errors: self.log_errors,
+                    },
+                    entries,
+                });
+
+                let op_report = crate::output::report::to_operation_report(&report, &target_mode);
+                (op_report, "log")
+            }
+            ViewOperationKind::List => {
+                use crate::commands::report::{CommandReport, ListHostResult, ListReport};
+
+                let list_data = self
+                    .view_list
+                    .as_ref()
+                    .ok_or_else(|| anyhow::anyhow!("No list data loaded"))?;
+
+                let list_hosts: Vec<ListHostResult> = list_data
+                    .hosts
+                    .iter()
+                    .map(|h| ListHostResult {
+                        host: h.name.clone(),
+                        ssh_host: h.ssh_host.clone(),
+                        shell: h.shell.to_string(),
+                        groups: h.groups.clone(),
+                    })
+                    .collect();
+
+                let report = CommandReport::List(ListReport {
+                    executed_at: executed_at.clone(),
+                    targets: list_data.hosts.iter().map(|h| h.name.clone()).collect(),
+                    hosts: list_hosts,
+                    checks: list_data.checks.clone(),
+                    syncs: list_data.syncs.clone(),
+                });
+
+                let op_report = crate::output::report::to_operation_report(&report, &target_mode);
+                (op_report, "list")
+            }
+        };
+
+        let default_fmt = self.config.settings.default_output_format.as_deref();
+        let final_path =
+            crate::output::report::write_report(&op_report, path, command, default_fmt)?;
+        self.error = Some(format!("Report written to {}", final_path));
+        Ok(())
+    }
+
     /// Build a synthetic completed report previewing which hosts a
     /// check/run/exec dry-run would touch, without contacting any host. Sync is
     /// excluded (its core honours `dry_run` itself). Returns true (redraw).
@@ -696,21 +892,18 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(
-            &target_mode,
-            &self.config,
-            &self.target_filter.skip,
-        ) {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
-                self.error = Some("No hosts matched the current filter.".to_string());
-                return true;
-            }
-            Err(e) => {
-                self.error = Some(format!("Filter error: {e}"));
-                return true;
-            }
-        };
+        let targets: Vec<String> =
+            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
+                Ok(t) if !t.is_empty() => t,
+                Ok(_) => {
+                    self.error = Some("No hosts matched the current filter.".to_string());
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Filter error: {e}"));
+                    return true;
+                }
+            };
 
         let executed_at = chrono::Utc::now().to_rfc3339();
         let detail = "would execute (dry-run)".to_string();
@@ -801,17 +994,18 @@ impl App {
         }
 
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
-                self.error = Some("No hosts matched the current filter.".to_string());
-                return true;
-            }
-            Err(e) => {
-                self.error = Some(format!("Filter error: {e}"));
-                return true;
-            }
-        };
+        let targets: Vec<String> =
+            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
+                Ok(t) if !t.is_empty() => t,
+                Ok(_) => {
+                    self.error = Some("No hosts matched the current filter.".to_string());
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Filter error: {e}"));
+                    return true;
+                }
+            };
 
         let serial = self.target_filter.serial;
         let timeout = self.last_timeout_secs;
@@ -902,17 +1096,18 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
-                self.error = Some("No hosts matched the current filter.".to_string());
-                return true;
-            }
-            Err(e) => {
-                self.error = Some(format!("Filter error: {e}"));
-                return true;
-            }
-        };
+        let targets: Vec<String> =
+            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
+                Ok(t) if !t.is_empty() => t,
+                Ok(_) => {
+                    self.error = Some("No hosts matched the current filter.".to_string());
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Filter error: {e}"));
+                    return true;
+                }
+            };
         let serial = self.target_filter.serial;
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
@@ -991,17 +1186,18 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
-                self.error = Some("No hosts matched the current filter.".to_string());
-                return true;
-            }
-            Err(e) => {
-                self.error = Some(format!("Filter error: {e}"));
-                return true;
-            }
-        };
+        let targets: Vec<String> =
+            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
+                Ok(t) if !t.is_empty() => t,
+                Ok(_) => {
+                    self.error = Some("No hosts matched the current filter.".to_string());
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Filter error: {e}"));
+                    return true;
+                }
+            };
         let serial = self.target_filter.serial;
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
@@ -1077,17 +1273,18 @@ impl App {
             return true;
         }
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> = match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-            Ok(t) if !t.is_empty() => t,
-            Ok(_) => {
-                self.error = Some("No hosts matched the current filter.".to_string());
-                return true;
-            }
-            Err(e) => {
-                self.error = Some(format!("Filter error: {e}"));
-                return true;
-            }
-        };
+        let targets: Vec<String> =
+            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
+                Ok(t) if !t.is_empty() => t,
+                Ok(_) => {
+                    self.error = Some("No hosts matched the current filter.".to_string());
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Filter error: {e}"));
+                    return true;
+                }
+            };
         let serial = self.target_filter.serial;
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
@@ -1105,7 +1302,11 @@ impl App {
         };
         let source_override: Option<String> = {
             let v = self.sync_source_input.value.trim().to_string();
-            if v.is_empty() { None } else { Some(v) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         };
 
         let _ = std::thread::Builder::new()
@@ -1272,7 +1473,11 @@ impl App {
         }
         let fwd = (cur..n).find(|&i| sel[i]);
         let bwd = || (0..cur).rev().find(|&i| sel[i]);
-        let next = if down { fwd.or_else(bwd) } else { bwd().or(fwd) };
+        let next = if down {
+            fwd.or_else(bwd)
+        } else {
+            bwd().or(fwd)
+        };
         if let Some(i) = next {
             self.checkout_viewport.selected = i;
         }
@@ -1335,7 +1540,10 @@ impl App {
             if self.result_at_top() && self.checkout_viewport.scroll_y == 0 {
                 // At top of result — move focus to previous stop.
                 let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
-                let idx = stops.iter().position(|s| *s == self.view_focus).unwrap_or(0);
+                let idx = stops
+                    .iter()
+                    .position(|s| *s == self.view_focus)
+                    .unwrap_or(0);
                 if idx > 0 {
                     self.view_focus = stops[idx - 1];
                 }
@@ -1344,7 +1552,10 @@ impl App {
             }
         } else {
             let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
-            let idx = stops.iter().position(|s| *s == self.view_focus).unwrap_or(0);
+            let idx = stops
+                .iter()
+                .position(|s| *s == self.view_focus)
+                .unwrap_or(0);
             if idx > 0 {
                 self.view_focus = stops[idx - 1];
             } else {
@@ -1359,7 +1570,10 @@ impl App {
             self.result_move(true);
         } else {
             let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
-            let idx = stops.iter().position(|s| *s == self.view_focus).unwrap_or(0);
+            let idx = stops
+                .iter()
+                .position(|s| *s == self.view_focus)
+                .unwrap_or(0);
             if idx + 1 < stops.len() {
                 self.view_focus = stops[idx + 1];
                 // Entering the Result zone: land the cursor on a real data row.
@@ -1381,8 +1595,7 @@ impl App {
                 self.view_dirty = false;
             }
             super::state::persist::ViewOperationKind::List => {
-                if let Ok(conn) =
-                    crate::state::db::open(self.config.settings.state_dir.as_deref())
+                if let Ok(conn) = crate::state::db::open(self.config.settings.state_dir.as_deref())
                 {
                     // List honors the target filter (the `f` popup applies to it).
                     let ctx = Context {
@@ -1401,8 +1614,7 @@ impl App {
                 }
             }
             super::state::persist::ViewOperationKind::Log => {
-                if let Ok(conn) =
-                    crate::state::db::open(self.config.settings.state_dir.as_deref())
+                if let Ok(conn) = crate::state::db::open(self.config.settings.state_dir.as_deref())
                 {
                     let ctx = Context {
                         config: self.config.clone(),
@@ -1416,11 +1628,19 @@ impl App {
                     };
                     let since = {
                         let v = self.log_since_input.value.trim().to_string();
-                        if v.is_empty() { None } else { Some(v) }
+                        if v.is_empty() {
+                            None
+                        } else {
+                            Some(v)
+                        }
                     };
                     let host = {
                         let v = self.log_host_input.value.trim().to_string();
-                        if v.is_empty() { None } else { Some(v) }
+                        if v.is_empty() {
+                            None
+                        } else {
+                            Some(v)
+                        }
                     };
                     self.view_log = crate::commands::log::log_core(
                         &ctx,
@@ -1471,6 +1691,28 @@ impl App {
             return Ok(true);
         }
 
+        // Export popup routing.
+        if let Some(popup) = self.export_popup.as_mut() {
+            match key.code {
+                KeyCode::Enter => {
+                    popup.input.confirm();
+                    let path = popup.input.value.clone();
+                    self.export_popup = None;
+                    if let Err(e) = self.execute_view_export(&path) {
+                        self.error = Some(format!("Export failed: {}", e));
+                    }
+                }
+                KeyCode::Esc => {
+                    popup.input.cancel();
+                    self.export_popup = None;
+                }
+                _ => {
+                    popup.input.handle_key(key);
+                }
+            }
+            return Ok(true);
+        }
+
         // §14.3: while an input field is active, suspend ALL other routing.
         if self.active_tab == TabId::Operate {
             let active_field: Option<&mut InputField> = match self.operate_focus {
@@ -1507,19 +1749,18 @@ impl App {
 
         // §14.3: while a View text input is active, suspend ALL other routing.
         if self.active_tab == TabId::View && self.view_op == ViewOperationKind::Log {
-            let active_view_field: Option<&mut InputField> =
-                match self.view_focus {
-                    ViewFocus::Specific(0) if self.log_last_input.mode == InputMode::Active => {
-                        Some(&mut self.log_last_input)
-                    }
-                    ViewFocus::Specific(3) if self.log_since_input.mode == InputMode::Active => {
-                        Some(&mut self.log_since_input)
-                    }
-                    ViewFocus::Specific(4) if self.log_host_input.mode == InputMode::Active => {
-                        Some(&mut self.log_host_input)
-                    }
-                    _ => None,
-                };
+            let active_view_field: Option<&mut InputField> = match self.view_focus {
+                ViewFocus::Specific(0) if self.log_last_input.mode == InputMode::Active => {
+                    Some(&mut self.log_last_input)
+                }
+                ViewFocus::Specific(3) if self.log_since_input.mode == InputMode::Active => {
+                    Some(&mut self.log_since_input)
+                }
+                ViewFocus::Specific(4) if self.log_host_input.mode == InputMode::Active => {
+                    Some(&mut self.log_host_input)
+                }
+                _ => None,
+            };
             // Route the key to the active field, then end its borrow before
             // touching other `self` fields (commit handling needs `self`).
             let committed = if let Some(field) = active_view_field {
@@ -2066,8 +2307,7 @@ impl App {
                         // sync_core honours dry-run internally; check/run/exec
                         // cores do not, so preview them synthetically without
                         // contacting any host.
-                        if self.op_dry_run
-                            && !matches!(self.operate_operation, OperationKind::Sync)
+                        if self.op_dry_run && !matches!(self.operate_operation, OperationKind::Sync)
                         {
                             return Ok(self.dry_run_preview());
                         }
@@ -2149,7 +2389,6 @@ impl App {
             }
 
             // ── View tab ───────────────────────────────────────────────
-
             KeyCode::Left if self.active_tab == TabId::View => {
                 if self.view_focus == ViewFocus::OpSelector {
                     self.view_op = match self.view_op {
@@ -2159,8 +2398,10 @@ impl App {
                     };
                     self.view_focus = ViewFocus::OpSelector;
                     self.view_dirty = true;
-                } else if matches!(self.view_focus, ViewFocus::TargetMode | ViewFocus::TargetMembers)
-                {
+                } else if matches!(
+                    self.view_focus,
+                    ViewFocus::TargetMode | ViewFocus::TargetMembers
+                ) {
                     self.view_cycle_target_mode(false);
                 }
                 Ok(true)
@@ -2174,8 +2415,10 @@ impl App {
                     };
                     self.view_focus = ViewFocus::OpSelector;
                     self.view_dirty = true;
-                } else if matches!(self.view_focus, ViewFocus::TargetMode | ViewFocus::TargetMembers)
-                {
+                } else if matches!(
+                    self.view_focus,
+                    ViewFocus::TargetMode | ViewFocus::TargetMembers
+                ) {
                     self.view_cycle_target_mode(true);
                 }
                 Ok(true)
@@ -2266,6 +2509,20 @@ impl App {
                 Ok(true)
             }
 
+            KeyCode::Char('o') if self.active_tab == TabId::View => {
+                let has_data = match self.view_op {
+                    ViewOperationKind::Checkout => !self.checkout_snapshots.is_empty(),
+                    ViewOperationKind::Log => !self.view_log.is_empty(),
+                    ViewOperationKind::List => self.view_list.is_some(),
+                };
+                if has_data {
+                    self.export_popup = Some(ExportPopup::new(self.view_op));
+                } else {
+                    self.error = Some("No data to export".to_string());
+                }
+                Ok(true)
+            }
+
             _ => Ok(false),
         }
     }
@@ -2349,8 +2606,7 @@ impl App {
                 let op_selector_focused = active && self.view_focus == ViewFocus::OpSelector;
                 let result_focused = active && self.view_focus == ViewFocus::Result;
                 let target_mode_focused = active && self.view_focus == ViewFocus::TargetMode;
-                let target_members_focused =
-                    active && self.view_focus == ViewFocus::TargetMembers;
+                let target_members_focused = active && self.view_focus == ViewFocus::TargetMembers;
                 let skip_focused = active && self.view_focus == ViewFocus::Skip;
                 let view_target_count = resolve_target_names(
                     &build_target_mode(&self.target_filter, &self.config),
@@ -2408,6 +2664,9 @@ impl App {
         }
         if self.auth_popup.is_some() {
             self.render_auth_popup(area, frame);
+        }
+        if self.export_popup.is_some() {
+            self.render_export_popup(area, frame);
         }
     }
 
@@ -2673,6 +2932,58 @@ impl App {
         frame.render_widget(hint, chunks[2]);
     }
 
+    fn render_export_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
+        use ratatui::style::Color;
+        let popup_area = centered_rect(60, 25, area);
+        frame.render_widget(Clear, popup_area);
+
+        let popup = match &self.export_popup {
+            Some(p) => p,
+            None => return,
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(" Export Report to File ");
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let chunks = ratatui::layout::Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Min(0),
+            ])
+            .split(inner);
+
+        let command_name = match popup.source {
+            ViewOperationKind::Checkout => "checkout",
+            ViewOperationKind::Log => "log",
+            ViewOperationKind::List => "list",
+        };
+
+        let prompt = format!(
+            "Enter path to save {} report (.json or .html).\nLeave empty for auto-generated name.",
+            command_name
+        );
+        let prompt_text = Paragraph::new(prompt.as_str())
+            .style(Style::default().fg(self.theme.inactive))
+            .wrap(Wrap { trim: true });
+        frame.render_widget(prompt_text, chunks[0]);
+
+        popup
+            .input
+            .render(frame, chunks[1], "Output File Path", true);
+
+        let hint = Paragraph::new(Span::styled(
+            "Enter to confirm · Esc to cancel",
+            Style::default().fg(self.theme.inactive),
+        ));
+        frame.render_widget(hint, chunks[2]);
+    }
+
     /// §7.4 external editor 4-stage flow.
     ///
     /// Called from `run()` when `needs_editor_open` is set — giving access to
@@ -2832,6 +3143,19 @@ impl App {
                     r.mode, r.dry_run, r.total_files_synced
                 ),
             ),
+            CommandReport::Log(r) => (
+                r.entries.len(),
+                r.executed_at.as_str(),
+                format!(
+                    "  query: last={} errors={}",
+                    r.query_params.last, r.query_params.errors
+                ),
+            ),
+            CommandReport::List(r) => (
+                r.hosts.len(),
+                r.executed_at.as_str(),
+                format!("  checks:{} syncs:{}", r.checks.len(), r.syncs.len()),
+            ),
         };
 
         let title = format!(" Results — {host_count} hosts  (Enter / Esc to dismiss) ");
@@ -2976,6 +3300,48 @@ impl App {
                     }
                 }
             }
+            CommandReport::Log(r) => {
+                lines.push(Line::from(format!(
+                    "Log Entries: {} queried    Executed: {executed_at}",
+                    r.entries.len()
+                )));
+                lines.push(Line::from(header_detail));
+                lines.push(Line::from(""));
+                for e in &r.entries {
+                    lines.push(render_row(
+                        &e.host,
+                        e.status,
+                        &format!(
+                            "{} {} - {}",
+                            e.command,
+                            e.action,
+                            e.note.as_deref().unwrap_or("")
+                        ),
+                        e.duration_ms.map(|d| d as u64),
+                    ));
+                }
+            }
+            CommandReport::List(r) => {
+                lines.push(Line::from(format!(
+                    "List Entries: {} hosts    Executed: {executed_at}",
+                    r.hosts.len()
+                )));
+                lines.push(Line::from(header_detail));
+                lines.push(Line::from(""));
+                for h in &r.hosts {
+                    lines.push(render_row(
+                        &h.host,
+                        HostStatus::Online,
+                        &format!(
+                            "ssh: {} shell: {} groups: {}",
+                            h.ssh_host,
+                            h.shell,
+                            h.groups.join(",")
+                        ),
+                        None,
+                    ));
+                }
+            }
         }
 
         let p = Paragraph::new(lines).wrap(Wrap { trim: false });
@@ -2990,7 +3356,7 @@ impl App {
                 "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nResults appear in a popup when the operation completes.",
                 self.last_timeout_secs
             ),
-            TabId::View => "View tab\n\nView checkout snapshots, host/config list, or operation log.\nUse ↑↓ to move between fields; ←→ switches op (on Op row) or target mode.\nEnter on Members/Skip opens the picker; PgUp/PgDn/Home/End scroll results.\nData refreshes automatically on op switch and after operations.".to_string(),
+            TabId::View => "View tab\n\nView checkout snapshots, host/config list, or operation log.\nUse ↑↓ to move between fields; ←→ switches op (on Op row) or target mode.\nEnter on Members/Skip opens the picker; PgUp/PgDn/Home/End scroll results.\no     — export the currently viewed data to a report file.\nData refreshes automatically on op switch and after operations.".to_string(),
             TabId::Config => format!(
                 "Config tab (read-only browser)\n\n\
                  Sidebar: ↑↓ / jk to move between sections and entries.\n\
@@ -3056,7 +3422,9 @@ impl App {
             TabId::Operate => {
                 "↑↓:Fields ←→:Value Enter:Pick/Edit Space:Toggle s:Serial d:Dry-run ?:Help q:Quit"
             }
-            TabId::View => "↑↓:Fields ←→:Op/Mode Enter:Pick PgUp/PgDn L:Log i:Info ?:Help q:Quit",
+            TabId::View => {
+                "↑↓:Fields ←→:Op/Mode Enter:Pick PgUp/PgDn o:Export L:Log i:Info ?:Help q:Quit"
+            }
         };
         let p = Paragraph::new(Line::from(vec![Span::styled(
             hints,
@@ -3186,7 +3554,11 @@ fn build_target_mode(filter: &TargetFilterState, _config: &AppConfig) -> TargetM
 }
 
 /// Resolve the matching host names for a TargetMode against a config.
-fn resolve_target_names(mode: &TargetMode, config: &AppConfig, skip: &[String]) -> anyhow::Result<Vec<String>> {
+fn resolve_target_names(
+    mode: &TargetMode,
+    config: &AppConfig,
+    skip: &[String],
+) -> anyhow::Result<Vec<String>> {
     let mut names: Vec<String> = match mode {
         TargetMode::All => config.host.iter().map(|h| h.name.clone()).collect(),
         TargetMode::Hosts(specs) => config

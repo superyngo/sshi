@@ -208,6 +208,9 @@ pub enum Commands {
     List {
         #[command(flatten)]
         target: TargetArgs,
+
+        #[command(flatten)]
+        output: OutputArgs,
     },
 
     /// View operation logs
@@ -232,6 +235,9 @@ pub enum Commands {
         /// Show only error entries
         #[arg(long)]
         errors: bool,
+
+        #[command(flatten)]
+        output: OutputArgs,
 
         /// Print help
         #[arg(short = 'H', long, action = clap::ArgAction::HelpLong)]

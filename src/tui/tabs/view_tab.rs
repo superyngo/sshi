@@ -187,7 +187,10 @@ fn view_members_line<'a>(data: &ViewRenderData) -> Line<'a> {
     };
     Line::from(vec![
         Span::raw(format!(" {label}: ")),
-        Span::styled(value, view_focus_style(data.target_members_focused, data.theme)),
+        Span::styled(
+            value,
+            view_focus_style(data.target_members_focused, data.theme),
+        ),
     ])
 }
 
@@ -397,8 +400,7 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
     }
 
     let mut header_cells: Vec<Cell> = vec![Cell::from("Host"), Cell::from("Status")];
-    let mut constraints: Vec<Constraint> =
-        vec![Constraint::Length(16), Constraint::Length(12)];
+    let mut constraints: Vec<Constraint> = vec![Constraint::Length(16), Constraint::Length(12)];
     for metric in &columns.metrics {
         header_cells.push(Cell::from(metric_header(metric)));
         constraints.push(Constraint::Length(metric_width(metric) as u16));
@@ -413,7 +415,11 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
     let mut rows: Vec<Row> = Vec::new();
     for (i, snap) in snapshots[start..end].iter().enumerate() {
         let selected = start + i == data.checkout_selected;
-        let status_text = if snap.online { "✓ online" } else { "✗ offline" };
+        let status_text = if snap.online {
+            "✓ online"
+        } else {
+            "✗ offline"
+        };
         let status_style = Style::default().fg(if snap.online {
             data.theme.accent_checkout
         } else {
@@ -427,8 +433,10 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
         } else {
             format!("  {}", snap.host)
         };
-        let mut cells: Vec<Cell> =
-            vec![Cell::from(host_cell), Cell::from(status_text).style(status_style)];
+        let mut cells: Vec<Cell> = vec![
+            Cell::from(host_cell),
+            Cell::from(status_text).style(status_style),
+        ];
         for metric in &columns.metrics {
             let (val, critical) = extract_metric_value(&snap.data, metric);
             let style = if critical {
@@ -517,7 +525,11 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
     } else {
         for (i, entry) in list_data.checks.iter().enumerate() {
             let scope = format_scope(&entry.groups, entry.enable_hosts, entry.enable_all);
-            lines.push(Line::from(Span::raw(format!("  [{}] scope: {}", i + 1, scope))));
+            lines.push(Line::from(Span::raw(format!(
+                "  [{}] scope: {}",
+                i + 1,
+                scope
+            ))));
             if !entry.enabled.is_empty() {
                 lines.push(Line::from(Span::raw(format!(
                     "      enabled: {}",
@@ -619,7 +631,7 @@ pub fn list_selectable_lines(list: &ListData) -> Vec<bool> {
     sel.push(false); // column header
     sel.push(false); // separator
     sel.extend(list.hosts.iter().map(|_| true)); // one host row each
-    // ── Checks ──: blank + title (decorative), then body.
+                                                 // ── Checks ──: blank + title (decorative), then body.
     sel.push(false); // blank
     sel.push(false); // title
     if list.checks.is_empty() {
