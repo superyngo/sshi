@@ -30,43 +30,43 @@ jobs:
           # Linux builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact_name: ssync
-            asset_name: ssync-linux-x86_64
+            artifact_name: sshi
+            asset_name: sshi-linux-x86_64
           - os: ubuntu-latest
             target: i686-unknown-linux-gnu
-            artifact_name: ssync
-            asset_name: ssync-linux-i686
+            artifact_name: sshi
+            asset_name: sshi-linux-i686
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            artifact_name: ssync
-            asset_name: ssync-linux-x86_64-musl
+            artifact_name: sshi
+            asset_name: sshi-linux-x86_64-musl
           - os: ubuntu-latest
             target: armv7-unknown-linux-gnueabihf
-            artifact_name: ssync
-            asset_name: ssync-linux-armv7
+            artifact_name: sshi
+            asset_name: sshi-linux-armv7
           - os: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            artifact_name: ssync
-            asset_name: ssync-linux-aarch64
+            artifact_name: sshi
+            asset_name: sshi-linux-aarch64
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            artifact_name: ssync
-            asset_name: ssync-linux-aarch64-musl
+            artifact_name: sshi
+            asset_name: sshi-linux-aarch64-musl
             cflags: "-U_FORTIFY_SOURCE"
             cc: "aarch64-linux-gnu-gcc"
           - os: ubuntu-latest
             target: i686-unknown-linux-musl
-            artifact_name: ssync
-            asset_name: ssync-linux-i686-musl
+            artifact_name: sshi
+            asset_name: sshi-linux-i686-musl
           - os: ubuntu-latest
             target: armv7-unknown-linux-musleabihf
-            artifact_name: ssync
-            asset_name: ssync-linux-armv7-musl
+            artifact_name: sshi
+            asset_name: sshi-linux-armv7-musl
           # Windows builds
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            artifact_name: ssync.exe
-            asset_name: ssync-windows-x86_64.exe
+            artifact_name: sshi.exe
+            asset_name: sshi-windows-x86_64.exe
             rustflags: "-C target-feature=+crt-static"
             opt_level: "3"
             lto: "thin"
@@ -75,8 +75,8 @@ jobs:
             panic: "unwind"
           - os: windows-latest
             target: i686-pc-windows-msvc
-            artifact_name: ssync.exe
-            asset_name: ssync-windows-i686.exe
+            artifact_name: sshi.exe
+            asset_name: sshi-windows-i686.exe
             rustflags: "-C target-feature=+crt-static"
             opt_level: "3"
             lto: "thin"
@@ -85,8 +85,8 @@ jobs:
             panic: "unwind"
           - os: windows-latest
             target: aarch64-pc-windows-msvc
-            artifact_name: ssync.exe
-            asset_name: ssync-windows-aarch64.exe
+            artifact_name: sshi.exe
+            asset_name: sshi-windows-aarch64.exe
             rustflags: "-C target-feature=+crt-static"
             opt_level: "3"
             lto: "thin"
@@ -96,12 +96,12 @@ jobs:
           # macOS builds
           - os: macos-15-intel
             target: x86_64-apple-darwin
-            artifact_name: ssync
-            asset_name: ssync-macos-x86_64
+            artifact_name: sshi
+            asset_name: sshi-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: ssync
-            asset_name: ssync-macos-aarch64
+            artifact_name: sshi
+            asset_name: sshi-macos-aarch64
 
     steps:
       - name: Checkout code
@@ -256,7 +256,7 @@ jobs:
           for dir in artifacts/*; do
             if [ -d "$dir" ] && [[ "$dir" == *"windows"* ]]; then
               asset_name=$(basename "$dir")
-              exe_file="$dir/ssync.exe"
+              exe_file="$dir/sshi.exe"
               if [ -f "$exe_file" ]; then
                 cp "$exe_file" "release_files/$asset_name"
               fi
