@@ -55,6 +55,11 @@ pub fn open(override_dir: Option<&std::path::Path>) -> Result<Connection> {
     Ok(conn)
 }
 
+#[cfg(test)]
+pub fn migrate_for_test(conn: &Connection) {
+    migrate(conn).unwrap();
+}
+
 fn migrate(conn: &Connection) -> Result<()> {
     let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
 

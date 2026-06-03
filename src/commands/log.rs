@@ -142,7 +142,8 @@ mod tests {
 
     #[test]
     fn log_core_empty_db_returns_no_rows() {
-        let db = crate::state::db::open(None).unwrap();
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&db);
         let ctx = crate::commands::Context {
             config: crate::config::schema::AppConfig::default(),
             config_path: None,
