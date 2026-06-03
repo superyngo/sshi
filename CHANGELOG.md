@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.0] - 2026-06-03
+
 ### 2026-06-03 — Log & List `--out` / TUI Export `o`
 - feat: log and list subcommands now support the `-o/--out` parameter, allowing log queries and host/check lists to be exported as structured JSON or HTML reports.
 - feat(tui): added the `o` hotkey to the View tab when viewing Checkout, List, or Log results. It prompts the user for an output path (or empty for auto-named) and exports the currently viewed data using the same serialization logic.
