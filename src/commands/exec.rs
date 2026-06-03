@@ -7,7 +7,6 @@ use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
 use crate::host::shell;
 use crate::output::printer;
-use crate::output::report::{FilterInfo, HostResult, OperationReport, ReportSummary};
 use crate::output::summary::Summary;
 
 use super::report::{CommandReport, ExecHostResult, ExecReport, HostStatus, ProgressSink};
@@ -221,13 +220,12 @@ pub async fn run(
     }
 
     let sink = PrinterSink;
-    let CommandReport::Exec(report) = exec_core(ctx, script, sudo, keep, Some(&sink)).await?
-    else {
+    let raw = exec_core(ctx, script, sudo, keep, Some(&sink)).await?;
+    let CommandReport::Exec(report) = &raw else {
         unreachable!("exec_core always returns CommandReport::Exec")
     };
 
     let mut summary = Summary::default();
-    let mut report_results: Vec<HostResult> = Vec::new();
     for h in &report.hosts {
         match h.status {
             HostStatus::Online => summary.add_success(),
@@ -237,56 +235,19 @@ pub async fn run(
             }
             _ => {}
         }
-        let status_str = match h.status {
-            HostStatus::Online => "success",
-            HostStatus::Skipped => "skipped",
-            _ => "error",
-        };
-        report_results.push(HostResult {
-            host: h.host.clone(),
-            status: status_str.to_string(),
-            duration_ms: h.duration_ms,
-            output: serde_json::json!({
-                "stdout": h.stdout,
-                "stderr": h.stderr,
-            }),
-        });
     }
 
     summary.print();
 
     if let Some(out) = &output.out {
-        let rep_summary = ReportSummary {
-            total: report_results.len(),
-            success: report_results
-                .iter()
-                .filter(|r| r.status == "success")
-                .count(),
-            failed: report_results
-                .iter()
-                .filter(|r| r.status == "error")
-                .count(),
-            skipped: report_results
-                .iter()
-                .filter(|r| r.status == "skipped")
-                .count(),
-        };
-        let targets = report.targets.clone();
-        let rep = OperationReport {
-            executed_at: report.executed_at,
-            command: "exec".to_string(),
-            filter: FilterInfo::from_mode(&ctx.mode),
-            task: serde_json::json!({ "script": script }),
-            targets,
-            results: report_results,
-            summary: rep_summary,
-        };
-        crate::output::report::write_report(
+        let rep = crate::output::report::to_operation_report(&raw, &ctx.mode);
+        let path = crate::output::report::write_report(
             &rep,
             out,
             "exec",
             ctx.config.settings.default_output_format.as_deref(),
         )?;
+        println!("Report written to {}", path);
     }
 
     Ok(())

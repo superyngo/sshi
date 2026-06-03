@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use serde::Serialize;
 
+use crate::commands::report::{CommandReport, HostStatus};
 use crate::commands::TargetMode;
 
 #[derive(Serialize)]
@@ -62,6 +63,160 @@ pub struct ReportSummary {
     pub skipped: usize,
 }
 
+/// Convert a typed `CommandReport` (returned by any `*_core`) into the flat
+/// `OperationReport` consumed by [`write_report`]. Per-command field mapping
+/// lives here so the CLI wrappers and the TUI share one implementation.
+pub fn to_operation_report(report: &CommandReport, mode: &TargetMode) -> OperationReport {
+    let filter = FilterInfo::from_mode(mode);
+    match report {
+        CommandReport::Check(r) => {
+            let results: Vec<HostResult> = r
+                .hosts
+                .iter()
+                .map(|h| {
+                    let status = match h.status {
+                        HostStatus::Online | HostStatus::Partial => "success",
+                        _ => "error",
+                    };
+                    let output = if matches!(h.status, HostStatus::Unreachable) {
+                        serde_json::json!({
+                            "metrics": {},
+                            "probe_outputs": {},
+                            "error": format!(
+                                "unreachable: {}",
+                                h.detail.strip_prefix("unreachable — ").unwrap_or(&h.detail)
+                            ),
+                        })
+                    } else if matches!(h.status, HostStatus::Error) {
+                        serde_json::json!({
+                            "metrics": {},
+                            "probe_outputs": {},
+                            "error": h.detail,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "metrics": h.data,
+                            "probe_outputs": {
+                                "metrics_batch": { "stdout": h.raw_stdout, "stderr": h.raw_stderr }
+                            },
+                        })
+                    };
+                    HostResult {
+                        host: h.host.clone(),
+                        status: status.to_string(),
+                        duration_ms: h.duration_ms,
+                        output,
+                    }
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "check".to_string(),
+                filter,
+                task: serde_json::json!({ "metrics": r.enabled_metrics }),
+                targets: r.targets.clone(),
+                summary: summarize(&results),
+                results,
+            }
+        }
+        CommandReport::Run(r) => {
+            let results: Vec<HostResult> = r
+                .hosts
+                .iter()
+                .map(|h| {
+                    let status = match h.status {
+                        HostStatus::Online => "success",
+                        _ => "error",
+                    };
+                    HostResult {
+                        host: h.host.clone(),
+                        status: status.to_string(),
+                        duration_ms: h.duration_ms,
+                        output: serde_json::json!({ "stdout": h.stdout, "stderr": h.stderr }),
+                    }
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "run".to_string(),
+                filter,
+                task: serde_json::json!({ "command": r.command }),
+                targets: r.targets.clone(),
+                summary: summarize(&results),
+                results,
+            }
+        }
+        CommandReport::Exec(r) => {
+            let results: Vec<HostResult> = r
+                .hosts
+                .iter()
+                .map(|h| {
+                    let status = match h.status {
+                        HostStatus::Online => "success",
+                        HostStatus::Skipped => "skipped",
+                        _ => "error",
+                    };
+                    HostResult {
+                        host: h.host.clone(),
+                        status: status.to_string(),
+                        duration_ms: h.duration_ms,
+                        output: serde_json::json!({ "stdout": h.stdout, "stderr": h.stderr }),
+                    }
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "exec".to_string(),
+                filter,
+                task: serde_json::json!({ "script": r.script }),
+                targets: r.targets.clone(),
+                summary: summarize(&results),
+                results,
+            }
+        }
+        CommandReport::Sync(r) => {
+            let results: Vec<HostResult> = r
+                .hosts
+                .iter()
+                .map(|h| {
+                    let status = match h.status {
+                        HostStatus::Online => "success",
+                        _ => "error",
+                    };
+                    HostResult {
+                        host: h.host.clone(),
+                        status: status.to_string(),
+                        duration_ms: h.duration_ms,
+                        output: serde_json::json!({
+                            "files_synced": h.synced_paths,
+                            "files_skipped": h.skipped_paths,
+                        }),
+                    }
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "sync".to_string(),
+                filter,
+                task: serde_json::json!({ "paths": r.paths }),
+                targets: r.targets.clone(),
+                summary: summarize(&results),
+                results,
+            }
+        }
+    }
+}
+
+/// Tally a `ReportSummary` from per-host status strings.
+fn summarize(results: &[HostResult]) -> ReportSummary {
+    ReportSummary {
+        total: results.len(),
+        success: results.iter().filter(|r| r.status == "success").count(),
+        failed: results.iter().filter(|r| r.status == "error").count(),
+        skipped: results.iter().filter(|r| r.status == "skipped").count(),
+    }
+}
+
 /// Write `report` to a file. Path semantics:
 /// - `""` → auto-generate `sshi-{command}-{YYYYMMDD-HHmmss}.{fmt}` in CWD
 /// - `*.json` → JSON
@@ -69,12 +224,15 @@ pub struct ReportSummary {
 /// - other extension → error
 ///
 /// Format priority: path extension > `configured_default` > "json".
+///
+/// Returns the path actually written (the caller decides how to announce it;
+/// the CLI prints, the TUI shows a status banner).
 pub fn write_report(
     report: &OperationReport,
     out: &str,
     command: &str,
     configured_default: Option<&str>,
-) -> Result<()> {
+) -> Result<String> {
     use anyhow::Context;
     use std::path::Path;
 
@@ -120,8 +278,7 @@ pub fn write_report(
             .with_context(|| format!("Failed to write report to '{}'", path))?;
     }
 
-    println!("Report written to {}", path);
-    Ok(())
+    Ok(path)
 }
 
 fn render_html_report(report: &OperationReport) -> String {
@@ -451,6 +608,132 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         let v: serde_json::Value = serde_json::from_str(&content).unwrap();
         assert_eq!(v["command"], "run");
+    }
+
+    #[test]
+    fn test_to_operation_report_run() {
+        use crate::commands::report::{CommandReport, HostStatus, RunHostResult, RunReport};
+        let report = CommandReport::Run(RunReport {
+            executed_at: "2026-06-03T00:00:00Z".to_string(),
+            command: "echo hi".to_string(),
+            targets: vec!["h1".to_string(), "h2".to_string()],
+            hosts: vec![
+                RunHostResult {
+                    host: "h1".to_string(),
+                    status: HostStatus::Online,
+                    duration_ms: Some(10),
+                    detail: "ok".to_string(),
+                    stdout: "hi\n".to_string(),
+                    stderr: String::new(),
+                },
+                RunHostResult {
+                    host: "h2".to_string(),
+                    status: HostStatus::Error,
+                    duration_ms: Some(20),
+                    detail: "boom".to_string(),
+                    stdout: String::new(),
+                    stderr: "boom".to_string(),
+                },
+            ],
+        });
+        let op = to_operation_report(
+            &report,
+            &TargetMode::Hosts(vec!["h1".to_string(), "h2".to_string()]),
+        );
+        assert_eq!(op.command, "run");
+        assert_eq!(op.task["command"], "echo hi");
+        assert_eq!(op.filter.mode, "hosts");
+        assert_eq!(op.summary.total, 2);
+        assert_eq!(op.summary.success, 1);
+        assert_eq!(op.summary.failed, 1);
+        assert_eq!(op.results[0].status, "success");
+        assert_eq!(op.results[0].output["stdout"], "hi\n");
+        assert_eq!(op.results[1].status, "error");
+    }
+
+    #[test]
+    fn test_to_operation_report_exec_skipped() {
+        use crate::commands::report::{CommandReport, ExecHostResult, ExecReport, HostStatus};
+        let report = CommandReport::Exec(ExecReport {
+            executed_at: "2026-06-03T00:00:00Z".to_string(),
+            script: "deploy.sh".to_string(),
+            targets: vec!["h1".to_string()],
+            hosts: vec![ExecHostResult {
+                host: "h1".to_string(),
+                status: HostStatus::Skipped,
+                duration_ms: None,
+                detail: "shell mismatch".to_string(),
+                stdout: String::new(),
+                stderr: String::new(),
+            }],
+        });
+        let op = to_operation_report(&report, &TargetMode::All);
+        assert_eq!(op.command, "exec");
+        assert_eq!(op.task["script"], "deploy.sh");
+        assert_eq!(op.filter.mode, "all");
+        assert_eq!(op.summary.skipped, 1);
+        assert_eq!(op.summary.success, 0);
+        assert_eq!(op.summary.failed, 0);
+        assert_eq!(op.results[0].status, "skipped");
+    }
+
+    #[test]
+    fn test_to_operation_report_check_metrics() {
+        use crate::commands::report::{CheckHostResult, CheckReport, CommandReport, HostStatus};
+        let report = CommandReport::Check(CheckReport {
+            executed_at: "2026-06-03T00:00:00Z".to_string(),
+            enabled_metrics: vec!["cpu".to_string()],
+            targets: vec!["h1".to_string()],
+            hosts: vec![CheckHostResult {
+                host: "h1".to_string(),
+                status: HostStatus::Online,
+                duration_ms: Some(5),
+                detail: "collected".to_string(),
+                metrics_succeeded: 1,
+                metrics_failed: 0,
+                data: serde_json::json!({ "cpu": 0.5 }),
+                raw_stdout: "raw".to_string(),
+                raw_stderr: String::new(),
+            }],
+        });
+        let op = to_operation_report(&report, &TargetMode::Groups(vec!["g1".to_string()]));
+        assert_eq!(op.command, "check");
+        assert_eq!(op.task["metrics"][0], "cpu");
+        assert_eq!(op.filter.mode, "groups");
+        assert_eq!(op.results[0].status, "success");
+        assert_eq!(op.results[0].output["metrics"]["cpu"], 0.5);
+    }
+
+    #[test]
+    fn test_to_operation_report_sync_preserves_paths() {
+        use crate::commands::report::{CommandReport, HostStatus, SyncHostResult, SyncReport};
+        let report = CommandReport::Sync(SyncReport {
+            executed_at: "2026-06-03T00:00:00Z".to_string(),
+            mode: "config_entries".to_string(),
+            dry_run: false,
+            total_files_synced: 1,
+            total_files_skipped: 1,
+            paths: vec!["~/a".to_string(), "~/b".to_string()],
+            targets: vec!["h1".to_string()],
+            hosts: vec![SyncHostResult {
+                host: "h1".to_string(),
+                status: HostStatus::Online,
+                duration_ms: None,
+                detail: "1 synced, 1 skipped".to_string(),
+                files_synced: 1,
+                files_skipped: 1,
+                synced_paths: vec!["~/a".to_string()],
+                skipped_paths: vec!["~/b".to_string()],
+                errors: Vec::new(),
+            }],
+        });
+        let op = to_operation_report(&report, &TargetMode::All);
+        assert_eq!(op.command, "sync");
+        // task paths and per-host file-path arrays survive into the report.
+        assert_eq!(op.task["paths"][0], "~/a");
+        assert_eq!(op.results[0].output["files_synced"][0], "~/a");
+        assert_eq!(op.results[0].output["files_skipped"][0], "~/b");
+        assert_eq!(op.summary.success, 1);
     }
 
     #[test]

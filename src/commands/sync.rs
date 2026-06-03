@@ -9,7 +9,6 @@ use crate::host::concurrency::ConcurrencyLimiter;
 use crate::host::pool::SshPool;
 use crate::host::session_pool::RusshSessionPool;
 use crate::output::printer;
-use crate::output::report::{FilterInfo, HostResult, OperationReport, ReportSummary};
 use crate::output::summary::SyncSummary;
 
 use super::{Context, TargetMode};
@@ -603,59 +602,57 @@ pub async fn run(
         }
     }
 
+    // Capture unreachable / sftp-failed host names before the pool is consumed,
+    // so the shared report reflects real per-host status (matching the TUI).
+    let failed_host_names: Vec<String> = pool
+        .failed_hosts()
+        .into_iter()
+        .map(|(n, _)| n)
+        .chain(pool.sftp_failed_hosts().into_iter().map(|(n, _)| n))
+        .collect();
+
     // Cleanup
     pool.shutdown().await;
 
     summary.print();
 
     if let Some(out) = &output.out {
-        let configured_paths: Vec<String> = ctx
-            .resolve_syncs()
-            .iter()
-            .flat_map(|e| e.paths.iter().cloned())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-
-        let report_results: Vec<HostResult> = host_names
-            .iter()
-            .map(|h| {
-                let (synced, skipped) = host_file_map.get(h).cloned().unwrap_or_default();
-                HostResult {
-                    host: h.clone(),
-                    status: "success".to_string(),
-                    duration_ms: None,
-                    output: serde_json::json!({
-                        "files_synced": synced,
-                        "files_skipped": skipped,
-                    }),
-                }
-            })
-            .collect();
-
-        let rep_summary = ReportSummary {
-            total: report_results.len(),
-            success: report_results.len(),
-            failed: 0,
-            skipped: 0,
+        let mode = if files.is_empty() {
+            "config_entries"
+        } else {
+            "adhoc"
         };
-        let targets: Vec<String> = host_names.clone();
-
-        let report = OperationReport {
+        let requested_paths: Vec<String> = if files.is_empty() {
+            ctx.resolve_syncs()
+                .iter()
+                .flat_map(|e| e.paths.iter().cloned())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        } else {
+            files.iter().map(|p| to_tilde_path(p)).collect()
+        };
+        let sync_report = build_sync_report(
             executed_at,
-            command: "sync".to_string(),
-            filter: FilterInfo::from_mode(&ctx.mode),
-            task: serde_json::json!({ "paths": configured_paths }),
-            targets,
-            results: report_results,
-            summary: rep_summary,
-        };
-        crate::output::report::write_report(
+            mode,
+            dry_run,
+            &host_names,
+            &host_file_map,
+            &summary,
+            &failed_host_names,
+            &requested_paths,
+        );
+        let report = crate::output::report::to_operation_report(
+            &crate::commands::report::CommandReport::Sync(sync_report),
+            &ctx.mode,
+        );
+        let path = crate::output::report::write_report(
             &report,
             out,
             "sync",
             ctx.config.settings.default_output_format.as_deref(),
         )?;
+        println!("Report written to {}", path);
     }
 
     Ok(())
@@ -685,6 +682,18 @@ pub async fn sync_core(
     let host_names: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let mut host_file_map: HashMap<String, (Vec<String>, Vec<String>)> = HashMap::new();
     let mut summary = SyncSummary::default();
+
+    // Paths requested for this run — used as the report `task`.
+    let requested_paths: Vec<String> = if adhoc_files.is_empty() {
+        ctx.resolve_syncs()
+            .iter()
+            .flat_map(|e| e.paths.iter().cloned())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    } else {
+        adhoc_files.iter().map(|p| to_tilde_path(p)).collect()
+    };
 
     for host in &hosts {
         host_file_map
@@ -721,6 +730,7 @@ pub async fn sync_core(
                     &host_file_map,
                     &summary,
                     &[],
+                    &requested_paths,
                 );
                 return Ok(CommandReport::Sync(report));
             }
@@ -1189,6 +1199,7 @@ pub async fn sync_core(
         &host_file_map,
         &summary,
         &failed_host_names,
+        &requested_paths,
     );
 
     // Report completion to progress sink
@@ -1202,6 +1213,7 @@ pub async fn sync_core(
 }
 
 /// Build a `SyncReport` from accumulated state.
+#[allow(clippy::too_many_arguments)]
 fn build_sync_report(
     executed_at: String,
     mode: &str,
@@ -1210,6 +1222,7 @@ fn build_sync_report(
     host_file_map: &HashMap<String, (Vec<String>, Vec<String>)>,
     summary: &SyncSummary,
     failed_hosts: &[String],
+    paths: &[String],
 ) -> crate::commands::report::SyncReport {
     use crate::commands::report::{HostStatus, SyncHostResult, SyncReport};
 
@@ -1224,10 +1237,11 @@ fn build_sync_report(
     let hosts: Vec<SyncHostResult> = host_names
         .iter()
         .map(|name| {
-            let (synced, skipped) = host_file_map
+            let (synced_paths, skipped_paths) = host_file_map
                 .get(name)
-                .map(|(s, k)| (s.len(), k.len()))
-                .unwrap_or((0, 0));
+                .cloned()
+                .unwrap_or_default();
+            let (synced, skipped) = (synced_paths.len(), skipped_paths.len());
             let errors = host_errors.get(name).cloned().unwrap_or_default();
             let status = if failed_hosts.contains(name) {
                 HostStatus::Unreachable
@@ -1251,6 +1265,8 @@ fn build_sync_report(
                 detail,
                 files_synced: synced,
                 files_skipped: skipped,
+                synced_paths,
+                skipped_paths,
                 errors,
             }
         })
@@ -1262,6 +1278,7 @@ fn build_sync_report(
         dry_run,
         total_files_synced: summary.files_synced,
         total_files_skipped: summary.files_skipped,
+        paths: paths.to_vec(),
         targets: host_names.to_vec(),
         hosts,
     }

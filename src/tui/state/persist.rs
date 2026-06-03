@@ -267,32 +267,25 @@ pub fn save(path: &Path, state: &TuiPersistedState) -> Result<()> {
 
 /// Sanitise persisted filter state against the current AppConfig.
 ///
-/// - groups not in `config.collect_available_groups()` are dropped.
+/// - groups not referenced anywhere in the config (host/check/sync) are dropped.
 /// - hosts not in `config.host[].name` are dropped.
-/// - If Groups mode ends up with an empty group list, mode falls back to All.
-/// - If Hosts mode ends up empty, mode falls back to All.
-/// - Shell mode is unconditionally valid (the enum is exhaustive).
+/// - The selected mode is preserved even when its list ends up empty: an empty
+///   Groups/Hosts selection means "no targets", which is clearer (and safer)
+///   than silently widening to All. Shell mode is always valid.
 pub fn validate_filter(state: &mut TargetFilterState, config: &AppConfig) {
     let known_groups: std::collections::BTreeSet<String> = config
         .host
         .iter()
-        .flat_map(|h| h.groups.iter().filter(|g| !g.is_empty()).cloned())
+        .flat_map(|h| h.groups.iter().cloned())
+        .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
+        .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
+        .filter(|g| !g.is_empty())
         .collect();
     let known_hosts: std::collections::BTreeSet<String> =
         config.host.iter().map(|h| h.name.clone()).collect();
 
     state.groups.retain(|g| known_groups.contains(g));
     state.hosts.retain(|h| known_hosts.contains(h));
-
-    match state.mode {
-        TargetFilterMode::Groups if state.groups.is_empty() => {
-            state.mode = TargetFilterMode::All;
-        }
-        TargetFilterMode::Hosts if state.hosts.is_empty() => {
-            state.mode = TargetFilterMode::All;
-        }
-        _ => {}
-    }
 }
 
 #[cfg(test)]
@@ -404,7 +397,7 @@ active_tab = "Config"
     }
 
     #[test]
-    fn validate_falls_back_to_all_when_groups_become_empty() {
+    fn validate_keeps_groups_mode_when_list_becomes_empty() {
         let cfg = cfg_with_hosts(&[("h1", &["web"])]);
         let mut f = TargetFilterState {
             mode: TargetFilterMode::Groups,
@@ -412,8 +405,10 @@ active_tab = "Config"
             ..Default::default()
         };
         validate_filter(&mut f, &cfg);
+        // Unknown group is dropped, but the mode is preserved (empty = 0 hosts,
+        // not a silent widen to All).
         assert!(f.groups.is_empty());
-        assert_eq!(f.mode, TargetFilterMode::All);
+        assert_eq!(f.mode, TargetFilterMode::Groups);
     }
 
     #[test]

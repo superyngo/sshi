@@ -1844,11 +1844,11 @@ impl ConfigTabState {
 
                 let (prefix, text, is_header) = sidebar_item_display(item, config);
                 let glyph = if is_sel && focused {
-                    "▶"
+                    "▶ "
                 } else if is_sel {
-                    ">"
+                    "> "
                 } else {
-                    " "
+                    "  "
                 };
                 let label = trunc(&format!("{glyph}{prefix}{text}"), max_w);
 

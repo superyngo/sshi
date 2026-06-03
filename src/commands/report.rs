@@ -143,6 +143,11 @@ pub struct SyncHostResult {
     pub detail: String,
     pub files_synced: usize,
     pub files_skipped: usize,
+    /// Distributed file paths (length == `files_synced`). Carried so the
+    /// `--out` report / HTML renderer can list paths, not just counts.
+    pub synced_paths: Vec<String>,
+    /// Already-in-sync file paths (length == `files_skipped`).
+    pub skipped_paths: Vec<String>,
     pub errors: Vec<String>,
 }
 
@@ -155,6 +160,8 @@ pub struct SyncReport {
     pub dry_run: bool,
     pub total_files_synced: usize,
     pub total_files_skipped: usize,
+    /// Configured / ad-hoc paths requested for this sync (the report `task`).
+    pub paths: Vec<String>,
     pub targets: Vec<String>,
     pub hosts: Vec<SyncHostResult>,
 }

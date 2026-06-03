@@ -7,6 +7,159 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-03 — Operate operation order + View navigation consistency
+- change(tui): the Operate **Operation radio is reordered to `run · exec · sync ·
+  check`** (check stays the default selection, now shown last). `←→` cycles in
+  that order.
+- change(tui): the View **Log `action` filter is now toggled with `Space`** (it
+  cycles all → check → run → exec → sync). `←→` no longer changes its value —
+  arrow keys move the focus cursor only, matching the other Log fields.
+- fix(tui): the View **List result cursor skips decorative lines** (section
+  titles, the column header, the separator, blank spacers, and empty `(none)`
+  placeholders). The focus cursor now only lands on real data rows, so it no
+  longer appears to vanish onto a blank/black line.
+- feat(tui): **Tab/BackTab now work in List and Log**, consistent with Checkout
+  — they cycle the result-row cursor (wrapping, skipping decorative List rows).
+  The **Log result now draws a row cursor** when the result zone holds focus, so
+  the selection is visible there too.
+- feat(tui): **View Log is more discoverable** — the summary line now reads
+  `Log: N entries below (all hosts) — ↑↓/Tab scroll · Enter edits a field ·
+  Space toggles errors/action`, and the empty state explains that logs are
+  recorded automatically by check/run/exec/sync and suggests relaxing the
+  filters.
+
+### 2026-06-03 — Operate wiring: report export, dry-run preview, timeout
+- feat(tui): the Operate **Out field now writes a report**. On completion, if a
+  path is set, sshi writes a `.json`/`.html` report (auto-named when left bare,
+  honouring the config `default_output_format`) and shows `Report written to …`;
+  write failures surface in the status banner.
+- feat: extracted a shared `output::report::to_operation_report(CommandReport,
+  TargetMode)` so the CLI wrappers (check/run/exec/sync) and the TUI build the
+  `--out` report from one place instead of four bespoke conversions.
+- feat(tui): **dry-run now works for check/run/exec**, not just sync. With
+  dry-run on, Execute shows a synthetic preview popup listing each resolved
+  target as “would execute” (⊘) and contacts **no** hosts and writes no report —
+  mirroring the CLI’s dry-run. Sync keeps its in-core dry-run.
+- fix(tui): the **Timeout field now reaches execution** — editing it (`←→ ±5s`)
+  updates the per-host timeout used by check/run/exec/sync, and the Timeout row
+  shows the resolved default instead of `0s` on first run.
+- change: `write_report` no longer prints internally; it returns the written
+  path so the CLI prints it and the TUI shows a banner (avoids stray stdout
+  corrupting the TUI). CLI report output is otherwise unchanged.
+- change(cli): the `sync --out` report now reports real per-host status
+  (unreachable/error) and carries the synced/skipped **file-path lists**, built
+  via the same shared converter (previously every host was marked `success`).
+
+### 2026-06-03 — dry-run placement, View Shell, per-tab accent colours
+- change(tui): the Operate **dry-run** toggle moved out of the Execute bar into
+  the Common zone, directly **below Serial** (`[ ] dry-run (d)`), so it reads
+  consistently with the other toggles. Space toggles it when focused; `d` still
+  works from anywhere. The Execute bar is now just the button.
+- feat(tui): **View target now supports Shell** (All/Groups/Hosts/Shell), same
+  as Operate — it filters hosts by detected shell type. `←→` cycles it, `Space`
+  cycles the shell value, `Enter` opens the single-select picker.
+- fix(tui): **View is now consistently green.** Each tab owns an accent colour
+  (Config=yellow, Operate=cyan, View=green) used for its panel border and any
+  popup it opens; previously the View frame and the member picker borrowed the
+  shared cyan `border_active`, so View looked like Operate. The member picker is
+  now themed to the tab that opened it.
+- feat(tui): the View **List** result shows a green row cursor on the selected
+  line when the list holds focus, mirroring Checkout, so focus position is
+  visible. (Note: the cursor can still land on section headers; restricting it
+  to data rows is a later refinement.)
+- change(tui): the Operate output field is relabelled **`Output report
+  (.json/.html, optional)`** (dropped the cryptic `-o`) and moved to the bottom
+  of the **── Common ──** zone.
+- feat(tui): pressing **Enter on the Target *mode* row** now opens the relevant
+  picker (multi-select for Groups/Hosts, single-select for Shell), and **Space
+  on the mode row** cycles the shell in Shell mode — previously only the value
+  row responded. Applies to both Operate and the shared View interface.
+- fix(tui): the View **Log** specific-params (`last`/`since`/`host`) no longer
+  render broken `┌ … ┐` boxes — every Log field (last/errors/action/since/host)
+  is now a uniform single line whose value reverse-highlights when focused, with
+  an inline cursor while editing. Removed the now-stale `[f] to set target
+  filter` note.
+- feat(tui): Operate **Target mode and its value row are now linked** — `←→`
+  cycles the target mode from either row, so the radio and the picked value
+  behave as one control. Switching to All while on the value row keeps focus on
+  the Target row instead of stranding it.
+- feat(tui): Operate now exposes an **`-o/--out` report path** input (shared by
+  check/run/exec/sync), placed just above the applicable-entries / Execute area.
+  (Field + navigation wired here; report-file writing was hooked up later the
+  same day — see the "report export" entry above.)
+- feat(tui): **View Checkout/List replace the old `f` filter popup with an inline
+  Common zone** (target mode radio → members → skip), mirroring Operate: `←→`
+  cycles the mode, `Enter` opens the same multi-select picker for groups / hosts
+  / skip. Log keeps its greyed "no target" summary. The `FilterPopup` component
+  is retired (the `target_filter` module is unlinked; the file is left in place
+  but no longer compiled).
+
+### 2026-06-03 — TUI focus-highlight principle + Operate target fixes
+- fix(tui): the Operate **Groups** picker now offers every group referenced in
+  the config (host **and** check/sync entries, plus the current selection),
+  matching the Config tab's `collect_known_groups`. Previously it only scanned
+  host groups, so configs that scoped groups on check/sync showed nothing.
+- fix(tui): **emptying a Groups/Hosts selection no longer snaps Target back to
+  All.** The mode is preserved and an empty list now resolves to *zero* hosts
+  (clearer and safer than silently targeting every host). `validate_filter` and
+  `build_target_mode` were updated to stop the fallback at both edit and load
+  time.
+- change(tui): Operate **Serial** toggle moved below **Timeout**, and a new
+  **`s`** shortcut toggles serial from anywhere in the tab (shown as
+  `[ ] Serial (s)`).
+- feat(tui): applied a consistent **focus-highlight principle** across the UI —
+  only the element holding the focus cursor is reverse-video; every other
+  "selected" element (active NavBar tab, selected row of an unfocused panel) is
+  bold/accent only. Fixes the NavBar tab staying reversed after focus moved into
+  a panel, and the View tab reverse-highlighting both the Op selector and the
+  checkout row at once (so it was unclear where focus actually was).
+
+### 2026-06-03 — TUI Operate/View redesign feedback fixes
+- fix(tui): **Tab/Shift+Tab now cycle Config/Operate/View** while the NavBar
+  holds focus (previously a no-op there).
+- feat(tui): when focus moves up to the NavBar, the **Operate** and **View**
+  panels now visibly relinquish focus — the selected radio/row drops its
+  reverse-highlight to bold-accent and the row arrow changes `▶`→`>`, matching
+  the existing Config behavior.
+- fix(tui): Config sidebar selection arrow `▶` no longer overlaps the first
+  letter of the entry name (added a trailing space, consistent with the field
+  table).
+- fix(tui): **Operate Target can now actually switch into Groups/Hosts** — the
+  live `←→` mode change no longer runs `validate_filter`, which was snapping an
+  empty Groups/Hosts selection straight back to All.
+- feat(tui): in **Shell** target mode the shell value is cycled inline with
+  **Space** (sh → powershell → cmd), since it is a fixed single choice.
+- feat(tui): Operate **sync** params now keep `Source override` anchored on top
+  with the ad-hoc `Add path` input + file list below it, for a stabler layout;
+  focus-walk order matches the new visual order.
+- change(tui): Operate execute bar reordered to `[ Execute … ]` first, then the
+  `[ ] dry-run (d)` toggle.
+- polish(tui): trimmed Operate chrome — `── Common ──` header, removed the
+  redundant per-field inline key hints (the status row already lists them).
+
+### 2026-06-02 — TUI Operate redesign (flat zoned layout MVP)
+- feat(tui): redesigned the **Operate** tab around a single unified field walk
+  (`OpField`) instead of nested focus zones + a sub-`ParamPanelField`. All
+  parameters are now laid flat on the first layer in two zones: a **Common**
+  zone (target mode, members, skip, serial, timeout) that is shared across and
+  preserved when switching operations, and a **per-command** zone (command/
+  script/sudo/keep, or sync mode/ad-hoc files/source) that swaps with the op.
+- feat(tui): target **groups / hosts / shell / skip** are now actually editable
+  via a working multi/single-select `member_picker` popup (Space toggles,
+  Enter applies, Esc cancels), opened by pressing **Enter** on the Members or
+  Skip field. This replaces the broken `cycle_chip` logic that could only ever
+  push the first available item.
+- feat(tui): **←→ changes the value** of any focused field — operation radio,
+  target mode, **sync config/ad-hoc mode**, and timeout (±5s). Space toggles
+  booleans (serial/sudo/keep); `d` toggles a single shared **dry-run** flag
+  shown next to the Execute button.
+- feat(tui): the `⚡ Ad-hoc mode` notice moved from a jarring top banner into
+  the bottom status row, shown only while sync is in ad-hoc mode.
+- note: this is a UI/navigation MVP for evaluation — Execute still dispatches
+  the real operations via the existing pipeline; only the Operate-tab layout,
+  navigation, and target editing were reworked. The legacy `FilterPopup`
+  remains in use by the View tab.
+
 ### 2026-05-27 — TUI Operate/View refactor
 - feat(tui): the **Operate** tab now launches `check`/`run`/`exec`/`sync` in a
   single-column "Approach-B" layout (op selector → target summary line →

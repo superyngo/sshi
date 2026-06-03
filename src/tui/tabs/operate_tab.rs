@@ -17,48 +17,124 @@ use crate::commands::report::HostStatus;
 use crate::config::schema::{AppConfig, SyncEntry};
 
 use super::super::components::input_field::InputField;
-use super::super::state::persist::{OperationKind, SyncMode, TargetFilterMode, TargetFilterState};
+use super::super::state::persist::{
+    OperationKind, ShellMode, SyncMode, TargetFilterMode, TargetFilterState,
+};
 use super::super::theme::Theme;
 
-/// Operate-tab focused element.
+/// A single focusable element on the Operate tab, walked linearly with ↑↓.
+///
+/// The order is computed per-operation by [`operate_fields`]; the same list
+/// drives both rendering focus and keyboard navigation so the two never drift.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperateFocus {
+pub enum OpField {
+    /// Operation radio (check/run/exec/sync) — ←→ changes the operation.
     OpRadio,
-    ParamPanel,
-    TargetRow,
-    /// Read-only applicable entries panel (check/sync config-entries mode).
-    ApplicableEntries,
+    // ── Common zone (shared across operations) ──
+    /// Target mode radio (All/Groups/Hosts/Shell) — ←→ changes the mode.
+    TargetMode,
+    /// Group/host/shell membership — Enter opens the picker.
+    TargetMembers,
+    /// Skip-host list — Enter opens the picker.
+    Skip,
+    /// Serial execution toggle — Space toggles.
+    Serial,
+    /// Dry-run toggle — Space (or `d`) toggles.
+    DryRun,
+    /// Per-host timeout — ←→ adjusts by ±5s.
+    Timeout,
+    // ── Per-command zone ──
+    /// run: command text. Enter activates the input.
+    Command,
+    /// exec: script path. Enter activates the input.
+    Script,
+    /// run/exec: sudo toggle.
+    Sudo,
+    /// exec: --keep toggle.
+    Keep,
+    /// sync: config/ad-hoc mode — ←→ toggles.
+    SyncModeToggle,
+    /// sync ad-hoc: add-path input.
+    SyncAdhocInput,
+    /// sync: source override input.
+    SyncSource,
+    /// `-o/--out` report path (all operations).
+    Out,
+    /// Read-only applicable [[check]]/[[sync]] entries (scrolls with ↑↓).
+    Entries,
+    /// Execute button.
     Execute,
 }
 
-/// Which field in the param panel has focus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ParamPanelField {
-    #[default]
-    CommandOrScript,
-    Sudo,
-    SecondFlag,
-    SyncModeToggle,
-    SyncAdHocInput,
-    SyncDryRun,
-    SyncSourceInput,
+/// Whether the operation has a scrollable applicable-entries panel right now.
+pub fn has_entries(op: OperationKind, sync_mode: SyncMode, config: &AppConfig) -> bool {
+    match op {
+        OperationKind::Check => !config.check.is_empty(),
+        OperationKind::Sync => sync_mode == SyncMode::ConfigEntries && !config.sync.is_empty(),
+        _ => false,
+    }
+}
+
+/// Ordered list of focusable fields for the current operation/mode.
+pub fn operate_fields(
+    op: OperationKind,
+    target_mode: TargetFilterMode,
+    sync_mode: SyncMode,
+    config: &AppConfig,
+) -> Vec<OpField> {
+    let mut v = vec![OpField::OpRadio, OpField::TargetMode];
+    if target_mode != TargetFilterMode::All {
+        v.push(OpField::TargetMembers);
+    }
+    v.push(OpField::Skip);
+    v.push(OpField::Timeout);
+    v.push(OpField::Serial);
+    v.push(OpField::DryRun);
+    // -o/--out lives at the bottom of the Common zone (applies to every op).
+    v.push(OpField::Out);
+    match op {
+        OperationKind::Check => {}
+        OperationKind::Run => {
+            v.push(OpField::Command);
+            v.push(OpField::Sudo);
+        }
+        OperationKind::Exec => {
+            v.push(OpField::Script);
+            v.push(OpField::Sudo);
+            v.push(OpField::Keep);
+        }
+        OperationKind::Sync => {
+            // Order must match the render order: mode, then Source override
+            // (anchored on top), then the ad-hoc add-path input below it.
+            v.push(OpField::SyncModeToggle);
+            v.push(OpField::SyncSource);
+            if sync_mode == SyncMode::AdHoc {
+                v.push(OpField::SyncAdhocInput);
+            }
+        }
+    }
+    if has_entries(op, sync_mode, config) {
+        v.push(OpField::Entries);
+    }
+    v.push(OpField::Execute);
+    v
 }
 
 /// Rendering data for the Operate tab, passed from App.
 pub struct OperateRenderData<'a> {
-    pub focus: OperateFocus,
+    pub focus: OpField,
     pub operation: OperationKind,
     pub sync_mode: SyncMode,
-    pub sync_dry_run: bool,
+    pub dry_run: bool,
     pub sync_adhoc_files: &'a [String],
     pub sync_adhoc_input: &'a InputField,
     pub sync_source_input: &'a InputField,
     pub run_command: &'a InputField,
     pub exec_script: &'a InputField,
+    pub out_input: &'a InputField,
     pub run_sudo: bool,
     pub exec_sudo: bool,
     pub exec_keep: bool,
-    pub param_field: ParamPanelField,
     pub entries_scroll: usize,
     pub config: &'a AppConfig,
     pub theme: &'a Theme,
@@ -68,12 +144,55 @@ pub struct OperateRenderData<'a> {
     pub navbar_focused: bool,
 }
 
+/// Highlight a focused field. When `active` (the tab itself holds focus) the
+/// field is reverse-highlighted; when focus has moved up to the NavBar it is
+/// shown bold/accent only, so the panel visibly relinquishes focus.
+fn focus_style(focused: bool, active: bool, theme: &Theme) -> Style {
+    if focused && active {
+        Style::default()
+            .fg(theme.accent_operate)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else if focused {
+        Style::default()
+            .fg(theme.accent_operate)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    }
+}
+
+fn shell_label(s: ShellMode) -> &'static str {
+    match s {
+        ShellMode::Sh => "sh",
+        ShellMode::PowerShell => "powershell",
+        ShellMode::Cmd => "cmd",
+    }
+}
+
+/// One renderable row in the fixed (non-entries) region of the tab.
+enum RowItem<'a> {
+    /// A single text line.
+    Plain(Line<'a>),
+    /// A bordered text input (occupies 3 rows).
+    Field(&'a InputField, &'a str, bool),
+}
+
+impl RowItem<'_> {
+    fn height(&self) -> u16 {
+        match self {
+            RowItem::Plain(_) => 1,
+            RowItem::Field(..) => 3,
+        }
+    }
+}
+
 /// Render the entire Operate tab.
+#[allow(clippy::vec_init_then_push)] // rows are appended conditionally per op
 pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let border_col = if data.navbar_focused {
         data.theme.border_inactive
     } else {
-        data.theme.border_active
+        data.theme.accent_operate // Operate identity colour (cyan)
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -82,313 +201,351 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Ad-hoc mode banner (B3 acceptance test).
-    let show_adhoc_banner = data.sync_mode == SyncMode::AdHoc;
-    let banner_rows = if show_adhoc_banner { 1u16 } else { 0 };
-    if show_adhoc_banner {
-        let banner_area = Rect {
-            x: inner.x,
-            y: inner.y,
-            width: inner.width,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    " ⚡ Ad-hoc mode active",
-                    Style::default()
-                        .fg(data.theme.warning)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    " — sync will use ad-hoc file list, not [[sync]] config entries",
-                    Style::default().fg(data.theme.inactive),
-                ),
-            ])),
-            banner_area,
-        );
-    }
-    let inner_after_banner = Rect {
-        x: inner.x,
-        y: inner.y + banner_rows,
-        width: inner.width,
-        height: inner.height.saturating_sub(banner_rows),
-    };
+    let theme = data.theme;
+    let active = !data.navbar_focused;
+    let tf = data.target_filter;
+    let mut rows: Vec<RowItem> = Vec::new();
 
-    let has_params = matches!(
-        data.operation,
-        OperationKind::Run | OperationKind::Exec | OperationKind::Sync
-    );
-    let param_rows = match data.operation {
-        OperationKind::Run => 5u16,
-        OperationKind::Exec => 7u16,
-        OperationKind::Sync => {
-            let adhoc_list_rows = data.sync_adhoc_files.len().min(5) as u16;
-            11 + adhoc_list_rows
+    // ── Operation radio ──
+    rows.push(RowItem::Plain(op_radio_line(data)));
+    rows.push(RowItem::Plain(Line::from("")));
+
+    // ── Common zone ──
+    rows.push(RowItem::Plain(zone_header("── Common ──", theme)));
+    rows.push(RowItem::Plain(target_mode_line(data)));
+    if tf.mode != TargetFilterMode::All {
+        rows.push(RowItem::Plain(members_line(data)));
+    }
+    rows.push(RowItem::Plain(skip_line(data)));
+    rows.push(RowItem::Plain(timeout_line(data)));
+    rows.push(RowItem::Plain(serial_line(data)));
+    rows.push(RowItem::Plain(dry_run_line(data)));
+    rows.push(RowItem::Field(
+        data.out_input,
+        "Output report (.json/.html, optional)",
+        data.focus == OpField::Out,
+    ));
+    rows.push(RowItem::Plain(Line::from("")));
+
+    // ── Per-command zone ──
+    let op_label = op_name(data.operation);
+    rows.push(RowItem::Plain(zone_header(
+        &format!("── {op_label} params ──"),
+        theme,
+    )));
+    match data.operation {
+        OperationKind::Check => {
+            rows.push(RowItem::Plain(Line::from(Span::styled(
+                "  (none)",
+                Style::default().fg(theme.inactive),
+            ))));
         }
-        _ => 0u16,
-    };
+        OperationKind::Run => {
+            rows.push(RowItem::Field(
+                data.run_command,
+                "Command",
+                data.focus == OpField::Command,
+            ));
+            rows.push(RowItem::Plain(toggle_line(
+                "sudo",
+                data.run_sudo,
+                data.focus == OpField::Sudo,
+                active,
+                theme,
+            )));
+        }
+        OperationKind::Exec => {
+            rows.push(RowItem::Field(
+                data.exec_script,
+                "Script path",
+                data.focus == OpField::Script,
+            ));
+            rows.push(RowItem::Plain(toggle_line(
+                "sudo",
+                data.exec_sudo,
+                data.focus == OpField::Sudo,
+                active,
+                theme,
+            )));
+            rows.push(RowItem::Plain(toggle_line(
+                "--keep",
+                data.exec_keep,
+                data.focus == OpField::Keep,
+                active,
+                theme,
+            )));
+        }
+        OperationKind::Sync => {
+            rows.push(RowItem::Plain(sync_mode_line(data)));
+            // Source override stays anchored on top for visual stability; the
+            // ad-hoc add-path input + file list appear below it.
+            rows.push(RowItem::Field(
+                data.sync_source_input,
+                "Source override (optional)",
+                data.focus == OpField::SyncSource,
+            ));
+            if data.sync_mode == SyncMode::AdHoc {
+                rows.push(RowItem::Field(
+                    data.sync_adhoc_input,
+                    "Add path",
+                    data.focus == OpField::SyncAdhocInput,
+                ));
+                if data.sync_adhoc_files.is_empty() {
+                    rows.push(RowItem::Plain(Line::from(Span::styled(
+                        "  (no paths)",
+                        Style::default().fg(theme.inactive),
+                    ))));
+                } else {
+                    for p in data.sync_adhoc_files.iter().rev().take(4) {
+                        rows.push(RowItem::Plain(Line::from(format!("  · {p}"))));
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Layout: fixed rows, entries (Min 0), execute bar (2) ──
+    let mut constraints: Vec<Constraint> =
+        rows.iter().map(|r| Constraint::Length(r.height())).collect();
+    constraints.push(Constraint::Min(0)); // entries
+    constraints.push(Constraint::Length(2)); // execute bar
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),          // OpRadio row
-            Constraint::Length(1),          // target summary line
-            Constraint::Length(param_rows), // param panel (0 for check)
-            Constraint::Min(0),             // applicable entries / spacer
-            Constraint::Length(3),          // execute button
-        ])
-        .split(inner_after_banner);
+        .constraints(constraints)
+        .split(inner);
 
-    render_op_radio(data, chunks[0], frame);
-
-    // Target summary line.
-    render_target_summary(data, chunks[1], frame);
-
-    if has_params {
-        match data.operation {
-            OperationKind::Run | OperationKind::Exec => {
-                render_run_exec_params(data, chunks[2], frame);
+    for (i, row) in rows.iter().enumerate() {
+        match row {
+            RowItem::Plain(line) => {
+                frame.render_widget(Paragraph::new(line.clone()), chunks[i]);
             }
-            OperationKind::Sync => {
-                render_sync_params(data, chunks[2], frame);
+            RowItem::Field(field, label, focused) => {
+                field.render(frame, chunks[i], label, *focused);
             }
-            _ => {}
         }
     }
-
-    // Applicable entries panel.
-    render_applicable_entries(data, chunks[3], frame);
-
-    // Execute button.
-    render_execute_button(data, chunks[4], frame);
+    let entries_area = chunks[rows.len()];
+    render_applicable_entries(data, entries_area, frame);
+    let exec_area = chunks[rows.len() + 1];
+    render_execute_bar(data, exec_area, frame);
 }
 
-fn render_op_radio(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let radio_focused = data.focus == OperateFocus::OpRadio;
+fn zone_header<'a>(text: &str, theme: &Theme) -> Line<'a> {
+    Line::from(Span::styled(
+        format!(" {text}"),
+        Style::default().fg(theme.inactive).add_modifier(Modifier::BOLD),
+    ))
+}
+
+fn op_name(op: OperationKind) -> &'static str {
+    match op {
+        OperationKind::Check => "check",
+        OperationKind::Run => "run",
+        OperationKind::Exec => "exec",
+        OperationKind::Sync => "sync",
+    }
+}
+
+/// Style for a selected radio/option, dimming to bold-only when focus has
+/// moved to the NavBar (`active == false`).
+fn radio_style(selected: bool, focused: bool, active: bool, theme: &Theme) -> Style {
+    if selected && focused && active {
+        Style::default()
+            .fg(theme.accent_operate)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else if selected {
+        Style::default()
+            .fg(theme.accent_operate)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.inactive)
+    }
+}
+
+fn op_radio_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::OpRadio;
+    let active = !data.navbar_focused;
     let ops = [
-        (OperationKind::Check, "check"),
         (OperationKind::Run, "run"),
         (OperationKind::Exec, "exec"),
         (OperationKind::Sync, "sync"),
+        (OperationKind::Check, "check"),
     ];
     let mut spans = vec![Span::raw(" Operation: ")];
-    for (kind, label) in &ops {
-        let selected = *kind == data.operation;
-        let (prefix, _suffix) = if selected { ("◉ ", "") } else { ("○ ", "") };
-        let style = if selected && radio_focused {
-            Style::default()
-                .fg(data.theme.accent_operate)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-        } else if selected {
-            Style::default()
-                .fg(data.theme.accent_operate)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(data.theme.inactive)
-        };
-        spans.push(Span::styled(format!("[{prefix}{label}]"), style));
+    for (kind, label) in ops {
+        let selected = kind == data.operation;
+        let prefix = if selected { "◉ " } else { "○ " };
+        spans.push(Span::styled(
+            format!("[{prefix}{label}]"),
+            radio_style(selected, focused, active, data.theme),
+        ));
         spans.push(Span::raw("  "));
     }
-    if radio_focused {
+    Line::from(spans)
+}
+
+fn target_mode_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::TargetMode;
+    let active = !data.navbar_focused;
+    let modes = [
+        (TargetFilterMode::All, "All"),
+        (TargetFilterMode::Groups, "Groups"),
+        (TargetFilterMode::Hosts, "Hosts"),
+        (TargetFilterMode::Shell, "Shell"),
+    ];
+    let mut spans = vec![Span::raw(" Target:  ")];
+    for (m, label) in modes {
+        let selected = m == data.target_filter.mode;
+        let prefix = if selected { "◉ " } else { "○ " };
         spans.push(Span::styled(
-            " ← → to change",
-            Style::default().fg(data.theme.inactive),
+            format!("{prefix}{label}"),
+            radio_style(selected, focused, active, data.theme),
         ));
+        spans.push(Span::raw("   "));
     }
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    spans.push(Span::styled(
+        format!("({} hosts)", data.target_count),
+        Style::default().fg(data.theme.inactive),
+    ));
+    Line::from(spans)
 }
 
-fn render_run_exec_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let param_focused = data.focus == OperateFocus::ParamPanel;
-    let show_second = data.operation == OperationKind::Exec;
-    let param_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // text input
-            Constraint::Length(1), // sudo
-            Constraint::Length(if show_second { 1 } else { 0 }), // keep (exec only)
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    let field_focused = param_focused && data.param_field == ParamPanelField::CommandOrScript;
-    let (field_label, field) = match data.operation {
-        OperationKind::Run => ("Command", data.run_command),
-        OperationKind::Exec => ("Script path", data.exec_script),
-        _ => return,
+fn members_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::TargetMembers;
+    let active = !data.navbar_focused;
+    let tf = data.target_filter;
+    let (label, value) = match tf.mode {
+        TargetFilterMode::Groups => ("Members", chips(&tf.groups, "no groups")),
+        TargetFilterMode::Hosts => ("Members", chips(&tf.hosts, "no hosts")),
+        TargetFilterMode::Shell => ("Shell", shell_label(tf.shell).to_string()),
+        TargetFilterMode::All => ("Members", String::new()),
     };
-    field.render(frame, param_chunks[0], field_label, field_focused);
+    Line::from(vec![
+        Span::raw(format!(" {label}: ")),
+        Span::styled(value, focus_style(focused, active, data.theme)),
+    ])
+}
 
-    let sudo_focused = param_focused && data.param_field == ParamPanelField::Sudo;
-    let sudo_val = match data.operation {
-        OperationKind::Run => data.run_sudo,
-        OperationKind::Exec => data.exec_sudo,
-        _ => false,
-    };
-    let sudo_style = if sudo_focused {
-        Style::default()
-            .fg(data.theme.accent_operate)
-            .add_modifier(Modifier::REVERSED)
+fn skip_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::Skip;
+    let active = !data.navbar_focused;
+    Line::from(vec![
+        Span::raw(" Skip:    "),
+        Span::styled(
+            chips(&data.target_filter.skip, "none"),
+            focus_style(focused, active, data.theme),
+        ),
+    ])
+}
+
+fn serial_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::Serial;
+    let active = !data.navbar_focused;
+    let glyph = if data.target_filter.serial {
+        "[✓] Serial (s)"
     } else {
-        Style::default()
+        "[ ] Serial (s)"
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(if sudo_val { "[✓] sudo" } else { "[ ] sudo" }, sudo_style),
-            Span::styled(
-                "  (Space to toggle)",
-                Style::default().fg(data.theme.inactive),
-            ),
-        ])),
-        param_chunks[1],
-    );
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(glyph, focus_style(focused, active, data.theme)),
+    ])
+}
 
-    if show_second {
-        let flag2_focused = param_focused && data.param_field == ParamPanelField::SecondFlag;
-        let flag2_style = if flag2_focused {
-            Style::default()
-                .fg(data.theme.accent_operate)
-                .add_modifier(Modifier::REVERSED)
-        } else {
-            Style::default()
-        };
-        frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::raw("  "),
-                Span::styled(
-                    if data.exec_keep {
-                        "[✓] --keep (keep script after exec)".to_string()
-                    } else {
-                        "[ ] --keep (keep script after exec)".to_string()
-                    },
-                    flag2_style,
-                ),
-            ])),
-            param_chunks[2],
-        );
+fn dry_run_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::DryRun;
+    let active = !data.navbar_focused;
+    let glyph = if data.dry_run {
+        "[✓] dry-run (d)"
+    } else {
+        "[ ] dry-run (d)"
+    };
+    Line::from(vec![
+        Span::raw(" "),
+        Span::styled(glyph, focus_style(focused, active, data.theme)),
+    ])
+}
+
+fn timeout_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::Timeout;
+    let active = !data.navbar_focused;
+    Line::from(vec![
+        Span::raw(" Timeout: "),
+        Span::styled(
+            format!("{}s", data.target_filter.timeout),
+            focus_style(focused, active, data.theme),
+        ),
+    ])
+}
+
+fn toggle_line<'a>(label: &str, on: bool, focused: bool, active: bool, theme: &Theme) -> Line<'a> {
+    let glyph = if on {
+        format!("[✓] {label}")
+    } else {
+        format!("[ ] {label}")
+    };
+    Line::from(vec![
+        Span::raw("  "),
+        Span::styled(glyph, focus_style(focused, active, theme)),
+    ])
+}
+
+fn sync_mode_line<'a>(data: &OperateRenderData) -> Line<'a> {
+    let focused = data.focus == OpField::SyncModeToggle;
+    let active = !data.navbar_focused;
+    let (config_glyph, adhoc_glyph) = match data.sync_mode {
+        SyncMode::ConfigEntries => ("◉", "○"),
+        SyncMode::AdHoc => ("○", "◉"),
+    };
+    let style = focus_style(focused, active, data.theme);
+    Line::from(vec![
+        Span::raw("  Mode: "),
+        Span::styled(format!("{config_glyph} Config entries"), style),
+        Span::raw("   "),
+        Span::styled(format!("{adhoc_glyph} Ad-hoc files"), style),
+    ])
+}
+
+fn chips(items: &[String], empty: &str) -> String {
+    if items.is_empty() {
+        format!("({empty})")
+    } else {
+        items.join(", ")
     }
 }
 
-fn render_sync_params(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let param_focused = data.focus == OperateFocus::ParamPanel;
+fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
+    let block = Block::default().borders(Borders::TOP);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let mode_focused = param_focused && data.param_field == ParamPanelField::SyncModeToggle;
-    let mode_label = match data.sync_mode {
-        SyncMode::ConfigEntries => "◉ Config entries  ○ Ad-hoc files",
-        SyncMode::AdHoc => "○ Config entries  ◉ Ad-hoc files",
+    let active = !data.navbar_focused;
+    let exec_focused = data.focus == OpField::Execute;
+    let exec_label = if data.is_running {
+        " [ running… — Esc to cancel ] ".to_string()
+    } else {
+        format!(" [ Execute {} (Enter) ] ", op_name(data.operation))
     };
-    let mode_style = if mode_focused {
+    let exec_style = if exec_focused && active && !data.is_running {
         Style::default()
             .fg(data.theme.accent_operate)
-            .add_modifier(Modifier::REVERSED)
-    } else {
-        Style::default()
-    };
-
-    let adhoc_input_focused = param_focused && data.param_field == ParamPanelField::SyncAdHocInput;
-    let dry_run_focused = param_focused && data.param_field == ParamPanelField::SyncDryRun;
-    let source_input_focused = param_focused && data.param_field == ParamPanelField::SyncSourceInput;
-
-    let adhoc_list_rows = data.sync_adhoc_files.len().min(5) as u16;
-    let sync_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Length(adhoc_list_rows.max(1)),
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(3),
-            Constraint::Min(0),
-        ])
-        .split(area);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("  Mode: "),
-            Span::styled(mode_label, mode_style),
-            Span::styled(
-                "  (Space to toggle)",
-                Style::default().fg(data.theme.inactive),
-            ),
-        ])),
-        sync_chunks[0],
-    );
-
-    if data.sync_mode == SyncMode::AdHoc {
-        data.sync_adhoc_input.render(
-            frame,
-            sync_chunks[2],
-            "Add path (Enter=add, Del=remove last)",
-            adhoc_input_focused,
-        );
-        let list_lines: Vec<Line> = if data.sync_adhoc_files.is_empty() {
-            vec![Line::from(Span::styled(
-                "  (no paths — type above and press Enter)",
-                Style::default().fg(data.theme.inactive),
-            ))]
-        } else {
-            data.sync_adhoc_files
-                .iter()
-                .rev()
-                .take(5)
-                .map(|p| Line::from(format!("  · {p}")))
-                .collect()
-        };
-        frame.render_widget(Paragraph::new(list_lines), sync_chunks[3]);
-    } else {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  (using [[sync]] config entries)",
-                Style::default().fg(data.theme.inactive),
-            )),
-            sync_chunks[2],
-        );
-    }
-
-    let dry_style = if dry_run_focused {
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else if exec_focused && !data.is_running {
         Style::default()
             .fg(data.theme.accent_operate)
-            .add_modifier(Modifier::REVERSED)
+            .add_modifier(Modifier::BOLD)
+    } else if data.is_running {
+        Style::default().fg(data.theme.warning)
     } else {
-        Style::default()
+        Style::default().fg(data.theme.inactive)
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("  "),
-            Span::styled(
-                if data.sync_dry_run {
-                    "[✓] dry-run"
-                } else {
-                    "[ ] dry-run"
-                },
-                dry_style,
-            ),
-            Span::styled(
-                "  (Space to toggle)",
-                Style::default().fg(data.theme.inactive),
-            ),
-        ])),
-        sync_chunks[4],
-    );
-
-    // Source override row (shown for both sync modes).
-    frame.render_widget(
-        Paragraph::new(Span::raw("")),
-        sync_chunks[5],
-    );
-    data.sync_source_input.render(
-        frame,
-        sync_chunks[6],
-        "Source override (optional)",
-        source_input_focused,
-    );
+    // dry-run now lives in the Common zone; the bar is just the Execute button.
+    let line = Line::from(vec![Span::styled(exec_label, exec_style)]);
+    frame.render_widget(Paragraph::new(line), inner);
 }
 
 fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let entries_focused = data.focus == OperateFocus::ApplicableEntries;
+    let entries_focused = data.focus == OpField::Entries;
     let page_size = 6usize;
 
     if data.operation == OperationKind::Check {
@@ -416,16 +573,6 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
             format!("─ Applicable [[check]] entries ─{scroll_hint}"),
             header_style,
         )));
-        let conflicts = detect_sync_source_conflicts(&data.config.sync);
-        if !conflicts.is_empty() {
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "  ⚠ Source conflict: {} [[sync]] entries share the same source",
-                    conflicts.len()
-                ),
-                Style::default().fg(data.theme.warning),
-            )));
-        }
         if data.config.check.is_empty() {
             lines.push(Line::from(Span::styled(
                 "  (no [[check]] entries — add one to config.toml)",
@@ -456,13 +603,11 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
                     format!("groups:[{}]", entry.groups.join(","))
                 };
                 lines.push(Line::from(format!(
-                    "  ▸ {} — {}  metrics:{}",
-                    label, groups, metrics
+                    "  ▸ {label} — {groups}  metrics:{metrics}"
                 )));
             }
         }
-        let panel = Paragraph::new(lines).wrap(Wrap { trim: false });
-        frame.render_widget(panel, area);
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     } else if data.operation == OperationKind::Sync && data.sync_mode == SyncMode::ConfigEntries {
         let mut lines: Vec<Line> = Vec::new();
         let total = data.config.sync.len();
@@ -522,67 +667,13 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
                     .as_deref()
                     .map(|s| format!("  src:{s}"))
                     .unwrap_or_default();
-                lines.push(Line::from(format!("  ▸ {}  {}{}", paths, groups, src)));
+                lines.push(Line::from(format!("  ▸ {paths}  {groups}{src}")));
             }
         }
-        let panel = Paragraph::new(lines).wrap(Wrap { trim: false });
-        frame.render_widget(panel, area);
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     }
 }
 
-fn render_execute_button(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let execute_focused = data.focus == OperateFocus::Execute;
-    let op_name = match data.operation {
-        OperationKind::Check => "check",
-        OperationKind::Run => "run",
-        OperationKind::Exec => "exec",
-        OperationKind::Sync => "sync",
-    };
-    let exec_label = if data.is_running {
-        " [ running... — Esc to cancel ] ".to_string()
-    } else {
-        format!(" [ Execute {op_name} (Enter) ] ")
-    };
-    let exec_style = if execute_focused && !data.is_running {
-        Style::default()
-            .fg(data.theme.accent_operate)
-            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else if data.is_running {
-        Style::default().fg(data.theme.warning)
-    } else {
-        Style::default().fg(data.theme.inactive)
-    };
-    let exec = Paragraph::new(Line::from(Span::styled(exec_label, exec_style)))
-        .block(Block::default().borders(Borders::TOP));
-    frame.render_widget(exec, area);
-}
-
-fn render_target_summary(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let focused = data.focus == OperateFocus::TargetRow;
-    let mode = match data.target_filter.mode {
-        TargetFilterMode::All => "all hosts".into(),
-        TargetFilterMode::Groups => format!("groups:[{}]", data.target_filter.groups.join(",")),
-        TargetFilterMode::Hosts => format!("hosts:[{}]", data.target_filter.hosts.join(",")),
-        TargetFilterMode::Shell => format!("shell:{:?}", data.target_filter.shell),
-    };
-    let skip = if data.target_filter.skip.is_empty() {
-        String::new()
-    } else {
-        format!(" · skip:[{}]", data.target_filter.skip.join(","))
-    };
-    let line = format!(
-        " Target: {}  ({} hosts){} · serial={} · {}s    [f] filter",
-        mode, data.target_count, skip, data.target_filter.serial, data.target_filter.timeout,
-    );
-    let style = if focused {
-        Style::default()
-            .fg(data.theme.accent_operate)
-            .add_modifier(Modifier::REVERSED)
-    } else {
-        Style::default()
-    };
-    frame.render_widget(Paragraph::new(line).style(style), area);
-}
 
 /// Render the progress popup showing running operation status.
 #[allow(clippy::too_many_arguments)]

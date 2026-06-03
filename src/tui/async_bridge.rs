@@ -52,6 +52,10 @@ pub struct RunningOp {
     pub targets: Vec<String>,
     /// Per-host outcomes accumulated as events arrive.
     pub host_outcomes: Vec<(String, HostStatus, String, u64)>,
+    /// Target mode captured at launch — used to fill the `--out` report filter.
+    pub mode: crate::commands::TargetMode,
+    /// `-o/--out` report path captured at launch (None / empty → no report).
+    pub out: Option<String>,
 }
 
 impl RunningOp {

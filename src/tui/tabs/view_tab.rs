@@ -19,7 +19,7 @@ use crate::commands::list::ListData;
 use crate::commands::log::LogRow;
 use crate::tui::components::input_field::InputField;
 
-use super::super::state::persist::ViewOperationKind;
+use super::super::state::persist::{TargetFilterMode, TargetFilterState, ViewOperationKind};
 use super::super::theme::Theme;
 
 /// All data needed to render the View tab — pure snapshot of App state.
@@ -48,6 +48,19 @@ pub struct ViewRenderData<'a> {
     pub log_action: &'static str,
     /// Which specific field index (0..4) is focused, or None.
     pub specific_focused: Option<usize>,
+    /// True when the Op selector row holds the focus cursor (reverse-video);
+    /// otherwise it shows bold/accent only (focus principle).
+    pub op_selector_focused: bool,
+    /// True when the result list holds the focus cursor.
+    pub result_focused: bool,
+    /// Active target filter (drives the inline Common zone for Checkout/List).
+    pub target_filter: &'a TargetFilterState,
+    /// Number of hosts the target filter currently resolves to.
+    pub target_count: usize,
+    /// Which Common-zone target field holds the focus cursor, if any.
+    pub target_mode_focused: bool,
+    pub target_members_focused: bool,
+    pub skip_focused: bool,
 }
 
 /// Entry point: render the entire View tab into `area`.
@@ -56,7 +69,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let border_col = if data.navbar_focused {
         data.theme.border_inactive
     } else {
-        data.theme.border_active
+        data.theme.accent_checkout // View identity colour (green)
     };
     let block = Block::default()
         .borders(Borders::ALL)
@@ -65,26 +78,26 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let specific_height: u16 = if data.view_op == ViewOperationKind::Log {
-        5
+    let is_log = data.view_op == ViewOperationKind::Log;
+    // Log has no target zone; Checkout/List get the inline Common zone
+    // (mode row, optional members row, skip row) that replaced the `f` popup.
+    let target_height: u16 = if is_log {
+        1 // greyed "log has no target" summary
+    } else if data.target_filter.mode != TargetFilterMode::All {
+        3
     } else {
-        0
+        2
     };
+    let specific_height: u16 = if is_log { 5 } else { 0 };
 
-    let constraints = if specific_height > 0 {
-        vec![
-            Constraint::Length(2), // op selector
-            Constraint::Length(1), // target summary
-            Constraint::Length(specific_height), // specific params
-            Constraint::Min(0),   // result area
-        ]
-    } else {
-        vec![
-            Constraint::Length(2), // op selector
-            Constraint::Length(1), // target summary
-            Constraint::Min(0),    // result area
-        ]
-    };
+    let mut constraints = vec![
+        Constraint::Length(2),             // op selector
+        Constraint::Length(target_height), // target / common zone
+    ];
+    if specific_height > 0 {
+        constraints.push(Constraint::Length(specific_height));
+    }
+    constraints.push(Constraint::Min(0)); // result area
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -92,12 +105,116 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         .split(inner);
 
     render_view_selector(data, chunks[0], frame);
-    render_view_target_summary(data, chunks[1], frame);
-    if specific_height > 0 {
+    if is_log {
+        render_view_target_summary(data, chunks[1], frame);
         render_log_specific_params(data, chunks[2], frame);
         render_result_area(data, chunks[3], frame);
     } else {
+        render_view_common(data, chunks[1], frame);
         render_result_area(data, chunks[2], frame);
+    }
+}
+
+/// Inline Common zone for Checkout/List: target mode radio, optional members
+/// row, and skip row — the flat replacement for the old filter popup.
+fn render_view_common(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
+    let tf = data.target_filter;
+    let mut rows: Vec<Line> = vec![view_target_mode_line(data)];
+    if tf.mode != TargetFilterMode::All {
+        rows.push(view_members_line(data));
+    }
+    rows.push(view_skip_line(data));
+    let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(area);
+    for (i, line) in rows.into_iter().enumerate() {
+        frame.render_widget(Paragraph::new(line), chunks[i]);
+    }
+}
+
+fn view_focus_style(focused: bool, theme: &Theme) -> Style {
+    if focused {
+        Style::default()
+            .fg(theme.accent_checkout)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+    } else {
+        Style::default()
+    }
+}
+
+fn view_target_mode_line<'a>(data: &ViewRenderData) -> Line<'a> {
+    let focused = data.target_mode_focused;
+    let modes = [
+        (TargetFilterMode::All, "All"),
+        (TargetFilterMode::Groups, "Groups"),
+        (TargetFilterMode::Hosts, "Hosts"),
+        (TargetFilterMode::Shell, "Shell"),
+    ];
+    let mut spans = vec![Span::raw(" Target:  ")];
+    for (m, label) in modes {
+        let selected = m == data.target_filter.mode;
+        let prefix = if selected { "◉ " } else { "○ " };
+        let style = if selected && focused {
+            Style::default()
+                .fg(data.theme.accent_checkout)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else if selected {
+            Style::default()
+                .fg(data.theme.accent_checkout)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(data.theme.inactive)
+        };
+        spans.push(Span::styled(format!("{prefix}{label}"), style));
+        spans.push(Span::raw("   "));
+    }
+    spans.push(Span::styled(
+        format!("({} hosts)", data.target_count),
+        Style::default().fg(data.theme.inactive),
+    ));
+    Line::from(spans)
+}
+
+fn view_members_line<'a>(data: &ViewRenderData) -> Line<'a> {
+    let tf = data.target_filter;
+    let (label, value) = match tf.mode {
+        TargetFilterMode::Groups => ("Members", view_chips(&tf.groups, "no groups")),
+        TargetFilterMode::Hosts => ("Members", view_chips(&tf.hosts, "no hosts")),
+        TargetFilterMode::Shell => ("Shell", shell_label(tf.shell).to_string()),
+        TargetFilterMode::All => ("Members", String::new()),
+    };
+    Line::from(vec![
+        Span::raw(format!(" {label}: ")),
+        Span::styled(value, view_focus_style(data.target_members_focused, data.theme)),
+    ])
+}
+
+fn shell_label(s: super::super::state::persist::ShellMode) -> &'static str {
+    use super::super::state::persist::ShellMode;
+    match s {
+        ShellMode::Sh => "sh",
+        ShellMode::PowerShell => "powershell",
+        ShellMode::Cmd => "cmd",
+    }
+}
+
+fn view_skip_line<'a>(data: &ViewRenderData) -> Line<'a> {
+    Line::from(vec![
+        Span::raw(" Skip:    "),
+        Span::styled(
+            view_chips(&data.target_filter.skip, "none"),
+            view_focus_style(data.skip_focused, data.theme),
+        ),
+    ])
+}
+
+fn view_chips(items: &[String], empty: &str) -> String {
+    if items.is_empty() {
+        format!("({empty})")
+    } else {
+        items.join(", ")
     }
 }
 
@@ -113,11 +230,15 @@ fn render_view_selector(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::raw(" Op: "));
     for (op, label) in &ops {
-        let active = *op == data.view_op;
-        let style = if active {
+        let selected = *op == data.view_op;
+        let style = if selected && data.op_selector_focused {
             Style::default()
                 .fg(data.theme.accent_checkout)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else if selected {
+            Style::default()
+                .fg(data.theme.accent_checkout)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(data.theme.inactive)
         };
@@ -134,99 +255,96 @@ fn render_view_selector(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     frame.render_widget(p, area);
 }
 
-/// One-line summary of the active target filter. Greyed out for Log (log has no target).
-#[allow(dead_code)]
+/// One-line greyed note shown for Log (which has no target filter).
 fn render_view_target_summary(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
-    let text = if data.view_op == ViewOperationKind::Log {
-        Span::styled(
-            " (Log queries all hosts — target filter not applied)",
-            Style::default().fg(data.theme.inactive),
-        )
-    } else {
-        Span::styled(
-            " [f] to set target filter",
-            Style::default().fg(data.theme.inactive),
-        )
-    };
+    let count = data.log.map(|r| r.len()).unwrap_or(0);
+    let text = Span::styled(
+        format!(
+            " Log: {count} entr{} below (all hosts) — ↑↓/Tab scroll · Enter edits a field · Space toggles errors/action",
+            if count == 1 { "y" } else { "ies" }
+        ),
+        Style::default().fg(data.theme.inactive),
+    );
     frame.render_widget(Paragraph::new(Line::from(vec![text])), area);
 }
 
-/// Render the 5-row Log specific-params panel (last, errors, action, since, host).
+/// Render the 5-row Log specific-params panel (last, errors, action, since,
+/// host). Every field is a uniform single line — the focused field's value is
+/// reverse-highlighted (focus principle) and text inputs show an inline cursor
+/// when active, rather than drawing a bordered box into a 1-row slot.
 fn render_log_specific_params(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
-    let fields: [(usize, &str); 5] = [
-        (0, "last"),
-        (1, "errors"),
-        (2, "action"),
-        (3, "since"),
-        (4, "host"),
-    ];
-
-    let row_height = 1u16;
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            fields
-                .iter()
-                .map(|_| Constraint::Length(row_height))
-                .collect::<Vec<_>>(),
-        )
+        .constraints([Constraint::Length(1); 5])
         .split(area);
 
-    for (idx, (field_idx, label)) in fields.iter().enumerate() {
-        let focused = data.specific_focused == Some(*field_idx);
-        let row_area = rows[idx];
+    let f = |i: usize| data.specific_focused == Some(i);
+    let lines = [
+        log_input_line("last", data.log_last_input, f(0), data.theme),
+        log_value_line(
+            "errors",
+            if data.log_errors { "[x]" } else { "[ ]" },
+            f(1),
+            data.theme,
+        ),
+        log_value_line("action", data.log_action, f(2), data.theme),
+        log_input_line("since", data.log_since_input, f(3), data.theme),
+        log_input_line("host", data.log_host_input, f(4), data.theme),
+    ];
+    for (i, line) in lines.into_iter().enumerate() {
+        frame.render_widget(Paragraph::new(line), rows[i]);
+    }
+}
 
-        match *field_idx {
-            0 => {
-                // last: text input
-                data.log_last_input.render(frame, row_area, label, focused);
-            }
-            1 => {
-                // errors: checkbox
-                let check = if data.log_errors { "[x]" } else { "[ ]" };
-                let val_style = if focused {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Reset)
-                };
-                let line = Line::from(vec![
-                    Span::styled(format!(" {} ", check), val_style),
-                    Span::styled(label.to_string(), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" (space to toggle)"),
-                ]);
-                frame.render_widget(Paragraph::new(line), row_area);
-            }
-            2 => {
-                // action: enum display
-                let val_style = if focused {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default().fg(Color::Reset)
-                };
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!(" {} ", data.log_action),
-                        val_style,
-                    ),
-                    Span::styled(label.to_string(), Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(" (←/→ to cycle)"),
-                ]);
-                frame.render_widget(Paragraph::new(line), row_area);
-            }
-            3 => {
-                // since: text input
-                data.log_since_input.render(frame, row_area, label, focused);
-            }
-            4 => {
-                // host: text input
-                data.log_host_input.render(frame, row_area, label, focused);
-            }
-            _ => {}
-        }
+/// A `label: value` line for a non-input log field (errors / action).
+fn log_value_line<'a>(label: &str, value: &str, focused: bool, theme: &Theme) -> Line<'a> {
+    Line::from(vec![
+        Span::styled(
+            format!(" {label}: "),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(value.to_string(), view_focus_style(focused, theme)),
+    ])
+}
+
+/// A `label: value` line for a text-input log field, with an inline cursor when
+/// the field is active.
+fn log_input_line<'a>(
+    label: &str,
+    input: &'a InputField,
+    focused: bool,
+    theme: &Theme,
+) -> Line<'a> {
+    let label_span = Span::styled(
+        format!(" {label}: "),
+        Style::default().add_modifier(Modifier::BOLD),
+    );
+    if input.mode == crate::tui::components::input_field::InputMode::Active {
+        let (before, after) = input.split_at_cursor();
+        let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
+        let rest: String = after.chars().skip(1).collect();
+        Line::from(vec![
+            label_span,
+            Span::raw(before.to_string()),
+            Span::styled(
+                cursor_ch,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(rest),
+        ])
+    } else {
+        let value = if input.value.is_empty() {
+            "(empty)".to_string()
+        } else {
+            input.value.clone()
+        };
+        Line::from(vec![
+            label_span,
+            Span::styled(value, view_focus_style(focused, theme)),
+        ])
     }
 }
 
@@ -302,8 +420,10 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
             data.theme.error
         });
 
-        let host_cell = if selected {
+        let host_cell = if selected && data.result_focused {
             format!("▶ {}", snap.host)
+        } else if selected {
+            format!("> {}", snap.host)
         } else {
             format!("  {}", snap.host)
         };
@@ -320,8 +440,10 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
         }
         cells.push(Cell::from(format_relative_time(snap.last_online)));
         let mut row = Row::new(cells);
-        if selected {
+        if selected && data.result_focused {
             row = row.style(Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED));
+        } else if selected {
+            row = row.style(Style::default().add_modifier(Modifier::BOLD));
         }
         rows.push(row);
     }
@@ -436,9 +558,25 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
         }
     }
 
-    // Apply scroll
+    // Apply scroll, and (when the result list holds focus) draw a row cursor
+    // on the selected line so it's clear where focus is — mirroring Checkout.
     let skip = data.result_scroll.min(lines.len());
-    let visible: Vec<Line> = lines.into_iter().skip(skip).collect();
+    let cursor_style = Style::default()
+        .fg(data.theme.accent_checkout)
+        .add_modifier(Modifier::BOLD | Modifier::REVERSED);
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| *i >= skip)
+        .map(|(abs, line)| {
+            if data.result_focused && abs == data.checkout_selected {
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                Line::from(Span::styled(text, cursor_style))
+            } else {
+                line
+            }
+        })
+        .collect();
     frame.render_widget(Paragraph::new(visible), area);
 }
 
@@ -468,6 +606,42 @@ pub fn list_line_count(list: &ListData) -> usize {
         n += list.syncs.len();
     }
     n
+}
+
+/// Per-line selectable flags for `render_list_result`, mirroring its structure
+/// exactly so the result cursor can skip decorative lines (section titles,
+/// column header, separator, blank spacers, and empty `(none)` placeholders).
+/// `true` marks a data row the focus cursor may land on.
+pub fn list_selectable_lines(list: &ListData) -> Vec<bool> {
+    let mut sel: Vec<bool> = Vec::new();
+    // ── Hosts ──: title, column header, separator (all decorative).
+    sel.push(false); // title
+    sel.push(false); // column header
+    sel.push(false); // separator
+    sel.extend(list.hosts.iter().map(|_| true)); // one host row each
+    // ── Checks ──: blank + title (decorative), then body.
+    sel.push(false); // blank
+    sel.push(false); // title
+    if list.checks.is_empty() {
+        sel.push(false); // "(none)" placeholder
+    } else {
+        for entry in &list.checks {
+            sel.push(true); // scope line
+            if !entry.enabled.is_empty() {
+                sel.push(true); // enabled line
+            }
+            sel.extend(entry.path.iter().map(|_| true)); // one path line each
+        }
+    }
+    // ── Syncs ──: blank + title (decorative), then body.
+    sel.push(false); // blank
+    sel.push(false); // title
+    if list.syncs.is_empty() {
+        sel.push(false); // "(none)" placeholder
+    } else {
+        sel.extend(list.syncs.iter().map(|_| true)); // one entry line each
+    }
+    sel
 }
 
 fn format_scope(groups: &[String], enable_hosts: bool, enable_all: bool) -> String {
@@ -509,13 +683,19 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     };
 
     if rows.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  No log entries found.",
-                Style::default().fg(data.theme.inactive),
+        let dim = Style::default().fg(data.theme.inactive);
+        let msg = vec![
+            Line::from(Span::styled("  No log entries yet.", dim)),
+            Line::from(Span::styled(
+                "  Logs are recorded automatically when you run check / run / exec / sync.",
+                dim,
             )),
-            area,
-        );
+            Line::from(Span::styled(
+                "  If you expected entries, relax the filters above (errors / action / host / since).",
+                dim,
+            )),
+        ];
+        frame.render_widget(Paragraph::new(msg), area);
         return;
     }
 
@@ -554,7 +734,79 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         lines.push(line);
     }
 
+    // When the result list holds focus, draw a row cursor on the selected line
+    // so focus position is visible — mirroring Checkout/List.
     let skip = data.result_scroll.min(lines.len());
-    let visible: Vec<Line> = lines.into_iter().skip(skip).collect();
+    let cursor_style = Style::default()
+        .fg(data.theme.accent_checkout)
+        .add_modifier(Modifier::BOLD | Modifier::REVERSED);
+    let visible: Vec<Line> = lines
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| *i >= skip)
+        .map(|(abs, line)| {
+            if data.result_focused && abs == data.checkout_selected {
+                let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+                Line::from(Span::styled(text, cursor_style))
+            } else {
+                line
+            }
+        })
+        .collect();
     frame.render_widget(Paragraph::new(visible), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{list_line_count, list_selectable_lines};
+    use crate::commands::list::ListData;
+
+    fn sample(populated: bool) -> ListData {
+        let hosts = serde_json::from_value(serde_json::json!([
+            { "name": "h1", "ssh_host": "h1.example", "shell": "sh", "groups": ["web"] },
+            { "name": "h2", "ssh_host": "h2.example", "shell": "sh", "groups": [] },
+        ]))
+        .unwrap();
+        let (checks, syncs) = if populated {
+            (
+                serde_json::from_value(serde_json::json!([
+                    { "enabled": ["cpu", "mem"], "path": [{ "path": "/v", "label": "v" }] },
+                ]))
+                .unwrap(),
+                serde_json::from_value(serde_json::json!([
+                    { "paths": ["~/a", "~/b"] },
+                ]))
+                .unwrap(),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        ListData {
+            hosts,
+            checks,
+            syncs,
+        }
+    }
+
+    #[test]
+    fn selectable_flags_match_line_count_empty_sections() {
+        let d = sample(false);
+        assert_eq!(list_selectable_lines(&d).len(), list_line_count(&d));
+    }
+
+    #[test]
+    fn selectable_flags_match_line_count_populated() {
+        let d = sample(true);
+        assert_eq!(list_selectable_lines(&d).len(), list_line_count(&d));
+    }
+
+    #[test]
+    fn host_rows_are_selectable_titles_are_not() {
+        let d = sample(true);
+        let sel = list_selectable_lines(&d);
+        // Lines 0..3 are title / column header / separator → not selectable.
+        assert!(!sel[0] && !sel[1] && !sel[2]);
+        // Lines 3,4 are the two host rows → selectable.
+        assert!(sel[3] && sel[4]);
+    }
 }

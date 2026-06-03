@@ -101,12 +101,13 @@ pub async fn run(
             results: report_results,
             summary: rep_summary,
         };
-        crate::output::report::write_report(
+        let path = crate::output::report::write_report(
             &report,
             out,
             "checkout",
             ctx.config.settings.default_output_format.as_deref(),
         )?;
+        println!("Report written to {}", path);
     }
 
     Ok(())

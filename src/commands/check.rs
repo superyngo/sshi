@@ -10,8 +10,6 @@ use crate::output::printer;
 use crate::output::summary::Summary;
 use crate::state::retention;
 
-use crate::output::report::{FilterInfo, HostResult, OperationReport, ReportSummary};
-
 use super::report::{CheckHostResult, CheckReport, CommandReport, HostStatus, ProgressSink};
 use super::{Context, TargetMode};
 
@@ -279,13 +277,12 @@ pub async fn run(ctx: &Context, dry_run: bool, output: &crate::cli::OutputArgs) 
 
     let sink = PrinterSink;
     let raw = check_core(ctx, Some(&sink)).await?;
-    let CommandReport::Check(report) = raw else {
+    let CommandReport::Check(report) = &raw else {
         unreachable!("check_core always returns CommandReport::Check")
     };
 
-    // Build legacy Summary + OperationReport from the typed CheckReport.
+    // Build the legacy Summary from the typed CheckReport for stdout.
     let mut summary = Summary::default();
-    let mut report_results: Vec<HostResult> = Vec::new();
     for h in &report.hosts {
         match h.status {
             HostStatus::Online | HostStatus::Partial => summary.add_success(),
@@ -300,71 +297,19 @@ pub async fn run(ctx: &Context, dry_run: bool, output: &crate::cli::OutputArgs) 
                 summary.add_skip();
             }
         }
-        let status = match h.status {
-            HostStatus::Online | HostStatus::Partial => "success",
-            _ => "error",
-        };
-        let output_json = if matches!(h.status, HostStatus::Unreachable) {
-            serde_json::json!({
-                "metrics": {},
-                "probe_outputs": {},
-                "error": format!(
-                    "unreachable: {}",
-                    h.detail.strip_prefix("unreachable — ").unwrap_or(&h.detail)
-                ),
-            })
-        } else if matches!(h.status, HostStatus::Error) {
-            serde_json::json!({
-                "metrics": {},
-                "probe_outputs": {},
-                "error": h.detail,
-            })
-        } else {
-            serde_json::json!({
-                "metrics": h.data,
-                "probe_outputs": {
-                    "metrics_batch": { "stdout": h.raw_stdout, "stderr": h.raw_stderr }
-                },
-            })
-        };
-        report_results.push(HostResult {
-            host: h.host.clone(),
-            status: status.to_string(),
-            duration_ms: h.duration_ms,
-            output: output_json,
-        });
     }
 
     summary.print();
 
     if let Some(out) = &output.out {
-        let rep_summary = ReportSummary {
-            total: report_results.len(),
-            success: report_results
-                .iter()
-                .filter(|r| r.status == "success")
-                .count(),
-            failed: report_results
-                .iter()
-                .filter(|r| r.status == "error")
-                .count(),
-            skipped: 0,
-        };
-        let op_report = OperationReport {
-            executed_at: report.executed_at,
-            command: "check".to_string(),
-            filter: FilterInfo::from_mode(&ctx.mode),
-            task: serde_json::json!({ "metrics": report.enabled_metrics }),
-            targets: report.targets,
-            results: report_results,
-            summary: rep_summary,
-        };
-        crate::output::report::write_report(
+        let op_report = crate::output::report::to_operation_report(&raw, &ctx.mode);
+        let path = crate::output::report::write_report(
             &op_report,
             out,
             "check",
             ctx.config.settings.default_output_format.as_deref(),
         )?;
+        println!("Report written to {}", path);
     }
 
     Ok(())
