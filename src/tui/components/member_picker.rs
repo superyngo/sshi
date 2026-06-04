@@ -23,6 +23,10 @@ use crate::tui::theme::Theme;
 
 use super::popup::centered_rect;
 
+/// Fixed page step for PageUp/PageDown (the popup height is dynamic; a fixed
+/// step keeps the handler stateless and matches the other scroll popups).
+const PICKER_PAGE: usize = 10;
+
 /// Which target-filter field the picker edits when applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PickerTarget {
@@ -100,6 +104,24 @@ impl MemberPicker {
                 }
                 PickerResult::Continue
             }
+            KeyCode::PageUp => {
+                self.cursor = self.cursor.saturating_sub(PICKER_PAGE);
+                PickerResult::Continue
+            }
+            KeyCode::PageDown => {
+                if !self.options.is_empty() {
+                    self.cursor = (self.cursor + PICKER_PAGE).min(self.options.len() - 1);
+                }
+                PickerResult::Continue
+            }
+            KeyCode::Home => {
+                self.cursor = 0;
+                PickerResult::Continue
+            }
+            KeyCode::End => {
+                self.cursor = self.options.len().saturating_sub(1);
+                PickerResult::Continue
+            }
             KeyCode::Char(' ') | KeyCode::Char('x') => {
                 self.toggle();
                 PickerResult::Continue
@@ -154,16 +176,27 @@ impl MemberPicker {
             .constraints([Constraint::Min(0)])
             .split(inner)[0];
 
+        // Scroll window: keep the cursor visible when options overflow the popup.
+        let vis = (rows.height as usize).max(1);
+        let n = self.options.len();
+        let start = if self.cursor < vis {
+            0
+        } else {
+            (self.cursor + 1 - vis).min(n.saturating_sub(vis))
+        };
+        let end = (start + vis).min(n);
+
         let lines: Vec<Line> = if self.options.is_empty() {
             vec![Line::from(Span::styled(
                 "  (nothing available — add entries in Config)",
                 Style::default().fg(theme.inactive),
             ))]
         } else {
-            self.options
+            self.options[start..end]
                 .iter()
                 .enumerate()
-                .map(|(i, opt)| {
+                .map(|(rel, opt)| {
+                    let i = start + rel;
                     let glyph = if self.multi {
                         if self.selected[i] {
                             "[✓]"

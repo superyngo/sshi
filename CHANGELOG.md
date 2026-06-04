@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-04 — TUI universal scroll / jump keys
+- feat(tui): `PageUp` / `PageDown` / `Home` / `End` now work in every scrollable
+  vertical region that previously only had ↑↓: the Operate applicable-entries
+  panel, the running-operation progress popup, the member/skip/group pickers, and
+  the Config entry-form vec-editor and group-picker sub-popups.
+- fix(tui): the member/skip/group picker popup now scrolls to keep the cursor
+  visible instead of clipping options when the list overflows the popup height.
+
+### 2026-06-04 — TUI collapsible Config sections
+- feat(tui): the **Config** sidebar's Hosts/Checks/Syncs section headers are now
+  collapsible. Each shows a ▼ (expanded) / ▶ (collapsed) disclosure triangle;
+  press `Space` or `Enter` on a header to toggle. Collapsing hides that section's
+  child entries and keeps the cursor on the header (never on a hidden child).
+  Adding an entry auto-expands its section so the new row stays visible.
+
+### 2026-06-04 — TUI block-division layout (Operate + View)
+- change(tui): both tabs now use the Config tab's lighter per-zone block style
+  (no outer wrapper; the tab-identity title sits on the primary zone block).
+- change(tui): the **Operate** tab's Execute action now lives in its own bordered
+  ` Execute ` block, separated from the ` Operate ` body block (OpRadio / Common /
+  Command-specific / Entries); each border lights up with the Operate accent when
+  its layer holds focus.
+- change(tui): the **View** tab is now split into a bordered ` View ` block (op
+  selector + target/common + Log-specific params) and a bordered Results block
+  (titled per operation — Checkout/List/Log), each border accenting when its
+  layer holds focus.
+
+### 2026-06-04 — TUI Tab-key layer cycling (Operate + View)
+- change(tui): on the **Operate** and **View** tabs, `Tab`/`Shift+Tab` now cycle
+  focus among peers *within the current layer only* (wrapping at the layer ends),
+  matching the Config tab's principle. Arrow keys continue to cross layer
+  boundaries. Operate layers: Op → Common settings → Command-specific → Entries →
+  Execute. View layers: OpSelector → Settings → Result.
+
 ## [v1.0.1] - 2026-06-04
 
 ### Fixed

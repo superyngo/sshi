@@ -66,18 +66,6 @@ pub struct ViewRenderData<'a> {
 /// Entry point: render the entire View tab into `area`.
 #[allow(dead_code)]
 pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
-    let border_col = if data.navbar_focused {
-        data.theme.border_inactive
-    } else {
-        data.theme.accent_checkout // View identity colour (green)
-    };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_col))
-        .title(" View ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
     let is_log = data.view_op == ViewOperationKind::Log;
     // Log has no target zone; Checkout/List get the inline Common zone
     // (mode row, optional members row, skip row) that replaced the `f` popup.
@@ -89,30 +77,73 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         2
     };
     let specific_height: u16 = if is_log { 5 } else { 0 };
-
-    let mut constraints = vec![
-        Constraint::Length(2),             // op selector
-        Constraint::Length(target_height), // target / common zone
-    ];
-    if specific_height > 0 {
-        constraints.push(Constraint::Length(specific_height));
-    }
-    constraints.push(Constraint::Min(0)); // result area
+    // Config-style layout: no outer wrapper. The " View " block holds the op
+    // selector (2 rows) + target/common (+ Log-specific); Results is its own
+    // block below.
+    let settings_inner_h = 2 + target_height + specific_height;
+    let settings_block_h = settings_inner_h + 2;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(inner);
+        .constraints([
+            Constraint::Length(settings_block_h), // " View " block (bordered)
+            Constraint::Min(0),                   // Results block (bordered)
+        ])
+        .split(area);
 
-    render_view_selector(data, chunks[0], frame);
-    if is_log {
-        render_view_target_summary(data, chunks[1], frame);
-        render_log_specific_params(data, chunks[2], frame);
-        render_result_area(data, chunks[3], frame);
+    // ── " View " settings block (op selector + target/common) ──
+    let settings_focused = !data.navbar_focused
+        && (data.op_selector_focused
+            || data.target_mode_focused
+            || data.target_members_focused
+            || data.skip_focused
+            || data.specific_focused.is_some());
+    let s_border = if settings_focused {
+        data.theme.accent_checkout
     } else {
-        render_view_common(data, chunks[1], frame);
-        render_result_area(data, chunks[2], frame);
+        data.theme.border_inactive
+    };
+    let s_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(s_border))
+        .title(" View ");
+    let s_inner = s_block.inner(chunks[0]);
+    frame.render_widget(s_block, chunks[0]);
+    let s_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),               // op selector
+            Constraint::Length(target_height),   // target / common (or Log summary)
+            Constraint::Length(specific_height), // Log-specific params (0 otherwise)
+        ])
+        .split(s_inner);
+    render_view_selector(data, s_chunks[0], frame);
+    if is_log {
+        render_view_target_summary(data, s_chunks[1], frame);
+        render_log_specific_params(data, s_chunks[2], frame);
+    } else {
+        render_view_common(data, s_chunks[1], frame);
     }
+
+    // ── Results block ──
+    let results_focused = !data.navbar_focused && data.result_focused;
+    let r_border = if results_focused {
+        data.theme.accent_checkout
+    } else {
+        data.theme.border_inactive
+    };
+    let r_title = match data.view_op {
+        ViewOperationKind::Checkout => " Checkout ",
+        ViewOperationKind::List => " List ",
+        ViewOperationKind::Log => " Log ",
+    };
+    let r_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(r_border))
+        .title(r_title);
+    let r_inner = r_block.inner(chunks[1]);
+    frame.render_widget(r_block, chunks[1]);
+    render_result_area(data, r_inner, frame);
 }
 
 /// Inline Common zone for Checkout/List: target mode radio, optional members

@@ -120,6 +120,45 @@ pub fn operate_fields(
     v
 }
 
+/// Focus layers for the Operate tab (§8.6 layer model). Tab/BackTab cycle
+/// peers *within* a layer; arrow keys cross layer boundaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OpLayer {
+    /// The operation radio row.
+    Op,
+    /// Shared settings (target/skip/timeout/serial/dry-run/out).
+    Common,
+    /// Per-operation fields (command/script/sudo/keep/sync inputs).
+    CommandSpecific,
+    /// Read-only applicable-entries panel.
+    Entries,
+    /// Execute button.
+    Execute,
+}
+
+/// Which layer a focusable field belongs to.
+pub fn layer_of(field: OpField) -> OpLayer {
+    match field {
+        OpField::OpRadio => OpLayer::Op,
+        OpField::TargetMode
+        | OpField::TargetMembers
+        | OpField::Skip
+        | OpField::Serial
+        | OpField::DryRun
+        | OpField::Timeout
+        | OpField::Out => OpLayer::Common,
+        OpField::Command
+        | OpField::Script
+        | OpField::Sudo
+        | OpField::Keep
+        | OpField::SyncModeToggle
+        | OpField::SyncAdhocInput
+        | OpField::SyncSource => OpLayer::CommandSpecific,
+        OpField::Entries => OpLayer::Entries,
+        OpField::Execute => OpLayer::Execute,
+    }
+}
+
 /// Rendering data for the Operate tab, passed from App.
 pub struct OperateRenderData<'a> {
     pub focus: OpField,
@@ -189,17 +228,27 @@ impl RowItem<'_> {
 /// Render the entire Operate tab.
 #[allow(clippy::vec_init_then_push)] // rows are appended conditionally per op
 pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let border_col = if data.navbar_focused {
-        data.theme.border_inactive
-    } else {
+    // Config-style layout: no outer wrapper. The body block (" Operate ") holds
+    // OpRadio/Common/Command-specific/Entries; Execute is its own block below.
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(3)])
+        .split(area);
+    let body_area = outer[0];
+    let exec_area = outer[1];
+
+    let body_focused = !data.navbar_focused && data.focus != OpField::Execute;
+    let border_col = if body_focused {
         data.theme.accent_operate // Operate identity colour (cyan)
+    } else {
+        data.theme.border_inactive
     };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_col))
         .title(" Operate ");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    let inner = block.inner(body_area);
+    frame.render_widget(block, body_area);
 
     let theme = data.theme;
     let active = !data.navbar_focused;
@@ -310,7 +359,6 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         .map(|r| Constraint::Length(r.height()))
         .collect();
     constraints.push(Constraint::Min(0)); // entries
-    constraints.push(Constraint::Length(2)); // execute bar
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
@@ -328,7 +376,6 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     }
     let entries_area = chunks[rows.len()];
     render_applicable_entries(data, entries_area, frame);
-    let exec_area = chunks[rows.len() + 1];
     render_execute_bar(data, exec_area, frame);
 }
 
@@ -519,12 +566,22 @@ fn chips(items: &[String], empty: &str) -> String {
 }
 
 fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let block = Block::default().borders(Borders::TOP);
+    let active = !data.navbar_focused;
+    let exec_focused = data.focus == OpField::Execute;
+    // Execute lives in its own bordered block; border lights up with the
+    // Operate accent when focused (matches the Config per-zone convention).
+    let border_col = if exec_focused && active {
+        data.theme.accent_operate
+    } else {
+        data.theme.border_inactive
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_col))
+        .title(" Execute ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let active = !data.navbar_focused;
-    let exec_focused = data.focus == OpField::Execute;
     let exec_label = if data.is_running {
         " [ running… — Esc to cancel ] ".to_string()
     } else {
@@ -785,4 +842,44 @@ pub fn truncate(s: &str, max: usize) -> String {
     }
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every OpField maps to a layer (exhaustive — a new variant without a
+    /// mapping is a compile error in `layer_of`, this guards the values).
+    #[test]
+    fn layer_of_groups_fields() {
+        assert_eq!(layer_of(OpField::OpRadio), OpLayer::Op);
+        for f in [
+            OpField::TargetMode,
+            OpField::TargetMembers,
+            OpField::Skip,
+            OpField::Serial,
+            OpField::DryRun,
+            OpField::Timeout,
+            OpField::Out,
+        ] {
+            assert_eq!(layer_of(f), OpLayer::Common, "{f:?} should be Common");
+        }
+        for f in [
+            OpField::Command,
+            OpField::Script,
+            OpField::Sudo,
+            OpField::Keep,
+            OpField::SyncModeToggle,
+            OpField::SyncAdhocInput,
+            OpField::SyncSource,
+        ] {
+            assert_eq!(
+                layer_of(f),
+                OpLayer::CommandSpecific,
+                "{f:?} should be CommandSpecific"
+            );
+        }
+        assert_eq!(layer_of(OpField::Entries), OpLayer::Entries);
+        assert_eq!(layer_of(OpField::Execute), OpLayer::Execute);
+    }
 }

@@ -407,6 +407,31 @@ impl App {
         }
     }
 
+    /// Tab/BackTab: cycle the focus among peers in the *current layer* only,
+    /// wrapping at the layer's ends. Arrow keys (operate_move_focus) cross
+    /// layer boundaries; Tab never leaves the layer (mirrors Config zones).
+    fn operate_tab_cycle(&mut self, forward: bool) {
+        let layer = operate_tab::layer_of(self.operate_focus);
+        let peers: Vec<OpField> = self
+            .operate_field_list()
+            .into_iter()
+            .filter(|f| operate_tab::layer_of(*f) == layer)
+            .collect();
+        if peers.len() < 2 {
+            return;
+        }
+        let pos = peers
+            .iter()
+            .position(|f| *f == self.operate_focus)
+            .unwrap_or(0);
+        let next = if forward {
+            (pos + 1) % peers.len()
+        } else {
+            (pos + peers.len() - 1) % peers.len()
+        };
+        self.operate_focus = peers[next];
+    }
+
     /// All group names referenced anywhere in the config (hosts, check and
     /// sync entries), plus any currently-selected groups, sorted + de-duped.
     /// Mirrors `config_tab::collect_known_groups` so the Operate picker offers
@@ -1520,6 +1545,38 @@ impl App {
         }
     }
 
+    /// Tab/BackTab on the View tab: cycle peers within the *current layer*.
+    /// Layers are OpSelector (single — stays), Settings (the stops between
+    /// OpSelector and Result), and Result (cycles data rows). Arrow keys cross
+    /// layers via view_focus_up/down; Tab never leaves the layer.
+    fn view_tab_cycle(&mut self, forward: bool) {
+        match self.view_focus {
+            ViewFocus::Result => self.result_cursor_cycle(forward),
+            ViewFocus::OpSelector => {}
+            _ => {
+                // Settings layer: cycle the stops excluding OpSelector/Result.
+                let settings: Vec<ViewFocus> =
+                    ViewFocus::stops(self.view_op, self.target_filter.mode)
+                        .into_iter()
+                        .filter(|s| !matches!(s, ViewFocus::OpSelector | ViewFocus::Result))
+                        .collect();
+                if settings.len() < 2 {
+                    return;
+                }
+                let pos = settings
+                    .iter()
+                    .position(|s| *s == self.view_focus)
+                    .unwrap_or(0);
+                let next = if forward {
+                    (pos + 1) % settings.len()
+                } else {
+                    (pos + settings.len() - 1) % settings.len()
+                };
+                self.view_focus = settings[next];
+            }
+        }
+    }
+
     /// True when no selectable row lies above the current List cursor (or, for
     /// Checkout/Log, when the cursor is at row 0).
     fn result_at_top(&self) -> bool {
@@ -1922,6 +1979,35 @@ impl App {
                     }
                     return Ok(true);
                 }
+                KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+                    if self.active_tab == TabId::Operate =>
+                {
+                    // Page size matches the 12-row progress window.
+                    let outcomes_len = self
+                        .running_op
+                        .as_ref()
+                        .map_or(0, |o| o.host_outcomes.len());
+                    let max_start = outcomes_len.saturating_sub(12);
+                    let current = self.progress_popup_scroll.unwrap_or(max_start);
+                    match key.code {
+                        KeyCode::PageUp => {
+                            self.progress_popup_scroll = Some(current.saturating_sub(12));
+                        }
+                        KeyCode::PageDown => {
+                            let next = (current + 12).min(max_start);
+                            if next >= max_start {
+                                self.progress_popup_scroll = None;
+                            } else {
+                                self.progress_popup_scroll = Some(next);
+                            }
+                        }
+                        KeyCode::Home => self.progress_popup_scroll = Some(0),
+                        // End resumes auto-scroll to the latest output.
+                        KeyCode::End => self.progress_popup_scroll = None,
+                        _ => {}
+                    }
+                    return Ok(true);
+                }
                 _ => return Ok(false),
             }
         }
@@ -2117,14 +2203,15 @@ impl App {
                             }
                         },
                         TabId::Operate => {
-                            // Tab/BackTab walk the unified field list.
-                            self.operate_move_focus(if forward { 1 } else { -1 });
+                            // Tab/BackTab cycle peers within the current layer;
+                            // arrows cross layer boundaries.
+                            self.operate_tab_cycle(forward);
                         }
                         TabId::View => {
-                            // Cycle the result-row cursor (wrapping), skipping
-                            // decorative List rows. Consistent across all three
-                            // View ops; visible when the Result zone is focused.
-                            self.result_cursor_cycle(forward);
+                            // Tab/BackTab cycle peers within the current layer
+                            // (OpSelector / Settings / Result); arrows cross
+                            // layers via view_focus_up/down.
+                            self.view_tab_cycle(forward);
                         }
                     }
                 }
@@ -2230,6 +2317,21 @@ impl App {
                         self.entries_scroll = 0;
                     }
                 }
+                Ok(true)
+            }
+            // PageUp/PageDown/Home/End scroll the applicable-entries panel
+            // (page size matches the 6-row render window).
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+                if self.active_tab == TabId::Operate && self.operate_focus == OpField::Entries =>
+            {
+                let max = self.entries_panel_count().saturating_sub(6);
+                self.entries_scroll = match key.code {
+                    KeyCode::PageUp => self.entries_scroll.saturating_sub(6),
+                    KeyCode::PageDown => (self.entries_scroll + 6).min(max),
+                    KeyCode::Home => 0,
+                    KeyCode::End => max,
+                    _ => self.entries_scroll,
+                };
                 Ok(true)
             }
             // ←→ change the value of the focused field.
@@ -2558,7 +2660,8 @@ impl App {
                 if self.view_dirty {
                     self.refresh_view();
                 }
-                // Chrome rows: block border (2) + selector (2) = 4 base.
+                // Chrome rows: " View " block border (2) + op selector (2) +
+                // Results block border (2) = 6 base.
                 // Checkout/List add the inline Common zone (2 rows, +1 when a
                 // Members row is shown for Groups/Hosts); Checkout adds 1 more
                 // for the table header. Log adds the 1-row summary + 5 specific.
@@ -2568,9 +2671,9 @@ impl App {
                     2
                 };
                 let chrome = match self.view_op {
-                    ViewOperationKind::Checkout => 4 + common_zone + 1,
-                    ViewOperationKind::List => 4 + common_zone,
-                    ViewOperationKind::Log => 10, // 4 base + 1 summary + 5 specific
+                    ViewOperationKind::Checkout => 6 + common_zone + 1,
+                    ViewOperationKind::List => 6 + common_zone,
+                    ViewOperationKind::Log => 12, // 6 base + 1 summary + 5 specific
                 };
                 let view_h = chunks[1].height.saturating_sub(chrome as u16) as usize;
                 let row_count = match self.view_op {
@@ -3353,13 +3456,14 @@ impl App {
         frame.render_widget(Clear, popup_area);
         let body = match self.active_tab {
             TabId::Operate => format!(
-                "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nResults appear in a popup when the operation completes.",
+                "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults appear in a popup when the operation completes.",
                 self.last_timeout_secs
             ),
             TabId::View => "View tab\n\nView checkout snapshots, host/config list, or operation log.\nUse ↑↓ to move between fields; ←→ switches op (on Op row) or target mode.\nEnter on Members/Skip opens the picker; PgUp/PgDn/Home/End scroll results.\no     — export the currently viewed data to a report file.\nData refreshes automatically on op switch and after operations.".to_string(),
             TabId::Config => format!(
                 "Config tab (read-only browser)\n\n\
                  Sidebar: ↑↓ / jk to move between sections and entries.\n\
+                 Space / Enter on a ▼/▶ section header collapses or expands it.\n\
                  Field table: → or Tab to enter, ← to return to sidebar.\n\
                  Within each pane: ↑↓ / jk / PgUp / PgDn / Home / End.\n\n\
                  E  — open config in $VISUAL / $EDITOR / vi (TUI suspends,\n\

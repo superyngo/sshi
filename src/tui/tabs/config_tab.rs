@@ -46,6 +46,16 @@ pub enum SidebarItem {
     Sync(usize),
 }
 
+/// Collapse state for the three child-bearing sidebar sections. When a section
+/// is collapsed, `build_sidebar_items` omits its child entries. Settings has no
+/// children, so it is never collapsible.
+#[derive(Debug, Clone, Default)]
+pub struct CollapsedSections {
+    pub hosts: bool,
+    pub checks: bool,
+    pub syncs: bool,
+}
+
 // FieldKind, FieldDescriptor, and CHECK_ENABLED_OPTIONS now live in
 // `super::config_schema` (the unified field schema).
 
@@ -204,6 +214,8 @@ pub enum ConfirmAction {
 pub struct ConfigTabState {
     pub zone: ConfigZone,
     pub items: Vec<SidebarItem>,
+    /// Which child-bearing sections are collapsed (children hidden).
+    pub collapsed: CollapsedSections,
     pub sidebar_vp: Viewport,
     pub field_vp: Viewport,
     pub reload_banner_until: Option<Instant>,
@@ -256,7 +268,8 @@ pub struct ConfigSelectionSnapshot {
 
 impl ConfigTabState {
     pub fn new(config: &AppConfig, config_path: Option<&std::path::Path>) -> Self {
-        let items = build_sidebar_items(config);
+        let collapsed = CollapsedSections::default();
+        let items = build_sidebar_items(config, &collapsed);
         let mut sidebar_vp = Viewport::new();
         sidebar_vp.set_dims(items.len(), 0);
 
@@ -266,6 +279,7 @@ impl ConfigTabState {
         Self {
             zone: ConfigZone::Sidebar,
             items,
+            collapsed,
             sidebar_vp,
             field_vp: Viewport::new(),
             reload_banner_until: None,
@@ -416,12 +430,37 @@ impl ConfigTabState {
         }
     }
 
+    /// Toggle collapse on the focused section header (Hosts/Checks/Syncs).
+    /// Rebuilds the sidebar and keeps the cursor on the same section header.
+    /// Returns false (no-op) when the focused item is not a collapsible section.
+    pub fn toggle_section_collapse(&mut self, config: &AppConfig) -> bool {
+        let item = match self.items.get(self.sidebar_vp.selected) {
+            Some(it) => it.clone(),
+            None => return false,
+        };
+        match item {
+            SidebarItem::SectionHosts => self.collapsed.hosts = !self.collapsed.hosts,
+            SidebarItem::SectionChecks => self.collapsed.checks = !self.collapsed.checks,
+            SidebarItem::SectionSyncs => self.collapsed.syncs = !self.collapsed.syncs,
+            _ => return false,
+        }
+        self.items = build_sidebar_items(config, &self.collapsed);
+        // Section headers keep a stable identity across rebuild, so the cursor
+        // never lands on a now-hidden child.
+        let new_idx = self.items.iter().position(|it| *it == item).unwrap_or(0);
+        self.sidebar_vp
+            .set_dims(self.items.len(), self.sidebar_vp.visible_height);
+        self.sidebar_vp.selected = new_idx;
+        self.reset_field_vp(config);
+        true
+    }
+
     pub fn reload(&mut self, config: &AppConfig, config_path: Option<&std::path::Path>) {
         // Preserve viewport selections across rebuild — `restore_selection`
         // (called by `save_config` after this) clamps them against the new
         // dimensions. Previously this wiped `field_vp`, which is why the
         // right-panel cursor jumped to the first row after every save.
-        self.items = build_sidebar_items(config);
+        self.items = build_sidebar_items(config, &self.collapsed);
         let new_len = self.items.len();
         self.sidebar_vp
             .set_dims(new_len, self.sidebar_vp.visible_height);
@@ -635,12 +674,25 @@ impl ConfigTabState {
                     self.request_save_if_dirty();
                     true
                 }
+                KeyCode::Char(' ') => {
+                    // Space toggles collapse on a section header; no-op elsewhere.
+                    self.toggle_section_collapse(config)
+                }
                 KeyCode::Enter => {
-                    if let Some(
-                        SidebarItem::Host(_) | SidebarItem::Check(_) | SidebarItem::Sync(_),
-                    ) = self.items.get(self.sidebar_vp.selected).cloned()
-                    {
-                        self.zone = ConfigZone::FieldTable;
+                    match self.items.get(self.sidebar_vp.selected).cloned() {
+                        Some(
+                            SidebarItem::Host(_) | SidebarItem::Check(_) | SidebarItem::Sync(_),
+                        ) => {
+                            self.zone = ConfigZone::FieldTable;
+                        }
+                        Some(
+                            SidebarItem::SectionHosts
+                            | SidebarItem::SectionChecks
+                            | SidebarItem::SectionSyncs,
+                        ) => {
+                            self.toggle_section_collapse(config);
+                        }
+                        _ => {}
                     }
                     true
                 }
@@ -1102,6 +1154,22 @@ impl ConfigTabState {
                 ve.vp.move_down();
                 true
             }
+            KeyCode::PageUp => {
+                ve.vp.page_up();
+                true
+            }
+            KeyCode::PageDown => {
+                ve.vp.page_down();
+                true
+            }
+            KeyCode::Home => {
+                ve.vp.home();
+                true
+            }
+            KeyCode::End => {
+                ve.vp.end();
+                true
+            }
             KeyCode::Char('a') | KeyCode::Enter => {
                 ve.input = InputField::new("");
                 ve.input.activate();
@@ -1172,6 +1240,22 @@ impl ConfigTabState {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 gp.vp.move_down();
+                true
+            }
+            KeyCode::PageUp => {
+                gp.vp.page_up();
+                true
+            }
+            KeyCode::PageDown => {
+                gp.vp.page_down();
+                true
+            }
+            KeyCode::Home => {
+                gp.vp.home();
+                true
+            }
+            KeyCode::End => {
+                gp.vp.end();
                 true
             }
             KeyCode::Char(' ') => {
@@ -1321,10 +1405,19 @@ impl ConfigTabState {
                 }
             }
         }
+        // A freshly added entry must be visible — expand its section so the
+        // new row isn't hidden by a prior collapse.
+        if form.edit_index.is_none() {
+            match form.kind {
+                EntryFormKind::Host => self.collapsed.hosts = false,
+                EntryFormKind::Check => self.collapsed.checks = false,
+                EntryFormKind::Sync => self.collapsed.syncs = false,
+            }
+        }
         // Rebuild sidebar items but preserve viewport selections (clamp later
         // in restore_selection). `mark_dirty` above already captured the
         // pre-rebuild indices into pending_restore_snapshot.
-        let items = build_sidebar_items(config);
+        let items = build_sidebar_items(config, &self.collapsed);
         self.items = items;
         self.sidebar_vp
             .set_dims(self.items.len(), self.sidebar_vp.visible_height);
@@ -1349,7 +1442,7 @@ impl ConfigTabState {
                 }
             }
         }
-        let items = build_sidebar_items(config);
+        let items = build_sidebar_items(config, &self.collapsed);
         self.items = items;
         self.sidebar_vp
             .set_dims(self.items.len(), self.sidebar_vp.visible_height);
@@ -1842,7 +1935,13 @@ impl ConfigTabState {
                 let is_sel = abs == self.sidebar_vp.selected;
 
                 let (prefix, text, is_header) = sidebar_item_display(item, config);
-                let glyph = if is_sel && focused {
+                // Collapsible section headers show a ▼/▶ disclosure triangle in
+                // the cursor column; selection is conveyed by style alone
+                // (reverse when focused, bold otherwise). Other rows keep the
+                // normal selection cursor.
+                let glyph = if let Some(g) = collapse_glyph(item, &self.collapsed) {
+                    g
+                } else if is_sel && focused {
                     "▶ "
                 } else if is_sel {
                     "> "
@@ -2050,6 +2149,22 @@ impl ConfigTabState {
                 self.direct_vec_editor.as_mut().unwrap().vp.move_down();
                 true
             }
+            KeyCode::PageUp => {
+                self.direct_vec_editor.as_mut().unwrap().vp.page_up();
+                true
+            }
+            KeyCode::PageDown => {
+                self.direct_vec_editor.as_mut().unwrap().vp.page_down();
+                true
+            }
+            KeyCode::Home => {
+                self.direct_vec_editor.as_mut().unwrap().vp.home();
+                true
+            }
+            KeyCode::End => {
+                self.direct_vec_editor.as_mut().unwrap().vp.end();
+                true
+            }
             KeyCode::Char('a') | KeyCode::Enter => {
                 let ve = self.direct_vec_editor.as_mut().unwrap();
                 ve.input = InputField::new("");
@@ -2124,6 +2239,22 @@ impl ConfigTabState {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 self.direct_group_picker.as_mut().unwrap().vp.move_down();
+                true
+            }
+            KeyCode::PageUp => {
+                self.direct_group_picker.as_mut().unwrap().vp.page_up();
+                true
+            }
+            KeyCode::PageDown => {
+                self.direct_group_picker.as_mut().unwrap().vp.page_down();
+                true
+            }
+            KeyCode::Home => {
+                self.direct_group_picker.as_mut().unwrap().vp.home();
+                true
+            }
+            KeyCode::End => {
+                self.direct_group_picker.as_mut().unwrap().vp.end();
                 true
             }
             KeyCode::Char(' ') => {
@@ -2308,20 +2439,39 @@ impl ConfigTabState {
 
 // ── Sidebar construction ─────────────────────────────────────────────────────
 
-fn build_sidebar_items(config: &AppConfig) -> Vec<SidebarItem> {
+fn build_sidebar_items(config: &AppConfig, collapsed: &CollapsedSections) -> Vec<SidebarItem> {
     let mut items = vec![SidebarItem::SectionSettings, SidebarItem::SectionHosts];
-    for i in 0..config.host.len() {
-        items.push(SidebarItem::Host(i));
+    if !collapsed.hosts {
+        for i in 0..config.host.len() {
+            items.push(SidebarItem::Host(i));
+        }
     }
     items.push(SidebarItem::SectionChecks);
-    for i in 0..config.check.len() {
-        items.push(SidebarItem::Check(i));
+    if !collapsed.checks {
+        for i in 0..config.check.len() {
+            items.push(SidebarItem::Check(i));
+        }
     }
     items.push(SidebarItem::SectionSyncs);
-    for i in 0..config.sync.len() {
-        items.push(SidebarItem::Sync(i));
+    if !collapsed.syncs {
+        for i in 0..config.sync.len() {
+            items.push(SidebarItem::Sync(i));
+        }
     }
     items
+}
+
+/// Disclosure triangle for collapsible section headers: `▼ ` expanded, `▶ `
+/// collapsed. Returns `None` for non-collapsible rows (Settings + children),
+/// which fall back to the normal selection cursor.
+fn collapse_glyph(item: &SidebarItem, collapsed: &CollapsedSections) -> Option<&'static str> {
+    let c = match item {
+        SidebarItem::SectionHosts => collapsed.hosts,
+        SidebarItem::SectionChecks => collapsed.checks,
+        SidebarItem::SectionSyncs => collapsed.syncs,
+        _ => return None,
+    };
+    Some(if c { "▶ " } else { "▼ " })
 }
 
 fn sidebar_item_display(item: &SidebarItem, config: &AppConfig) -> (&'static str, String, bool) {
@@ -2615,6 +2765,61 @@ mod tests {
     }
 
     #[test]
+    fn toggle_section_collapse_hides_children_and_keeps_cursor() {
+        let mut config = AppConfig::default();
+        for n in ["h1", "h2", "h3"] {
+            config.host.push(HostEntry {
+                name: n.to_string(),
+                ssh_host: "1.1.1.1".to_string(),
+                shell: ShellType::Sh,
+                groups: vec![],
+                proxy_jump: None,
+            });
+        }
+        let mut state = ConfigTabState::new(&config, None);
+        // Focus the Hosts section header.
+        let hosts_idx = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::SectionHosts))
+            .unwrap();
+        state.sidebar_vp.selected = hosts_idx;
+        let expanded_len = state.items.len();
+
+        // Collapse: the 3 host children disappear, cursor stays on the header.
+        assert!(state.toggle_section_collapse(&config));
+        assert!(state.collapsed.hosts);
+        assert_eq!(state.items.len(), expanded_len - 3);
+        assert!(!state
+            .items
+            .iter()
+            .any(|i| matches!(i, SidebarItem::Host(_))));
+        assert!(matches!(
+            state.items.get(state.sidebar_vp.selected),
+            Some(SidebarItem::SectionHosts)
+        ));
+
+        // Expand again: children return.
+        assert!(state.toggle_section_collapse(&config));
+        assert!(!state.collapsed.hosts);
+        assert_eq!(state.items.len(), expanded_len);
+    }
+
+    #[test]
+    fn toggle_section_collapse_noop_on_non_section() {
+        let config = AppConfig::default();
+        let mut state = ConfigTabState::new(&config, None);
+        // Settings header is not collapsible.
+        let settings_idx = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::SectionSettings))
+            .unwrap();
+        state.sidebar_vp.selected = settings_idx;
+        assert!(!state.toggle_section_collapse(&config));
+    }
+
+    #[test]
     fn render_does_not_panic_empty_sync_paths() {
         let mut config = AppConfig::default();
         config.sync.push(SyncEntry {
@@ -2753,7 +2958,7 @@ mod tests {
         }
         let snap = state.capture_selection();
         config.host.pop();
-        state.items = build_sidebar_items(&config);
+        state.items = build_sidebar_items(&config, &state.collapsed);
         state.sidebar_vp = Viewport::new();
         state.sidebar_vp.set_dims(state.items.len(), 0);
         state.restore_selection(snap, &config);
