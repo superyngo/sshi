@@ -1,6 +1,7 @@
 pub mod check;
 pub mod checkout;
 pub mod config;
+pub mod cp;
 pub mod exec;
 pub mod init;
 pub mod list;

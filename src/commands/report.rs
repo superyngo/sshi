@@ -85,6 +85,7 @@ pub enum CommandReport {
     Run(RunReport),
     Exec(ExecReport),
     Sync(SyncReport),
+    Cp(CpReport),
     Log(LogReport),
     List(ListReport),
 }
@@ -181,6 +182,35 @@ pub struct ExecReport {
     pub script: String,
     pub targets: Vec<String>,
     pub hosts: Vec<ExecHostResult>,
+}
+
+// ── Cp ───────────────────────────────────────────────────────────────────────
+
+/// Per-host result of a `cp_core` invocation.
+#[derive(Debug, Clone, Serialize)]
+pub struct CpHostResult {
+    pub host: String,
+    pub status: HostStatus,
+    pub duration_ms: Option<u64>,
+    /// Human-readable summary (e.g. "3 files copied" or an error).
+    pub detail: String,
+    pub files_copied: usize,
+    pub files_failed: usize,
+    pub errors: Vec<String>,
+}
+
+/// Typed return value of `cp_core`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CpReport {
+    pub executed_at: String,
+    /// The local argument as given on the CLI (file / dir / wildcard).
+    pub local: String,
+    /// The resolved remote destination base (or `~`).
+    pub remote: String,
+    /// Number of planned per-file transfers (per host).
+    pub planned_files: usize,
+    pub targets: Vec<String>,
+    pub hosts: Vec<CpHostResult>,
 }
 
 // ── Sync ─────────────────────────────────────────────────────────────────────

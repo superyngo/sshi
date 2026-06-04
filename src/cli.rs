@@ -149,6 +149,26 @@ pub enum Commands {
         output: OutputArgs,
     },
 
+    /// Copy a local file or directory to remote hosts (scp-style)
+    #[command(disable_help_flag = true)]
+    Cp {
+        #[command(flatten)]
+        target: TargetArgs,
+
+        /// Local path: file, directory (recursive), or quoted wildcard (dir/*.ext)
+        local: String,
+
+        /// Remote destination (optional; defaults to the remote home directory)
+        remote: Option<String>,
+
+        /// Preview planned transfers without copying
+        #[arg(long, display_order = 20)]
+        dry_run: bool,
+
+        #[command(flatten)]
+        output: OutputArgs,
+    },
+
     /// Execute a command string on remote hosts
     #[command(disable_help_flag = true)]
     Run {

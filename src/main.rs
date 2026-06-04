@@ -168,6 +168,16 @@ async fn main() -> Result<()> {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
             commands::sync::run(&ctx, dry_run, &files, source.as_deref(), &output).await
         }
+        Commands::Cp {
+            target,
+            local,
+            remote,
+            dry_run,
+            output,
+        } => {
+            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            commands::cp::run(&ctx, &local, remote.as_deref(), dry_run, &output).await
+        }
         Commands::Run {
             target,
             command,

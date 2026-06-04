@@ -204,6 +204,38 @@ pub fn to_operation_report(report: &CommandReport, mode: &TargetMode) -> Operati
                 results,
             }
         }
+        CommandReport::Cp(r) => {
+            let results: Vec<HostResult> = r
+                .hosts
+                .iter()
+                .map(|h| {
+                    let status = match h.status {
+                        HostStatus::Online => "success",
+                        HostStatus::Skipped => "skipped",
+                        _ => "error",
+                    };
+                    HostResult {
+                        host: h.host.clone(),
+                        status: status.to_string(),
+                        duration_ms: h.duration_ms,
+                        output: serde_json::json!({
+                            "files_copied": h.files_copied,
+                            "files_failed": h.files_failed,
+                            "errors": h.errors,
+                        }),
+                    }
+                })
+                .collect();
+            OperationReport {
+                executed_at: r.executed_at.clone(),
+                command: "cp".to_string(),
+                filter,
+                task: serde_json::json!({ "local": r.local, "remote": r.remote }),
+                targets: r.targets.clone(),
+                summary: summarize(&results),
+                results,
+            }
+        }
         CommandReport::Log(r) => {
             let results: Vec<HostResult> = r
                 .entries

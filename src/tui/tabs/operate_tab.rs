@@ -58,6 +58,10 @@ pub enum OpField {
     SyncAdhocInput,
     /// sync: source override input.
     SyncSource,
+    /// cp: local path input (file/dir/wildcard).
+    CpLocal,
+    /// cp: remote destination input (optional).
+    CpRemote,
     /// `-o/--out` report path (all operations).
     Out,
     /// Read-only applicable [[check]]/[[sync]] entries (scrolls with ↑↓).
@@ -112,6 +116,10 @@ pub fn operate_fields(
                 v.push(OpField::SyncAdhocInput);
             }
         }
+        OperationKind::Cp => {
+            v.push(OpField::CpLocal);
+            v.push(OpField::CpRemote);
+        }
     }
     if has_entries(op, sync_mode, config) {
         v.push(OpField::Entries);
@@ -153,7 +161,9 @@ pub fn layer_of(field: OpField) -> OpLayer {
         | OpField::Keep
         | OpField::SyncModeToggle
         | OpField::SyncAdhocInput
-        | OpField::SyncSource => OpLayer::CommandSpecific,
+        | OpField::SyncSource
+        | OpField::CpLocal
+        | OpField::CpRemote => OpLayer::CommandSpecific,
         OpField::Entries => OpLayer::Entries,
         OpField::Execute => OpLayer::Execute,
     }
@@ -170,6 +180,8 @@ pub struct OperateRenderData<'a> {
     pub sync_source_input: &'a InputField,
     pub run_command: &'a InputField,
     pub exec_script: &'a InputField,
+    pub cp_local_input: &'a InputField,
+    pub cp_remote_input: &'a InputField,
     pub out_input: &'a InputField,
     pub run_sudo: bool,
     pub exec_sudo: bool,
@@ -351,6 +363,18 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                 }
             }
         }
+        OperationKind::Cp => {
+            rows.push(RowItem::Field(
+                data.cp_local_input,
+                "Local path (file / dir / 'dir/*.ext')",
+                data.focus == OpField::CpLocal,
+            ));
+            rows.push(RowItem::Field(
+                data.cp_remote_input,
+                "Remote destination (optional, defaults to ~)",
+                data.focus == OpField::CpRemote,
+            ));
+        }
     }
 
     // ── Layout: fixed rows, entries (Min 0), execute bar (2) ──
@@ -394,6 +418,7 @@ fn op_name(op: OperationKind) -> &'static str {
         OperationKind::Run => "run",
         OperationKind::Exec => "exec",
         OperationKind::Sync => "sync",
+        OperationKind::Cp => "cp",
     }
 }
 
@@ -420,6 +445,7 @@ fn op_radio_line<'a>(data: &OperateRenderData) -> Line<'a> {
         (OperationKind::Run, "run"),
         (OperationKind::Exec, "exec"),
         (OperationKind::Sync, "sync"),
+        (OperationKind::Cp, "cp"),
         (OperationKind::Check, "check"),
     ];
     let mut spans = vec![Span::raw(" Operation: ")];

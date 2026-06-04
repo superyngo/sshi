@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-04 — `cp` command: copy local files/dirs to hosts
+- feat(cli): new `cp` subcommand copies a local file, directory (recursive), or
+  quoted wildcard pattern to remote hosts. Two positional args — local path
+  (required) and remote path (optional, defaults to the remote home directory,
+  mirroring `scp`). A leading `~` in the remote path is expanded per host/shell.
+  Supports the shared target / `--serial` / `--timeout` / `--dry-run` / `--out`
+  arguments. Per-file SFTP transfers remain capped at 64 MB; oversized files are
+  reported and skipped.
+- feat(tui): new **cp** operation on the Operate tab with local-path and
+  remote-path inputs.
+
 ### 2026-06-04 — Relax minimum terminal size
 - feat(tui): lower minimum terminal size from 80×24 to 60×20 so the TUI is
   operable on phones (Termux landscape, mobile SSH clients); below the new

@@ -197,6 +197,9 @@ pub struct App {
     run_command: InputField,
     /// Text input for the `exec` script path field (NOT persisted per AD-12).
     exec_script: InputField,
+    /// Text inputs for the `cp` local/remote path fields (NOT persisted per AD-12).
+    cp_local: InputField,
+    cp_remote: InputField,
     /// Sudo / keep boolean params (persisted per AD-12).
     run_sudo: bool,
     exec_sudo: bool,
@@ -324,6 +327,8 @@ impl App {
             operate_operation: persisted.operate.operation,
             run_command: InputField::new(""),
             exec_script: InputField::new(""),
+            cp_local: InputField::new(""),
+            cp_remote: InputField::new(""),
             run_sudo: persisted.operate.run_sudo,
             exec_sudo: persisted.operate.exec_sudo,
             exec_keep: persisted.operate.exec_keep,
@@ -685,6 +690,7 @@ impl App {
                             CommandReport::Run(_) => "run",
                             CommandReport::Exec(_) => "exec",
                             CommandReport::Sync(_) => "sync",
+                            CommandReport::Cp(_) => "cp",
                             CommandReport::Log(_) => "log",
                             CommandReport::List(_) => "list",
                         };
@@ -909,7 +915,8 @@ impl App {
     /// excluded (its core honours `dry_run` itself). Returns true (redraw).
     fn dry_run_preview(&mut self) -> bool {
         use crate::commands::report::{
-            CheckHostResult, CheckReport, ExecHostResult, ExecReport, RunHostResult, RunReport,
+            CheckHostResult, CheckReport, CpHostResult, CpReport, ExecHostResult, ExecReport,
+            RunHostResult, RunReport,
         };
 
         if self.running_op.is_some() {
@@ -999,6 +1006,36 @@ impl App {
                 })
             }
             OperationKind::Sync => unreachable!("sync dry-run is handled by sync_core"),
+            OperationKind::Cp => {
+                let local = self.cp_local.value.trim().to_string();
+                if local.is_empty() {
+                    self.error = Some("Local path field is empty.".to_string());
+                    return true;
+                }
+                let remote = {
+                    let r = self.cp_remote.value.trim();
+                    if r.is_empty() { "~".to_string() } else { r.to_string() }
+                };
+                CommandReport::Cp(CpReport {
+                    executed_at,
+                    local,
+                    remote,
+                    planned_files: 0,
+                    targets: targets.clone(),
+                    hosts: targets
+                        .iter()
+                        .map(|h| CpHostResult {
+                            host: h.clone(),
+                            status: HostStatus::Skipped,
+                            duration_ms: None,
+                            detail: detail.clone(),
+                            files_copied: 0,
+                            files_failed: 0,
+                            errors: Vec::new(),
+                        })
+                        .collect(),
+                })
+            }
         };
 
         let n = targets.len();
@@ -1262,6 +1299,102 @@ impl App {
                     let sink = EventSender::new(event_tx.clone());
                     let outcome = tokio::select! {
                         res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res,
+                        _ = cancel_for_task.cancelled() => {
+                            let _ = event_tx.send(TuiEvent::OperationCancelled);
+                            return;
+                        }
+                    };
+                    match outcome {
+                        Ok(report) => {
+                            let _ = event_tx.send(TuiEvent::OperationFinished(report));
+                        }
+                        Err(e) => {
+                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                        }
+                    }
+                });
+            });
+
+        self.progress_popup_scroll = None;
+        self.running_op = Some(RunningOp {
+            cancel,
+            started_at: std::time::Instant::now(),
+            targets,
+            host_outcomes: Vec::new(),
+            mode: mode_for_op,
+            out: out_for_op,
+        });
+        true
+    }
+
+    /// Execute a `cp` operation in a background thread, following the same
+    /// pattern as `execute_exec`.
+    fn execute_cp(&mut self) -> bool {
+        if self.running_op.is_some() {
+            self.error = Some("Operation already running".to_string());
+            return true;
+        }
+        let local = self.cp_local.value.trim().to_string();
+        if local.is_empty() {
+            self.error = Some("Local path field is empty.".to_string());
+            return true;
+        }
+        let remote_raw = self.cp_remote.value.trim().to_string();
+        let remote: Option<String> = if remote_raw.is_empty() {
+            None
+        } else {
+            Some(remote_raw)
+        };
+
+        let target_mode = build_target_mode(&self.target_filter, &self.config);
+        let targets: Vec<String> =
+            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
+                Ok(t) if !t.is_empty() => t,
+                Ok(_) => {
+                    self.error = Some("No hosts matched the current filter.".to_string());
+                    return true;
+                }
+                Err(e) => {
+                    self.error = Some(format!("Filter error: {e}"));
+                    return true;
+                }
+            };
+        let serial = self.target_filter.serial;
+        let timeout = self.last_timeout_secs;
+        let mode_for_op = target_mode.clone();
+        let out_for_op = self.out_path();
+        let cfg = self.config.clone();
+        let cfg_path = self.config_path.clone();
+        let event_tx = self.event_tx.clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel_for_task = cancel.clone();
+
+        let _ = std::thread::Builder::new()
+            .name("sshi-op".to_string())
+            .spawn(move || {
+                let rt = match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                        return;
+                    }
+                };
+                rt.block_on(async move {
+                    let ctx = match Context::from_tui_parts(
+                        cfg, cfg_path, target_mode, serial, timeout, false,
+                    ) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                            return;
+                        }
+                    };
+                    let sink = EventSender::new(event_tx.clone());
+                    let outcome = tokio::select! {
+                        res = crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink)) => res,
                         _ = cancel_for_task.cancelled() => {
                             let _ = event_tx.send(TuiEvent::OperationCancelled);
                             return;
@@ -1784,6 +1917,12 @@ impl App {
                 }
                 OpField::SyncSource if self.sync_source_input.mode == InputMode::Active => {
                     Some(&mut self.sync_source_input)
+                }
+                OpField::CpLocal if self.cp_local.mode == InputMode::Active => {
+                    Some(&mut self.cp_local)
+                }
+                OpField::CpRemote if self.cp_remote.mode == InputMode::Active => {
+                    Some(&mut self.cp_remote)
                 }
                 OpField::Out if self.out_input.mode == InputMode::Active => {
                     Some(&mut self.out_input)
@@ -2400,6 +2539,8 @@ impl App {
                     OpField::Script => self.exec_script.activate(),
                     OpField::SyncAdhocInput => self.sync_adhoc_input.activate(),
                     OpField::SyncSource => self.sync_source_input.activate(),
+                    OpField::CpLocal => self.cp_local.activate(),
+                    OpField::CpRemote => self.cp_remote.activate(),
                     OpField::Out => self.out_input.activate(),
                     OpField::Execute => {
                         // Feed the shared dry-run toggle into the sync path.
@@ -2418,6 +2559,7 @@ impl App {
                             OperationKind::Run => self.execute_run(),
                             OperationKind::Exec => self.execute_exec(),
                             OperationKind::Sync => self.execute_sync(),
+                            OperationKind::Cp => self.execute_cp(),
                         });
                     }
                     _ => {}
@@ -3183,6 +3325,8 @@ impl App {
             sync_source_input: &self.sync_source_input,
             run_command: &self.run_command,
             exec_script: &self.exec_script,
+            cp_local_input: &self.cp_local,
+            cp_remote_input: &self.cp_remote,
             out_input: &self.out_input,
             run_sudo: self.run_sudo,
             exec_sudo: self.exec_sudo,
@@ -3207,6 +3351,7 @@ impl App {
             OperationKind::Run => "run",
             OperationKind::Exec => "exec",
             OperationKind::Sync => "sync",
+            OperationKind::Cp => "cp",
         };
         operate_tab::render_progress_popup(
             &self.theme,
@@ -3244,6 +3389,16 @@ impl App {
                 format!(
                     "  mode:{} dry-run:{} total_synced:{}",
                     r.mode, r.dry_run, r.total_files_synced
+                ),
+            ),
+            CommandReport::Cp(r) => (
+                r.hosts.len(),
+                r.executed_at.as_str(),
+                format!(
+                    "  {} → {}  ({} file(s)/host)",
+                    truncate(&r.local, 30),
+                    truncate(&r.remote, 24),
+                    r.planned_files
                 ),
             ),
             CommandReport::Log(r) => (
@@ -3403,6 +3558,30 @@ impl App {
                     }
                 }
             }
+            CommandReport::Cp(r) => {
+                let ok = r
+                    .hosts
+                    .iter()
+                    .filter(|h| h.status == HostStatus::Online)
+                    .count();
+                let skipped = r
+                    .hosts
+                    .iter()
+                    .filter(|h| h.status == HostStatus::Skipped)
+                    .count();
+                let fail = r.hosts.len() - ok - skipped;
+                lines.push(Line::from(format!(
+                    "Summary: {ok} ok / {fail} fail / {skipped} skipped    Executed: {executed_at}"
+                )));
+                lines.push(Line::from(header_detail));
+                lines.push(Line::from(""));
+                for h in &r.hosts {
+                    lines.push(render_row(&h.host, h.status, &h.detail, h.duration_ms));
+                    for err in h.errors.iter().take(2) {
+                        lines.push(Line::from(format!("     ↳ {}", truncate(err, 70))));
+                    }
+                }
+            }
             CommandReport::Log(r) => {
                 lines.push(Line::from(format!(
                     "Log Entries: {} queried    Executed: {executed_at}",
@@ -3456,7 +3635,7 @@ impl App {
         frame.render_widget(Clear, popup_area);
         let body = match self.active_tab {
             TabId::Operate => format!(
-                "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults appear in a popup when the operation completes.",
+                "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\ncp    — copy a local file/dir to targets (defaults to ~).\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults appear in a popup when the operation completes.",
                 self.last_timeout_secs
             ),
             TabId::View => "View tab\n\nView checkout snapshots, host/config list, or operation log.\nUse ↑↓ to move between fields; ←→ switches op (on Op row) or target mode.\nEnter on Members/Skip opens the picker; PgUp/PgDn/Home/End scroll results.\no     — export the currently viewed data to a report file.\nData refreshes automatically on op switch and after operations.".to_string(),
@@ -3615,6 +3794,7 @@ fn cycle_operation(op: OperationKind, forward: bool) -> OperationKind {
         OperationKind::Run,
         OperationKind::Exec,
         OperationKind::Sync,
+        OperationKind::Cp,
         OperationKind::Check,
     ];
     let pos = order.iter().position(|o| *o == op).unwrap_or(0);

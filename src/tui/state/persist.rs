@@ -175,6 +175,7 @@ pub enum OperationKind {
     Run,
     Exec,
     Sync,
+    Cp,
 }
 
 // ---------- path computation (AD-16) ----------

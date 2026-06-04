@@ -7,6 +7,7 @@ SSH-config-based cross-platform remote management tool.
 - **Host Discovery**: Import hosts from `~/.ssh/config` with automatic shell type detection
 - **System Snapshots**: Collect and store system information for historical tracking
 - **File Synchronization**: Sync files across multiple hosts using collect-decide-distribute model
+- **File Copy**: Push local files or directories to many hosts at once (`cp`, scp-style)
 - **Remote Execution**: Run commands or scripts on multiple hosts in parallel
 - **TUI Interface**: Interactive terminal UI (`sshi`) for browsing snapshot data, configuring filters, and running checks
 
@@ -73,7 +74,7 @@ cargo build --bin sshi --features tui             # TUI build
 | Config (group picker) | `Enter` / `s` | Apply group selection |
 | Config (group picker) | `Esc` | Cancel group picker |
 | Operate | `↑` / `↓` (or `j`/`k`) | Move between zones |
-| Operate | `←` / `→` | Cycle operation radio (check / run / exec / sync) |
+| Operate | `←` / `→` | Cycle operation radio (check / run / exec / sync / cp) |
 | Operate | `f` | Open Target Filter popup |
 | Operate | `Enter` on `[Execute]` | Run the selected operation |
 | Operate | `Tab` / `Shift+Tab` | Cycle tabs (Operate and Checkout only) |
@@ -173,6 +174,34 @@ sshi exec --all ./script.sh --keep
 # Preview without executing
 sshi exec --all ./deploy.sh --dry-run
 ```
+
+### Cp
+
+Copy local files or directories to remote hosts, fanning out to every target (scp-style):
+
+```bash
+# Copy a file to the remote home directory (~)
+sshi cp --all ./app.conf
+
+# Copy to an explicit remote path
+sshi cp --all ./app.conf /etc/app/app.conf
+
+# Copy a directory recursively (file vs. directory is auto-detected)
+sshi cp -g web ./assets ~/assets
+
+# Wildcards — quote the pattern so sshi expands it (not your shell)
+sshi cp --all './configs/*.toml' ~/configs/
+
+# Preview without transferring
+sshi cp --all ./app.conf --dry-run
+```
+
+- The **local path** (required, first positional) may be a file, a directory
+  (copied recursively), or a quoted wildcard pattern expanded by sshi itself.
+- The **remote path** (optional, second positional) defaults to the remote home
+  directory, mirroring `scp`. A leading `~` is expanded per host/shell.
+- Per-file transfers use SFTP and are capped at 64 MB each; oversized files are
+  reported and skipped.
 
 ### Checkout
 
