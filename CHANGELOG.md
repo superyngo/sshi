@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.0.1] - 2026-06-04
+
+### Fixed
+- fix(tui): remove `DisableMouseCapture` from terminal setup — resolves spurious mouse events interfering with keyboard input on some terminals
+- fix(test): Windows-compatible temp-file handling in config round-trip and TUI flush tests — use `TempPath` (closed handle) instead of `NamedTempFile` to avoid "Access denied" errors on atomic rename
+- fix(test): clippy `field_reassign_with_default` — use struct literal initialisation in `operate_state_extended_round_trips` and `skip_field_round_trips_and_defaults_empty`
+
 ## [v1.0.0] - 2026-06-03
 
 ### 2026-06-03 — Log & List `--out` / TUI Export `o`

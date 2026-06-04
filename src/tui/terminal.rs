@@ -6,7 +6,7 @@
 use std::io;
 
 use anyhow::Result;
-use crossterm::{event::DisableMouseCapture, execute, terminal};
+use crossterm::{execute, terminal};
 
 /// RAII guard that puts the terminal in alternate-screen + raw mode on
 /// install and restores it on drop (normal exit, `?` early return, panic
@@ -16,11 +16,7 @@ pub struct TerminalGuard;
 impl TerminalGuard {
     pub fn install() -> Result<Self> {
         terminal::enable_raw_mode()?;
-        execute!(
-            io::stdout(),
-            terminal::EnterAlternateScreen,
-            DisableMouseCapture,
-        )?;
+        execute!(io::stdout(), terminal::EnterAlternateScreen)?;
         Ok(Self)
     }
 }

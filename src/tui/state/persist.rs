@@ -425,14 +425,16 @@ active_tab = "Config"
 
     #[test]
     fn operate_state_extended_round_trips() {
-        let mut s = OperateState::default();
-        s.log_last = 50;
-        s.log_errors = true;
-        s.checkout_history = true;
-        s.check_dry_run = true;
-        s.run_dry_run = true;
-        s.exec_dry_run = true;
-        s.view_operation = ViewOperationKind::Log;
+        let s = OperateState {
+            log_last: 50,
+            log_errors: true,
+            checkout_history: true,
+            check_dry_run: true,
+            run_dry_run: true,
+            exec_dry_run: true,
+            view_operation: ViewOperationKind::Log,
+            ..Default::default()
+        };
         let ser = toml::to_string(&s).unwrap();
         let back: OperateState = toml::from_str(&ser).unwrap();
         assert_eq!(back.log_last, 50);
@@ -494,8 +496,10 @@ active_tab = "Checkout"
         let s: TuiPersistedState = toml::from_str("").unwrap();
         assert!(s.target_filter.skip.is_empty());
 
-        let mut t = TargetFilterState::default();
-        t.skip = vec!["h9".into()];
+        let t = TargetFilterState {
+            skip: vec!["h9".into()],
+            ..Default::default()
+        };
         let ser = toml::to_string(&t).unwrap();
         let back: TargetFilterState = toml::from_str(&ser).unwrap();
         assert_eq!(back.skip, vec!["h9".to_string()]);

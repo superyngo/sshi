@@ -2188,7 +2188,7 @@ dependencies = [
 
 [[package]]
 name = "sshi"
-version = "0.9.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "blake3",

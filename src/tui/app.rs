@@ -3650,8 +3650,11 @@ mod flush_tests {
     fn flush_writes_when_dirty_and_clears_flag() {
         let mut config = AppConfig::default();
         config.settings.skipped_hosts = vec!["host-a".to_string(), "host-b".to_string()];
-        let tmp = NamedTempFile::new().expect("temp file");
-        let path = tmp.path().to_path_buf();
+        // Use into_temp_path() to close the file handle: on Windows, save() uses
+        // an atomic rename which fails with "Access denied" if the destination
+        // file is still open.
+        let tmp = NamedTempFile::new().expect("temp file").into_temp_path();
+        let path = tmp.to_path_buf();
 
         let mut dirty = true;
         flush_config_if_dirty(&mut dirty, &config, Some(&path));

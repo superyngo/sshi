@@ -474,7 +474,10 @@ fn inject_config_comments(toml_str: &str) -> String {
 mod tests {
     use super::*;
 
-    fn write_tmp(content: &str) -> tempfile::NamedTempFile {
+    // Returns TempPath (not NamedTempFile) so the file handle is closed before
+    // callers invoke save(), which needs an atomic rename on Windows. Windows
+    // rejects renaming over an open file with "Access denied".
+    fn write_tmp(content: &str) -> tempfile::TempPath {
         let mut f = tempfile::Builder::new()
             .prefix("sshi-cfg-test-")
             .suffix(".toml")
@@ -482,14 +485,14 @@ mod tests {
             .unwrap();
         f.write_all(content.as_bytes()).unwrap();
         f.flush().unwrap();
-        f
+        f.into_temp_path()
     }
 
     #[test]
     fn bom_is_stripped_on_load() {
         let with_bom = "\u{feff}[settings]\ndefault_timeout = 7\n".to_string();
         let f = write_tmp(&with_bom);
-        let cfg = load(Some(f.path())).unwrap().unwrap();
+        let cfg = load(Some(&*f)).unwrap().unwrap();
         assert_eq!(cfg.settings.default_timeout, 7);
     }
 
@@ -510,9 +513,9 @@ default_timeout = 30
 unknown_future_option = true
 ";
         let f = write_tmp(original);
-        let cfg = load(Some(f.path())).unwrap().unwrap();
-        save(&cfg, Some(f.path())).unwrap();
-        let after = std::fs::read_to_string(f.path()).unwrap();
+        let cfg = load(Some(&*f)).unwrap().unwrap();
+        save(&cfg, Some(&*f)).unwrap();
+        let after = std::fs::read_to_string(&*f).unwrap();
         assert!(
             after.contains("unknown_future_option = true"),
             "unknown key dropped:\n{after}"
@@ -548,8 +551,8 @@ enable_all = true
 recursive = false
 ";
         let f = write_tmp(original);
-        let mut cfg = load(Some(f.path())).unwrap().unwrap();
         // Mutate one field of each kind through the same path the TUI uses.
+        let mut cfg = load(Some(&*f)).unwrap().unwrap();
         cfg.host[0].groups = vec!["new1".into(), "new2".into()];
         cfg.host[0].proxy_jump = Some("bastion".into());
         cfg.check[0].enabled = vec!["online".into(), "cpu_load".into()];
@@ -560,8 +563,8 @@ recursive = false
         cfg.sync[0].paths = vec!["/srv".into(), "/opt".into()];
         cfg.sync[0].propagate_deletes = Some(true);
 
-        save(&cfg, Some(f.path())).unwrap();
-        let reloaded = load(Some(f.path())).unwrap().unwrap();
+        save(&cfg, Some(&*f)).unwrap();
+        let reloaded = load(Some(&*f)).unwrap().unwrap();
 
         assert_eq!(reloaded.host[0].groups, vec!["new1", "new2"]);
         assert_eq!(reloaded.host[0].proxy_jump.as_deref(), Some("bastion"));
@@ -615,10 +618,10 @@ recursive = false
 max_concurrency = 10  # max 50
 ";
         let f = write_tmp(original);
-        let mut cfg = load(Some(f.path())).unwrap().unwrap();
+        let mut cfg = load(Some(&*f)).unwrap().unwrap();
         cfg.settings.max_concurrency = 20;
-        save(&cfg, Some(f.path())).unwrap();
-        let after = std::fs::read_to_string(f.path()).unwrap();
+        save(&cfg, Some(&*f)).unwrap();
+        let after = std::fs::read_to_string(&*f).unwrap();
         assert!(
             after.contains("max_concurrency = 20"),
             "value not updated:\n{after}"
