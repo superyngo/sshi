@@ -2483,10 +2483,8 @@ pub fn entry_label_check(config: &AppConfig, i: usize) -> String {
     config
         .check
         .get(i)
-        .map(|c| match c.name.as_deref().filter(|n| !n.is_empty()) {
-            Some(n) => format!("Check #{} [{}]", i + 1, n),
-            None => format!("Check #{}", i + 1),
-        })
+        .and_then(|c| c.name.as_deref().filter(|n| !n.is_empty()))
+        .map(|n| n.to_string())
         .unwrap_or_else(|| format!("Check #{}", i + 1))
 }
 
@@ -2494,14 +2492,8 @@ pub fn entry_label_sync(config: &AppConfig, i: usize) -> String {
     config
         .sync
         .get(i)
-        .map(|s| {
-            let path_hint = s.paths.first().map(|p| trunc(p, 10)).unwrap_or_default();
-            if path_hint.is_empty() {
-                format!("Sync #{}", i + 1)
-            } else {
-                format!("Sync #{}: {}", i + 1, path_hint)
-            }
-        })
+        .and_then(|s| s.name.as_deref().filter(|n| !n.is_empty()))
+        .map(|n| n.to_string())
         .unwrap_or_else(|| format!("Sync #{}", i + 1))
 }
 

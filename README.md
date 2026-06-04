@@ -74,13 +74,13 @@ cargo build --bin sshi --features tui             # TUI build
 | Config (group picker) | `Enter` / `s` | Apply group selection |
 | Config (group picker) | `Esc` | Cancel group picker |
 | Operate | `↑` / `↓` (or `j`/`k`) | Move between zones |
-| Operate | `←` / `→` | Cycle operation radio (check / run / exec / sync / cp) |
+| Operate | `←` / `→` (or `Tab` / `Shift+Tab`) | Cycle the focused radio: operation (check / run / exec / sync / cp) or target mode |
 | Operate | `f` | Open Target Filter popup |
 | Operate | `Enter` on `[Execute]` | Run the selected operation |
-| Operate | `Tab` / `Shift+Tab` | Cycle tabs (Operate and Checkout only) |
+| Operate | `e` | Run the current operation from anywhere on the tab |
+| View | `←` / `→` (or `Tab` / `Shift+Tab`) | Cycle the `Show:` selector (Checkout / List / Log) |
 | Checkout | `↑` `↓` `j` `k` | Move row selection |
 | Checkout | `PgUp` `PgDn` `Home` `End` | Page / jump navigation |
-| Checkout | `Tab` / `Shift+Tab` | Cycle tabs |
 | View (all) | `o` | Export the currently viewed data to a report file (.json or .html) |
 
 > **Note:** On the Config tab, `Tab` switches between the Sidebar and FieldTable zones rather than cycling to the next tab. Use `1` / `2` / `3` to switch tabs from Config.

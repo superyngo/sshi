@@ -417,10 +417,82 @@ impl App {
         }
     }
 
+    /// Cycle the Operate operation radio (run/exec/sync/cp/check). Shared by ←→
+    /// and Tab/BackTab while the operation radio holds focus.
+    fn operate_cycle_operation(&mut self, forward: bool) {
+        self.operate_operation = cycle_operation(self.operate_operation, forward);
+        self.save_state();
+    }
+
+    /// Cycle the Operate target mode (All → Groups → Hosts → Shell). Shared by
+    /// ←→ and Tab/BackTab while the target row holds focus. Doesn't validate the
+    /// mode here — that would force an empty Groups/Hosts selection back to All
+    /// before the user can pick members.
+    fn operate_cycle_target_mode(&mut self, forward: bool) {
+        self.target_filter.mode = cycle_target_mode(self.target_filter.mode, forward);
+        // The Members row only exists for non-All modes; if we just switched to
+        // All while focused there, keep focus on the Target row.
+        if self.target_filter.mode == TargetFilterMode::All {
+            self.operate_focus = OpField::TargetMode;
+        }
+        self.save_state();
+        self.apply_checkout_filter();
+        self.view_dirty = true;
+    }
+
+    /// Toggle the sync mode (Config entries ↔ Ad-hoc files). Shared by ←→,
+    /// Space, and Tab/BackTab while the sync mode row holds focus.
+    fn toggle_sync_mode(&mut self) {
+        self.sync_mode = match self.sync_mode {
+            SyncMode::ConfigEntries => SyncMode::AdHoc,
+            SyncMode::AdHoc => SyncMode::ConfigEntries,
+        };
+        self.save_state();
+    }
+
+    /// Run the currently-selected operation. Shared by Enter-on-Execute and the
+    /// `e` hotkey. Returns whether the frame should redraw.
+    fn trigger_execute(&mut self) -> bool {
+        // Feed the shared dry-run toggle into the sync path.
+        self.sync_dry_run = self.op_dry_run;
+        // Ensure the per-host timeout reflects the Timeout field.
+        self.last_timeout_secs = self.target_filter.timeout;
+        // sync_core honours dry-run internally; check/run/exec cores do not, so
+        // preview them synthetically without contacting any host.
+        if self.op_dry_run && !matches!(self.operate_operation, OperationKind::Sync) {
+            return self.dry_run_preview();
+        }
+        match self.operate_operation {
+            OperationKind::Check => self.execute_check(),
+            OperationKind::Run => self.execute_run(),
+            OperationKind::Exec => self.execute_exec(),
+            OperationKind::Sync => self.execute_sync(),
+            OperationKind::Cp => self.execute_cp(),
+        }
+    }
+
     /// Tab/BackTab: cycle the focus among peers in the *current layer* only,
     /// wrapping at the layer's ends. Arrow keys (operate_move_focus) cross
     /// layer boundaries; Tab never leaves the layer (mirrors Config zones).
     fn operate_tab_cycle(&mut self, forward: bool) {
+        // Radios cycle their value on Tab (matching ←→): the operation radio is
+        // alone in its layer, and the target row cycles its mode in place while
+        // ↑↓ still steps to the other Common fields.
+        match self.operate_focus {
+            OpField::OpRadio => {
+                self.operate_cycle_operation(forward);
+                return;
+            }
+            OpField::TargetMode | OpField::TargetMembers => {
+                self.operate_cycle_target_mode(forward);
+                return;
+            }
+            OpField::SyncModeToggle => {
+                self.toggle_sync_mode();
+                return;
+            }
+            _ => {}
+        }
         let layer = operate_tab::layer_of(self.operate_focus);
         let peers: Vec<OpField> = self
             .operate_field_list()
@@ -463,6 +535,26 @@ impl App {
     /// All configured host names.
     fn available_hosts(&self) -> Vec<String> {
         self.config.host.iter().map(|h| h.name.clone()).collect()
+    }
+
+    /// Cycle the View op (Checkout → List → Log) and refresh. Shared by ←→ and
+    /// Tab/BackTab while the Op selector holds focus.
+    fn cycle_view_op(&mut self, forward: bool) {
+        self.view_op = if forward {
+            match self.view_op {
+                ViewOperationKind::Checkout => ViewOperationKind::List,
+                ViewOperationKind::List => ViewOperationKind::Log,
+                ViewOperationKind::Log => ViewOperationKind::Checkout,
+            }
+        } else {
+            match self.view_op {
+                ViewOperationKind::Checkout => ViewOperationKind::Log,
+                ViewOperationKind::List => ViewOperationKind::Checkout,
+                ViewOperationKind::Log => ViewOperationKind::List,
+            }
+        };
+        self.view_focus = ViewFocus::OpSelector;
+        self.view_dirty = true;
     }
 
     /// Cycle the View target mode through All → Groups → Hosts → Shell
@@ -1677,13 +1769,18 @@ impl App {
     }
 
     /// Tab/BackTab on the View tab: cycle peers within the *current layer*.
-    /// Layers are OpSelector (single — stays), Settings (the stops between
-    /// OpSelector and Result), and Result (cycles data rows). Arrow keys cross
-    /// layers via view_focus_up/down; Tab never leaves the layer.
+    /// Layers are OpSelector (cycles the op value, like ←→), Settings (the stops
+    /// between OpSelector and Result), and Result (cycles data rows). Arrow keys
+    /// cross layers via view_focus_up/down; Tab never leaves the layer.
     fn view_tab_cycle(&mut self, forward: bool) {
         match self.view_focus {
             ViewFocus::Result => self.result_cursor_cycle(forward),
-            ViewFocus::OpSelector => {}
+            ViewFocus::OpSelector => self.cycle_view_op(forward),
+            // The target row cycles its mode in place (matching ←→); ↑↓ still
+            // steps to the other Settings fields (members / skip).
+            ViewFocus::TargetMode | ViewFocus::TargetMembers => {
+                self.view_cycle_target_mode(forward)
+            }
             _ => {
                 // Settings layer: cycle the stops excluding OpSelector/Result.
                 let settings: Vec<ViewFocus> =
@@ -2481,33 +2578,13 @@ impl App {
             KeyCode::Left | KeyCode::Right if self.active_tab == TabId::Operate => {
                 let right = key.code == KeyCode::Right;
                 match self.operate_focus {
-                    OpField::OpRadio => {
-                        self.operate_operation = cycle_operation(self.operate_operation, right);
-                        self.save_state();
-                    }
+                    OpField::OpRadio => self.operate_cycle_operation(right),
                     // The mode row and its value row are linked: ←→ cycles the
-                    // target mode from either. Don't validate here — that would
-                    // force an empty Groups/Hosts selection back to All before
-                    // the user can pick members.
+                    // target mode from either.
                     OpField::TargetMode | OpField::TargetMembers => {
-                        self.target_filter.mode = cycle_target_mode(self.target_filter.mode, right);
-                        // The Members row only exists for non-All modes; if we
-                        // just switched to All while focused there, keep focus on
-                        // the Target row instead of stranding it.
-                        if self.target_filter.mode == TargetFilterMode::All {
-                            self.operate_focus = OpField::TargetMode;
-                        }
-                        self.save_state();
-                        self.apply_checkout_filter();
-                        self.view_dirty = true;
+                        self.operate_cycle_target_mode(right)
                     }
-                    OpField::SyncModeToggle => {
-                        self.sync_mode = match self.sync_mode {
-                            SyncMode::ConfigEntries => SyncMode::AdHoc,
-                            SyncMode::AdHoc => SyncMode::ConfigEntries,
-                        };
-                        self.save_state();
-                    }
+                    OpField::SyncModeToggle => self.toggle_sync_mode(),
                     OpField::Timeout => {
                         let cur = self.target_filter.timeout;
                         self.target_filter.timeout = if right {
@@ -2548,26 +2625,7 @@ impl App {
                     OpField::CheckName => self.check_name.activate(),
                     OpField::SyncName => self.sync_name.activate(),
                     OpField::Out => self.out_input.activate(),
-                    OpField::Execute => {
-                        // Feed the shared dry-run toggle into the sync path.
-                        self.sync_dry_run = self.op_dry_run;
-                        // Ensure the per-host timeout reflects the Timeout field.
-                        self.last_timeout_secs = self.target_filter.timeout;
-                        // sync_core honours dry-run internally; check/run/exec
-                        // cores do not, so preview them synthetically without
-                        // contacting any host.
-                        if self.op_dry_run && !matches!(self.operate_operation, OperationKind::Sync)
-                        {
-                            return Ok(self.dry_run_preview());
-                        }
-                        return Ok(match self.operate_operation {
-                            OperationKind::Check => self.execute_check(),
-                            OperationKind::Run => self.execute_run(),
-                            OperationKind::Exec => self.execute_exec(),
-                            OperationKind::Sync => self.execute_sync(),
-                            OperationKind::Cp => self.execute_cp(),
-                        });
-                    }
+                    OpField::Execute => return Ok(self.trigger_execute()),
                     _ => {}
                 }
                 Ok(true)
@@ -2607,16 +2665,15 @@ impl App {
                         };
                         self.save_state();
                     }
-                    OpField::SyncModeToggle => {
-                        self.sync_mode = match self.sync_mode {
-                            SyncMode::ConfigEntries => SyncMode::AdHoc,
-                            SyncMode::AdHoc => SyncMode::ConfigEntries,
-                        };
-                        self.save_state();
-                    }
+                    OpField::SyncModeToggle => self.toggle_sync_mode(),
                     _ => {}
                 }
                 Ok(true)
+            }
+            // 'e' executes the current operation from anywhere in the Operate
+            // tab (shortcut for focusing Execute + Enter).
+            KeyCode::Char('e') if self.active_tab == TabId::Operate => {
+                Ok(self.trigger_execute())
             }
             // 'd' toggles the shared dry-run flag (shown by the Execute button).
             KeyCode::Char('d') if self.active_tab == TabId::Operate => {
@@ -2641,13 +2698,7 @@ impl App {
             // ── View tab ───────────────────────────────────────────────
             KeyCode::Left if self.active_tab == TabId::View => {
                 if self.view_focus == ViewFocus::OpSelector {
-                    self.view_op = match self.view_op {
-                        ViewOperationKind::Checkout => ViewOperationKind::Log,
-                        ViewOperationKind::List => ViewOperationKind::Checkout,
-                        ViewOperationKind::Log => ViewOperationKind::List,
-                    };
-                    self.view_focus = ViewFocus::OpSelector;
-                    self.view_dirty = true;
+                    self.cycle_view_op(false);
                 } else if matches!(
                     self.view_focus,
                     ViewFocus::TargetMode | ViewFocus::TargetMembers
@@ -2658,13 +2709,7 @@ impl App {
             }
             KeyCode::Right if self.active_tab == TabId::View => {
                 if self.view_focus == ViewFocus::OpSelector {
-                    self.view_op = match self.view_op {
-                        ViewOperationKind::Checkout => ViewOperationKind::List,
-                        ViewOperationKind::List => ViewOperationKind::Log,
-                        ViewOperationKind::Log => ViewOperationKind::Checkout,
-                    };
-                    self.view_focus = ViewFocus::OpSelector;
-                    self.view_dirty = true;
+                    self.cycle_view_op(true);
                 } else if matches!(
                     self.view_focus,
                     ViewFocus::TargetMode | ViewFocus::TargetMembers
@@ -2951,6 +2996,10 @@ impl App {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" sshi ")
+                    .title(
+                        Line::from(format!("v{} ", env!("CARGO_PKG_VERSION")))
+                            .right_aligned(),
+                    )
                     .border_style(block_border_style),
             )
             .select(selected)
@@ -3711,10 +3760,10 @@ impl App {
                 "↑↓:Rows ←→:Zones e:Edit E:Editor s:Save a:Add d:Del L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => {
-                "↑↓:Fields ←→:Value Enter:Pick/Edit Space:Toggle s:Serial d:Dry-run ?:Help q:Quit"
+                "↑↓:Fields ←→/Tab:Value Enter:Pick/Edit Space:Toggle e:Exec s:Serial d:Dry-run ?:Help q:Quit"
             }
             TabId::View => {
-                "↑↓:Fields ←→:Op/Mode Enter:Pick PgUp/PgDn o:Export L:Log i:Info ?:Help q:Quit"
+                "↑↓:Fields ←→/Tab:Show/Mode Enter:Pick PgUp/PgDn o:Export L:Log i:Info ?:Help q:Quit"
             }
         };
         let p = Paragraph::new(Line::from(vec![Span::styled(
@@ -3741,9 +3790,10 @@ Global keys
 
 Operate tab
   ↑↓ / j k   Navigate zones: OpRadio → ParamPanel → TargetRow → Execute
-  ← →         (OpRadio) cycle check / run / exec / sync
+  ← → / Tab   (OpRadio / Target row) cycle the selected option
   f           Open Target Filter popup
   Enter       (ParamPanel text field) activate input; (Execute) run operation
+  e           Run the current operation (from anywhere on the tab)
   Space       (checkbox) toggle sudo / yes / keep / dry-run / sync-mode
   Del         (SyncAdHocInput focused) remove last ad-hoc path
   Esc         Dismiss results popup / cancel running operation
@@ -3756,7 +3806,7 @@ Sync operation (ParamPanel)
   Space on Dry-run       Toggle dry-run flag
 
 View tab
-  ← →         Cycle checkout / list / log
+  ← → / Tab   (Show row) cycle checkout / list / log
   ↑↓ / j k    Move row selection
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-05 — TUI polish: entry names, `e` to execute, Tab-cycling radios, version header
+- change(tui): the Config sidebar now shows each `[[check]]`/`[[sync]]` entry's
+  `name` directly (falling back to `Check #n`/`Sync #n` when unnamed), instead of
+  the old `Check #n [name]` / `Sync #n: path` labels.
+- feat(tui): press `e` anywhere on the Operate tab to run the current operation
+  (shortcut for focusing `[Execute]` + Enter).
+- feat(tui): `Tab`/`Shift+Tab` now cycle the selected option in place on every
+  radio — the Operate operation radio, the Operate target row, the Operate sync
+  mode (Config entries ↔ Ad-hoc), the View "Show" selector, and the View target
+  row — the same as `←`/`→`. `↑`/`↓` still steps between fields.
+- change(tui): renamed the View tab's `Op:` selector label to `Show:` (Checkout /
+  List / Log are views, not operations).
+- feat(tui): the header bar shows the version number (`v<x.y.z>`) in the
+  top-right corner.
+
 ### 2026-06-04 — Name-based [[check]]/[[sync]] selection (breaking config change)
 - **breaking(config):** removed the `groups`, `enable_hosts`, and `enable_all`
   fields from `[[check]]` and `[[sync]]` entries. Entries are now selected by

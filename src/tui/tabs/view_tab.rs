@@ -262,7 +262,7 @@ fn render_view_selector(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     ];
 
     let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::raw(" Op: "));
+    spans.push(Span::raw(" Show: "));
     for (op, label) in &ops {
         let selected = *op == data.view_op;
         let style = if selected && data.op_selector_focused {
