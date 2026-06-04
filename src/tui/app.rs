@@ -70,8 +70,8 @@ fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std
     }
 }
 
-const MIN_COLS: u16 = 80;
-const MIN_ROWS: u16 = 24;
+const MIN_COLS: u16 = 60;
+const MIN_ROWS: u16 = 20;
 const POLL_INTERVAL_MS: u64 = 50;
 
 /// Focus zone within the View tab.

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-04 — Relax minimum terminal size
+- feat(tui): lower minimum terminal size from 80×24 to 60×20 so the TUI is
+  operable on phones (Termux landscape, mobile SSH clients); below the new
+  threshold the "Terminal too small" guard still applies.
+
 ## [v1.1.0] - 2026-06-04
 
 ### 2026-06-04 — TUI universal scroll / jump keys
