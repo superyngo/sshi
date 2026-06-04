@@ -1099,7 +1099,11 @@ impl App {
                 }
                 let remote = {
                     let r = self.cp_remote.value.trim();
-                    if r.is_empty() { "~".to_string() } else { r.to_string() }
+                    if r.is_empty() {
+                        "~".to_string()
+                    } else {
+                        r.to_string()
+                    }
                 };
                 CommandReport::Cp(CpReport {
                     executed_at,
@@ -2672,9 +2676,7 @@ impl App {
             }
             // 'e' executes the current operation from anywhere in the Operate
             // tab (shortcut for focusing Execute + Enter).
-            KeyCode::Char('e') if self.active_tab == TabId::Operate => {
-                Ok(self.trigger_execute())
-            }
+            KeyCode::Char('e') if self.active_tab == TabId::Operate => Ok(self.trigger_execute()),
             // 'd' toggles the shared dry-run flag (shown by the Execute button).
             KeyCode::Char('d') if self.active_tab == TabId::Operate => {
                 self.op_dry_run = !self.op_dry_run;
@@ -2996,10 +2998,7 @@ impl App {
                 Block::default()
                     .borders(Borders::ALL)
                     .title(" sshi ")
-                    .title(
-                        Line::from(format!("v{} ", env!("CARGO_PKG_VERSION")))
-                            .right_aligned(),
-                    )
+                    .title(Line::from(format!("v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
                     .border_style(block_border_style),
             )
             .select(selected)

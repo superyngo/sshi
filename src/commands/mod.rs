@@ -200,13 +200,25 @@ impl Context {
     /// the entry named `"default"` (if any). Target mode selects hosts, not
     /// entries.
     pub fn resolve_checks(&self, names: &[String]) -> Vec<&CheckEntry> {
-        select_named(&self.config.check, |e| e.name.as_deref(), names, Some("default"), "check")
+        select_named(
+            &self.config.check,
+            |e| e.name.as_deref(),
+            names,
+            Some("default"),
+            "check",
+        )
     }
 
     /// Resolve sync entries selected by `--name`. No default: with no names this
     /// returns nothing (the caller combines named entries with positional paths).
     pub fn resolve_syncs(&self, names: &[String]) -> Vec<&SyncEntry> {
-        select_named(&self.config.sync, |e| e.name.as_deref(), names, None, "sync")
+        select_named(
+            &self.config.sync,
+            |e| e.name.as_deref(),
+            names,
+            None,
+            "sync",
+        )
     }
 }
 
@@ -362,10 +374,11 @@ mod tests {
         assert_eq!(got, vec![1, 3]);
 
         // Explicit name selects only that entry.
-        let got: Vec<i32> = select_named(&entries, get, &["extra".to_string()], Some("default"), "x")
-            .iter()
-            .map(|e| e.1)
-            .collect();
+        let got: Vec<i32> =
+            select_named(&entries, get, &["extra".to_string()], Some("default"), "x")
+                .iter()
+                .map(|e| e.1)
+                .collect();
         assert_eq!(got, vec![2]);
 
         // No names and no default → empty (sync semantics).

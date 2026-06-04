@@ -302,9 +302,16 @@ mod tests {
 
     #[test]
     fn sync_parses_positional_paths_and_name() {
-        let cli =
-            Cli::try_parse_from(["sshi", "sync", "--all", "/etc/hosts", "/etc/resolv.conf", "-n", "dotfiles,configs"])
-                .unwrap();
+        let cli = Cli::try_parse_from([
+            "sshi",
+            "sync",
+            "--all",
+            "/etc/hosts",
+            "/etc/resolv.conf",
+            "-n",
+            "dotfiles,configs",
+        ])
+        .unwrap();
         match cli.command.unwrap() {
             Commands::Sync { paths, name, .. } => {
                 assert_eq!(paths, vec!["/etc/hosts", "/etc/resolv.conf"]);

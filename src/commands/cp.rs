@@ -195,7 +195,10 @@ pub async fn run(
     if dry_run {
         let transfers = plan_transfers(local, remote)?;
         let remote_base = remote.unwrap_or("~");
-        println!("[dry-run] local: {}  →  remote base: {}", local, remote_base);
+        println!(
+            "[dry-run] local: {}  →  remote base: {}",
+            local, remote_base
+        );
         println!("[dry-run] {} file(s) per host:", transfers.len());
         for t in &transfers {
             println!("  {} → {}", t.local.display(), t.remote);
@@ -267,8 +270,7 @@ fn plan_transfers(local: &str, remote: Option<&str>) -> Result<Vec<Transfer>> {
     let matches = expand_glob(local)?;
     let multi = matches.len() > 1;
     let base = remote.unwrap_or("~");
-    let rename_target =
-        !multi && remote.map(|r| !r.ends_with('/')).unwrap_or(false);
+    let rename_target = !multi && remote.map(|r| !r.ends_with('/')).unwrap_or(false);
 
     let mut transfers = Vec::new();
     for m in matches {
@@ -466,7 +468,10 @@ mod tests {
         let t = plan_transfers(src.to_str().unwrap(), Some("~/dest")).unwrap();
         let mut remotes: Vec<String> = t.iter().map(|x| x.remote.clone()).collect();
         remotes.sort();
-        assert_eq!(remotes, vec!["~/dest/assets/a.txt", "~/dest/assets/sub/b.txt"]);
+        assert_eq!(
+            remotes,
+            vec!["~/dest/assets/a.txt", "~/dest/assets/sub/b.txt"]
+        );
     }
 
     #[test]
