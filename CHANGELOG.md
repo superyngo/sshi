@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.1.0] - 2026-06-04
+
 ### 2026-06-04 — TUI universal scroll / jump keys
 - feat(tui): `PageUp` / `PageDown` / `Home` / `End` now work in every scrollable
   vertical region that previously only had ↑↓: the Operate applicable-entries
