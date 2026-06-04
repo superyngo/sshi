@@ -1364,9 +1364,6 @@ impl ConfigTabState {
                         id: generate_entry_id("check"),
                         enabled: vec![],
                         path: vec![],
-                        groups: vec![],
-                        enable_hosts: true,
-                        enable_all: true,
                     }
                 };
                 for f in &form.fields {
@@ -1386,9 +1383,6 @@ impl ConfigTabState {
                         name: None,
                         id: generate_entry_id("sync"),
                         paths: vec![],
-                        groups: vec![],
-                        enable_hosts: true,
-                        enable_all: true,
                         recursive: false,
                         mode: None,
                         propagate_deletes: None,
@@ -1462,17 +1456,11 @@ impl ConfigTabState {
                 id: generate_entry_id("check"),
                 enabled: vec![],
                 path: vec![],
-                groups: vec![],
-                enable_hosts: true,
-                enable_all: true,
             }),
             EntryFormKind::Sync => EntryFormState::new_sync(&SyncEntry {
                 name: None,
                 id: generate_entry_id("sync"),
                 paths: vec![],
-                groups: vec![],
-                enable_hosts: true,
-                enable_all: true,
                 recursive: false,
                 mode: None,
                 propagate_deletes: None,
@@ -2495,12 +2483,9 @@ pub fn entry_label_check(config: &AppConfig, i: usize) -> String {
     config
         .check
         .get(i)
-        .map(|c| {
-            if c.groups.is_empty() {
-                format!("Check #{}", i + 1)
-            } else {
-                format!("Check #{} [{}]", i + 1, c.groups.join(","))
-            }
+        .map(|c| match c.name.as_deref().filter(|n| !n.is_empty()) {
+            Some(n) => format!("Check #{} [{}]", i + 1, n),
+            None => format!("Check #{}", i + 1),
         })
         .unwrap_or_else(|| format!("Check #{}", i + 1))
 }
@@ -2639,8 +2624,6 @@ fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>,
         .host
         .iter()
         .flat_map(|h| h.groups.iter().cloned())
-        .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
-        .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
         .collect();
     for item in current {
         known.insert(item.clone());
@@ -2826,9 +2809,6 @@ mod tests {
             name: None,
             id: generate_entry_id("sync"),
             paths: vec![],
-            groups: vec![],
-            enable_hosts: true,
-            enable_all: true,
             recursive: false,
             mode: None,
             propagate_deletes: None,
@@ -2888,9 +2868,6 @@ mod tests {
             id: generate_entry_id("check"),
             enabled: vec![],
             path: vec![],
-            groups: vec![],
-            enable_hosts: true,
-            enable_all: true,
         });
         let mut state = ConfigTabState::new(&config, None);
         let sid = state
@@ -3039,9 +3016,6 @@ mod tests {
             name: Some("test".to_string()),
             id: "sync-test".to_string(),
             paths: vec!["a".to_string(), "b".to_string(), "c".to_string()],
-            groups: vec![],
-            enable_hosts: true,
-            enable_all: true,
             recursive: false,
             mode: None,
             propagate_deletes: None,
@@ -3105,9 +3079,6 @@ mod tests {
             name: Some("test".to_string()),
             id: "sync-test".to_string(),
             paths: vec!["a".to_string(), "b".to_string()],
-            groups: vec!["g1".to_string(), "g2".to_string()],
-            enable_hosts: true,
-            enable_all: true,
             recursive: false,
             mode: None,
             propagate_deletes: None,
@@ -3124,15 +3095,15 @@ mod tests {
             .iter()
             .position(|f| f.key == "paths")
             .unwrap();
-        let groups_idx = state
+        let other_idx = state
             .entry_form
             .as_ref()
             .unwrap()
             .fields
             .iter()
-            .position(|f| f.key == "groups")
+            .position(|f| f.key == "recursive")
             .unwrap();
-        assert_ne!(paths_idx, groups_idx);
+        assert_ne!(paths_idx, other_idx);
         // Capture with vec_editor on `paths` at cursor 1.
         if let Some(form) = state.entry_form.as_mut() {
             let mut ve = VecEditorState {
@@ -3148,10 +3119,10 @@ mod tests {
             form.vec_editor = Some(ve);
         }
         let snap = state.capture_selection();
-        // Between capture and restore, the form's vec_editor switches to `groups`.
+        // Between capture and restore, the form's vec_editor switches to another field.
         if let Some(form) = state.entry_form.as_mut() {
             form.vec_editor = Some(VecEditorState {
-                field_index: groups_idx,
+                field_index: other_idx,
                 items: vec!["g1".to_string(), "g2".to_string()],
                 vp: Viewport::new(),
                 input_active: false,
@@ -3326,9 +3297,6 @@ mod tests {
             id: generate_entry_id("check"),
             enabled: vec![],
             path: vec![],
-            groups: vec![],
-            enable_hosts: true,
-            enable_all: true,
         });
         let mut state = ConfigTabState::new(&config, None);
         let sid = state
@@ -3337,9 +3305,9 @@ mod tests {
             .position(|i| matches!(i, SidebarItem::Check(_)))
             .unwrap();
         state.sidebar_vp.selected = sid;
-        // enabled is index 0 in check_fields.
+        // enabled is index 1 in check_fields (name is index 0).
         state.direct_group_picker = Some(DirectGroupPickerState {
-            field_index: 0,
+            field_index: 1,
             sidebar_item: state.items[sid].clone(),
             field_key: "enabled".to_string(),
             available: vec!["online".into(), "cpu_load".into()],
@@ -3352,7 +3320,7 @@ mod tests {
         });
         state.commit_direct_popup_field(
             state.items[sid].clone(),
-            0,
+            1,
             "[online, cpu_load]",
             &mut config,
         );

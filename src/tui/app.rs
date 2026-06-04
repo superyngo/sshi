@@ -200,6 +200,9 @@ pub struct App {
     /// Text inputs for the `cp` local/remote path fields (NOT persisted per AD-12).
     cp_local: InputField,
     cp_remote: InputField,
+    /// Text inputs for check/sync config-entry name selection (NOT persisted).
+    check_name: InputField,
+    sync_name: InputField,
     /// Sudo / keep boolean params (persisted per AD-12).
     run_sudo: bool,
     exec_sudo: bool,
@@ -329,6 +332,8 @@ impl App {
             exec_script: InputField::new(""),
             cp_local: InputField::new(""),
             cp_remote: InputField::new(""),
+            check_name: InputField::new(""),
+            sync_name: InputField::new(""),
             run_sudo: persisted.operate.run_sudo,
             exec_sudo: persisted.operate.exec_sudo,
             exec_keep: persisted.operate.exec_keep,
@@ -447,18 +452,6 @@ impl App {
             .host
             .iter()
             .flat_map(|h| h.groups.iter().cloned())
-            .chain(
-                self.config
-                    .check
-                    .iter()
-                    .flat_map(|c| c.groups.iter().cloned()),
-            )
-            .chain(
-                self.config
-                    .sync
-                    .iter()
-                    .flat_map(|s| s.groups.iter().cloned()),
-            )
             .filter(|g| !g.is_empty())
             .collect();
         for g in &self.target_filter.groups {
@@ -1074,6 +1067,7 @@ impl App {
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
         let verbose = false;
+        let names = comma_names(&self.check_name.value);
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
         let event_tx = self.event_tx.clone();
@@ -1117,7 +1111,7 @@ impl App {
                     };
                     let sink = EventSender::new(event_tx.clone());
                     let outcome = tokio::select! {
-                        res = crate::commands::check::check_core(&ctx, Some(&sink)) => res,
+                        res = crate::commands::check::check_core(&ctx, &names, Some(&sink)) => res,
                         _ = cancel_for_task.cancelled() => {
                             let _ = event_tx.send(TuiEvent::OperationCancelled);
                             return;
@@ -1458,6 +1452,10 @@ impl App {
             SyncMode::AdHoc => self.sync_adhoc_files.clone(),
             SyncMode::ConfigEntries => Vec::new(),
         };
+        let names = match self.sync_mode {
+            SyncMode::ConfigEntries => comma_names(&self.sync_name.value),
+            SyncMode::AdHoc => Vec::new(),
+        };
         let source_override: Option<String> = {
             let v = self.sync_source_input.value.trim().to_string();
             if v.is_empty() {
@@ -1492,7 +1490,7 @@ impl App {
                     };
                     let sink = EventSender::new(event_tx.clone());
                     let outcome = tokio::select! {
-                        res = crate::commands::sync::sync_core(&ctx, &adhoc_files, dry_run, source_override.as_deref(), Some(&sink)) => res,
+                        res = crate::commands::sync::sync_core(&ctx, &adhoc_files, &names, dry_run, source_override.as_deref(), Some(&sink)) => res,
                         _ = cancel_for_task.cancelled() => {
                             let _ = event_tx.send(TuiEvent::OperationCancelled);
                             return;
@@ -1923,6 +1921,12 @@ impl App {
                 }
                 OpField::CpRemote if self.cp_remote.mode == InputMode::Active => {
                     Some(&mut self.cp_remote)
+                }
+                OpField::CheckName if self.check_name.mode == InputMode::Active => {
+                    Some(&mut self.check_name)
+                }
+                OpField::SyncName if self.sync_name.mode == InputMode::Active => {
+                    Some(&mut self.sync_name)
                 }
                 OpField::Out if self.out_input.mode == InputMode::Active => {
                     Some(&mut self.out_input)
@@ -2541,6 +2545,8 @@ impl App {
                     OpField::SyncSource => self.sync_source_input.activate(),
                     OpField::CpLocal => self.cp_local.activate(),
                     OpField::CpRemote => self.cp_remote.activate(),
+                    OpField::CheckName => self.check_name.activate(),
+                    OpField::SyncName => self.sync_name.activate(),
                     OpField::Out => self.out_input.activate(),
                     OpField::Execute => {
                         // Feed the shared dry-run toggle into the sync path.
@@ -3327,6 +3333,8 @@ impl App {
             exec_script: &self.exec_script,
             cp_local_input: &self.cp_local,
             cp_remote_input: &self.cp_remote,
+            check_name_input: &self.check_name,
+            sync_name_input: &self.sync_name,
             out_input: &self.out_input,
             run_sudo: self.run_sudo,
             exec_sudo: self.exec_sudo,
@@ -3789,6 +3797,15 @@ Log overlay
 }
 
 /// Cycle the operation radio (→ forward, ← backward).
+/// Split a comma-separated name input into trimmed, non-empty names.
+fn comma_names(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
 fn cycle_operation(op: OperationKind, forward: bool) -> OperationKind {
     let order = [
         OperationKind::Run,

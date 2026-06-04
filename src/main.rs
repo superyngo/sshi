@@ -142,11 +142,12 @@ async fn main() -> Result<()> {
         }
         Commands::Check {
             target,
+            name,
             dry_run,
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::check::run(&ctx, dry_run, &output).await
+            commands::check::run(&ctx, &name, dry_run, &output).await
         }
         Commands::Checkout {
             target,
@@ -160,13 +161,14 @@ async fn main() -> Result<()> {
         }
         Commands::Sync {
             target,
+            paths,
+            name,
             dry_run,
-            files,
             source,
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::sync::run(&ctx, dry_run, &files, source.as_deref(), &output).await
+            commands::sync::run(&ctx, dry_run, &paths, &name, source.as_deref(), &output).await
         }
         Commands::Cp {
             target,

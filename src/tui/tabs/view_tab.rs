@@ -555,11 +555,10 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
         )));
     } else {
         for (i, entry) in list_data.checks.iter().enumerate() {
-            let scope = format_scope(&entry.groups, entry.enable_hosts, entry.enable_all);
             lines.push(Line::from(Span::raw(format!(
-                "  [{}] scope: {}",
+                "  [{}] name: {}",
                 i + 1,
-                scope
+                format_entry_name(&entry.name)
             ))));
             if !entry.enabled.is_empty() {
                 lines.push(Line::from(Span::raw(format!(
@@ -591,11 +590,10 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
         )));
     } else {
         for (i, entry) in list_data.syncs.iter().enumerate() {
-            let scope = format_scope(&entry.groups, entry.enable_hosts, entry.enable_all);
             lines.push(Line::from(Span::raw(format!(
-                "  [{}] scope: {}  paths: {}",
+                "  [{}] name: {}  paths: {}",
                 i + 1,
-                scope,
+                format_entry_name(&entry.name),
                 entry.paths.join(", ")
             ))));
         }
@@ -687,21 +685,10 @@ pub fn list_selectable_lines(list: &ListData) -> Vec<bool> {
     sel
 }
 
-fn format_scope(groups: &[String], enable_hosts: bool, enable_all: bool) -> String {
-    let mut parts = Vec::new();
-    if !groups.is_empty() {
-        parts.push(format!("groups=[{}]", groups.join(", ")));
-    }
-    if !enable_hosts {
-        parts.push("hosts=off".to_string());
-    }
-    if !enable_all {
-        parts.push("all=off".to_string());
-    }
-    if parts.is_empty() {
-        "global".to_string()
-    } else {
-        parts.join(" ")
+fn format_entry_name(name: &Option<String>) -> String {
+    match name {
+        Some(n) if !n.is_empty() => n.clone(),
+        _ => "(unnamed)".to_string(),
     }
 }
 

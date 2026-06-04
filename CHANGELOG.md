@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-04 — Name-based [[check]]/[[sync]] selection (breaking config change)
+- **breaking(config):** removed the `groups`, `enable_hosts`, and `enable_all`
+  fields from `[[check]]` and `[[sync]]` entries. Entries are now selected by
+  their `name`. Old configs still parse (unknown keys are ignored), but those
+  fields no longer have any effect.
+- change(cli): target flags (`-a`/`-g`/`-h`/`-s`) now only select **hosts**;
+  `-n/--name` selects **which entries** to apply (orthogonal).
+- feat(cli): `check` gains `-n/--name` (comma-separated). With no `-n`, the entry
+  named `"default"` is applied (if present).
+- change(cli): `sync` drops `-f/--files`; paths are now positional
+  (space-separated) and combine with `-n/--name`. Passing neither errors.
+- change(tui): the Operate tab gains entry-name inputs for check and sync
+  (config-entries mode); the config editor now edits each entry's `name` and no
+  longer shows the removed scope fields. The `list`/View panes show entry names
+  instead of scope.
+
 ### 2026-06-04 — `cp` command: copy local files/dirs to hosts
 - feat(cli): new `cp` subcommand copies a local file, directory (recursive), or
   quoted wildcard pattern to remote hosts. Two positional args — local path

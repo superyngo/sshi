@@ -278,8 +278,6 @@ pub fn validate_filter(state: &mut TargetFilterState, config: &AppConfig) {
         .host
         .iter()
         .flat_map(|h| h.groups.iter().cloned())
-        .chain(config.check.iter().flat_map(|c| c.groups.iter().cloned()))
-        .chain(config.sync.iter().flat_map(|s| s.groups.iter().cloned()))
         .filter(|g| !g.is_empty())
         .collect();
     let known_hosts: std::collections::BTreeSet<String> =

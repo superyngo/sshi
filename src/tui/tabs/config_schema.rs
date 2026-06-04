@@ -173,10 +173,12 @@ pub fn host_fields(h: &HostEntry) -> Vec<FieldDescriptor> {
 
 pub fn check_fields(c: &CheckEntry) -> Vec<FieldDescriptor> {
     let mut f = vec![
+        FieldDescriptor::scalar(
+            "name",
+            c.name.clone().unwrap_or_default(),
+            FieldKind::OptionalString,
+        ),
         FieldDescriptor::vec_field("enabled", fmt_vec(&c.enabled), FieldKind::CheckEnabled),
-        FieldDescriptor::vec_field("groups", fmt_vec_unscoped(&c.groups), FieldKind::VecString),
-        FieldDescriptor::scalar("enable_hosts", c.enable_hosts.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("enable_all", c.enable_all.to_string(), FieldKind::Bool),
     ];
     for (i, p) in c.path.iter().enumerate() {
         f.push(FieldDescriptor::scalar(
@@ -190,10 +192,12 @@ pub fn check_fields(c: &CheckEntry) -> Vec<FieldDescriptor> {
 
 pub fn sync_fields(s: &SyncEntry) -> Vec<FieldDescriptor> {
     vec![
+        FieldDescriptor::scalar(
+            "name",
+            s.name.clone().unwrap_or_default(),
+            FieldKind::OptionalString,
+        ),
         FieldDescriptor::vec_field("paths", fmt_vec(&s.paths), FieldKind::VecString),
-        FieldDescriptor::vec_field("groups", fmt_vec_unscoped(&s.groups), FieldKind::VecString),
-        FieldDescriptor::scalar("enable_hosts", s.enable_hosts.to_string(), FieldKind::Bool),
-        FieldDescriptor::scalar("enable_all", s.enable_all.to_string(), FieldKind::Bool),
         FieldDescriptor::scalar("recursive", s.recursive.to_string(), FieldKind::Bool),
         FieldDescriptor::scalar(
             "mode",
@@ -289,10 +293,8 @@ pub fn apply_host(host: &mut HostEntry, key: &str, val: &str) {
 
 pub fn apply_check(check: &mut CheckEntry, key: &str, val: &str) {
     match key {
+        "name" => check.name = opt_string(val),
         "enabled" => check.enabled = parse_bracket_list(val),
-        "groups" => check.groups = parse_bracket_list(val),
-        "enable_hosts" => check.enable_hosts = val == "true",
-        "enable_all" => check.enable_all = val == "true",
         k if k.starts_with("path:") => {
             // path entries are edited via dedicated form, not single-string apply.
         }
@@ -302,10 +304,8 @@ pub fn apply_check(check: &mut CheckEntry, key: &str, val: &str) {
 
 pub fn apply_sync(sync: &mut SyncEntry, key: &str, val: &str) {
     match key {
+        "name" => sync.name = opt_string(val),
         "paths" => sync.paths = parse_bracket_list(val),
-        "groups" => sync.groups = parse_bracket_list(val),
-        "enable_hosts" => sync.enable_hosts = val == "true",
-        "enable_all" => sync.enable_all = val == "true",
         "recursive" => sync.recursive = val == "true",
         "mode" => {
             sync.mode = if val.is_empty() {
@@ -328,17 +328,18 @@ pub fn apply_sync(sync: &mut SyncEntry, key: &str, val: &str) {
 
 // ── Helpers (shared) ─────────────────────────────────────────────────────────
 
-pub fn fmt_vec(v: &[String]) -> String {
-    if v.is_empty() {
-        "(none)".to_string()
+/// Empty string → None, otherwise Some(trimmed-as-is).
+fn opt_string(val: &str) -> Option<String> {
+    if val.is_empty() {
+        None
     } else {
-        format!("[{}]", v.join(", "))
+        Some(val.to_string())
     }
 }
 
-fn fmt_vec_unscoped(v: &[String]) -> String {
+pub fn fmt_vec(v: &[String]) -> String {
     if v.is_empty() {
-        "(unscoped)".to_string()
+        "(none)".to_string()
     } else {
         format!("[{}]", v.join(", "))
     }
@@ -397,9 +398,6 @@ mod tests {
             id: "c1".into(),
             enabled: vec![],
             path: vec![],
-            groups: vec![],
-            enable_hosts: true,
-            enable_all: true,
         }
     }
 
@@ -408,9 +406,6 @@ mod tests {
             name: None,
             id: "s1".into(),
             paths: vec![],
-            groups: vec![],
-            enable_hosts: true,
-            enable_all: true,
             recursive: false,
             mode: None,
             propagate_deletes: None,
@@ -439,21 +434,23 @@ mod tests {
     }
 
     #[test]
-    fn check_enabled_and_groups_apply() {
+    fn check_enabled_and_name_apply() {
         let mut c = empty_check();
         apply_check(&mut c, "enabled", "[online, cpu_load]");
         assert_eq!(c.enabled, vec!["online", "cpu_load"]);
-        apply_check(&mut c, "groups", "[infra]");
-        assert_eq!(c.groups, vec!["infra"]);
+        apply_check(&mut c, "name", "default");
+        assert_eq!(c.name.as_deref(), Some("default"));
+        apply_check(&mut c, "name", "");
+        assert_eq!(c.name, None);
     }
 
     #[test]
-    fn sync_paths_and_groups_apply() {
+    fn sync_paths_and_name_apply() {
         let mut s = empty_sync();
         apply_sync(&mut s, "paths", "[/etc, /var/log]");
         assert_eq!(s.paths, vec!["/etc", "/var/log"]);
-        apply_sync(&mut s, "groups", "(unscoped)");
-        assert!(s.groups.is_empty());
+        apply_sync(&mut s, "name", "dotfiles");
+        assert_eq!(s.name.as_deref(), Some("dotfiles"));
     }
 
     #[test]

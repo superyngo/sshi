@@ -196,69 +196,61 @@ impl Context {
         }
     }
 
-    /// Resolve check entries based on target mode.
-    /// --groups: entries whose groups intersect. --hosts: entries with enable_hosts.
-    /// --all: entries with enable_all.
-    pub fn resolve_checks(&self) -> Vec<&CheckEntry> {
-        filter_entries_by_mode(
-            &self.config.check,
-            |e| &e.groups,
-            |e| e.enable_hosts,
-            |e| e.enable_all,
-            &self.mode,
-        )
+    /// Resolve check entries selected by `--name`. With no names, falls back to
+    /// the entry named `"default"` (if any). Target mode selects hosts, not
+    /// entries.
+    pub fn resolve_checks(&self, names: &[String]) -> Vec<&CheckEntry> {
+        select_named(&self.config.check, |e| e.name.as_deref(), names, Some("default"), "check")
     }
 
-    /// Resolve sync entries based on target mode.
-    pub fn resolve_syncs(&self) -> Vec<&SyncEntry> {
-        filter_entries_by_mode(
-            &self.config.sync,
-            |e| &e.groups,
-            |e| e.enable_hosts,
-            |e| e.enable_all,
-            &self.mode,
-        )
-    }
-
-    /// Resolve check entries for a single group (used in per-group execution).
-    pub fn resolve_checks_for_group(&self, group: &str) -> Vec<&CheckEntry> {
-        self.config
-            .check
-            .iter()
-            .filter(|e| e.groups.iter().any(|g| g == group))
-            .collect()
-    }
-
-    /// Resolve sync entries for a single group (used in per-group execution).
-    pub fn resolve_syncs_for_group(&self, group: &str) -> Vec<&SyncEntry> {
-        self.config
-            .sync
-            .iter()
-            .filter(|e| e.groups.iter().any(|g| g == group))
-            .collect()
+    /// Resolve sync entries selected by `--name`. No default: with no names this
+    /// returns nothing (the caller combines named entries with positional paths).
+    pub fn resolve_syncs(&self, names: &[String]) -> Vec<&SyncEntry> {
+        select_named(&self.config.sync, |e| e.name.as_deref(), names, None, "sync")
     }
 }
 
-/// Generic filter for config entries (check/sync) by target mode.
-/// --groups: entries whose groups intersect the specified groups.
-/// --hosts: entries where enable_hosts is true.
-/// --all: entries where enable_all is true.
-fn filter_entries_by_mode<'a, T>(
+/// Select config entries by `name`. When `names` is empty, `default_name` (if
+/// any) is used. Unknown requested names and duplicate config names are logged
+/// as warnings; all matching entries are returned.
+fn select_named<'a, T>(
     entries: &'a [T],
-    get_groups: impl Fn(&T) -> &Vec<String>,
-    get_enable_hosts: impl Fn(&T) -> bool,
-    get_enable_all: impl Fn(&T) -> bool,
-    mode: &TargetMode,
+    get_name: impl Fn(&T) -> Option<&str>,
+    names: &[String],
+    default_name: Option<&str>,
+    kind: &str,
 ) -> Vec<&'a T> {
-    entries
-        .iter()
-        .filter(|e| match mode {
-            TargetMode::All => get_enable_all(e),
-            TargetMode::Groups(g) => get_groups(e).iter().any(|eg| g.contains(eg)),
-            TargetMode::Hosts(_) => get_enable_hosts(e),
-            TargetMode::Shell(_) => get_enable_hosts(e),
-        })
-        .collect()
+    let wanted: Vec<&str> = if names.is_empty() {
+        default_name.into_iter().collect()
+    } else {
+        names.iter().map(|s| s.as_str()).collect()
+    };
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+
+    let mut selected: Vec<&T> = Vec::new();
+    for name in &wanted {
+        let matches: Vec<&T> = entries
+            .iter()
+            .filter(|e| get_name(e) == Some(*name))
+            .collect();
+        match matches.len() {
+            0 => tracing::warn!("no {} entry named '{}'", kind, name),
+            n => {
+                if n > 1 {
+                    tracing::warn!(
+                        "{} {} entries named '{}' — all will be applied",
+                        n,
+                        kind,
+                        name
+                    );
+                }
+                selected.extend(matches);
+            }
+        }
+    }
+    selected
 }
 
 /// Resolve which target mode the user intended, or show helpful error.
@@ -349,6 +341,38 @@ mod tests {
             shell: ShellType::Sh,
             proxy_jump: None,
         }
+    }
+
+    #[test]
+    fn select_named_defaults_and_matches() {
+        let entries = vec![
+            ("default".to_string(), 1),
+            ("extra".to_string(), 2),
+            ("default".to_string(), 3),
+        ];
+        fn get(e: &(String, i32)) -> Option<&str> {
+            Some(e.0.as_str())
+        }
+
+        // No names → fall back to "default" (matches both entries named default).
+        let got: Vec<i32> = select_named(&entries, get, &[], Some("default"), "x")
+            .iter()
+            .map(|e| e.1)
+            .collect();
+        assert_eq!(got, vec![1, 3]);
+
+        // Explicit name selects only that entry.
+        let got: Vec<i32> = select_named(&entries, get, &["extra".to_string()], Some("default"), "x")
+            .iter()
+            .map(|e| e.1)
+            .collect();
+        assert_eq!(got, vec![2]);
+
+        // No names and no default → empty (sync semantics).
+        assert!(select_named(&entries, get, &[], None, "x").is_empty());
+
+        // Unknown name → empty.
+        assert!(select_named(&entries, get, &["nope".to_string()], None, "x").is_empty());
     }
 
     #[test]

@@ -23,9 +23,10 @@ pub(crate) struct DisplayColumns {
 
 impl DisplayColumns {
     pub(crate) fn from_context(ctx: &Context) -> Self {
-        let checks = ctx.resolve_checks();
+        // Viewer: show columns for every configured metric, not just one
+        // selected entry (target mode no longer scopes entries).
         let mut metrics: Vec<String> = Vec::new();
-        for entry in &checks {
+        for entry in &ctx.config.check {
             for m in &entry.enabled {
                 if !metrics.contains(m) && m != "online" {
                     metrics.push(m.clone());

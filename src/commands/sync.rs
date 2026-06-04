@@ -11,7 +11,7 @@ use crate::host::session_pool::RusshSessionPool;
 use crate::output::printer;
 use crate::output::summary::SyncSummary;
 
-use super::{Context, TargetMode};
+use super::Context;
 
 /// Recursive sync entry with its applicable host set and effective source override.
 type RecursiveEntry<'a> = (&'a SyncEntry, HashSet<String>, Option<&'a str>);
@@ -54,7 +54,8 @@ type SkipInfo = Option<(String, String)>;
 pub async fn run(
     ctx: &Context,
     dry_run: bool,
-    files: &[String],
+    positional: &[String],
+    names: &[String],
     cli_source: Option<&str>,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
@@ -74,27 +75,19 @@ pub async fn run(
             .or_insert((Vec::new(), Vec::new()));
     }
 
-    // Step 1: Collect all file paths, separating recursive from non-recursive.
-    // For --groups: also build per-host applicable path sets for scoping.
+    // Step 1: Collect all file paths from --name entries plus positional paths,
+    // separating recursive from non-recursive. Target mode no longer scopes
+    // entries, so there is no per-host applicable-path map.
     let (mut all_paths, recursive_entries, mut host_applicable_paths, mut path_source_map) =
-        if !files.is_empty() {
-            let paths: Vec<String> = files.iter().map(|p| to_tilde_path(p)).collect();
-            // Populate path_source_map with cli_source so Step 3.5 directory expansion
-            // runs for directory paths passed via -f when a fixed source (-s) is given.
-            let mut path_src: HashMap<String, Option<&str>> = HashMap::new();
-            for p in &paths {
-                path_src.insert(p.clone(), cli_source);
-            }
-            (paths, Vec::new(), None, path_src)
+        collect_sync_paths(ctx, &hosts, names, positional, cli_source);
+    if all_paths.is_empty() && recursive_entries.is_empty() {
+        if names.is_empty() && positional.is_empty() {
+            println!("Nothing to sync. Pass paths and/or -n/--name (named [[sync]] entries).");
         } else {
-            let (paths, recursive, applicable, path_src) =
-                collect_sync_paths_scoped(ctx, &hosts, cli_source);
-            if paths.is_empty() && recursive.is_empty() {
-                println!("No sync entries matched the current filter. Add [[sync]] to config.toml or use --files/-f.");
-                return Ok(());
-            }
-            (paths, recursive, applicable, path_src)
-        };
+            println!("No sync paths resolved. Check -n/--name values or pass paths directly.");
+        }
+        return Ok(());
+    }
 
     if hosts.len() < 2 && (!all_paths.is_empty() || !recursive_entries.is_empty()) {
         println!("Need at least 2 hosts for sync (found {})", hosts.len());
@@ -617,21 +610,12 @@ pub async fn run(
     summary.print();
 
     if let Some(out) = &output.out {
-        let mode = if files.is_empty() {
+        let mode = if positional.is_empty() {
             "config_entries"
         } else {
             "adhoc"
         };
-        let requested_paths: Vec<String> = if files.is_empty() {
-            ctx.resolve_syncs()
-                .iter()
-                .flat_map(|e| e.paths.iter().cloned())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect()
-        } else {
-            files.iter().map(|p| to_tilde_path(p)).collect()
-        };
+        let requested_paths = requested_sync_paths(ctx, names, positional);
         let sync_report = build_sync_report(
             executed_at,
             mode,
@@ -664,7 +648,8 @@ pub async fn run(
 /// `CommandReport::Sync` report for the TUI results popup.
 pub async fn sync_core(
     ctx: &Context,
-    adhoc_files: &[String],
+    positional: &[String],
+    names: &[String],
     dry_run: bool,
     cli_source: Option<&str>,
     progress: Option<&(dyn crate::commands::report::ProgressSink + Sync)>,
@@ -672,7 +657,7 @@ pub async fn sync_core(
     use crate::commands::report::CommandReport;
 
     let executed_at = chrono::Utc::now().to_rfc3339();
-    let mode = if adhoc_files.is_empty() {
+    let mode = if positional.is_empty() {
         "config_entries"
     } else {
         "adhoc"
@@ -684,16 +669,7 @@ pub async fn sync_core(
     let mut summary = SyncSummary::default();
 
     // Paths requested for this run — used as the report `task`.
-    let requested_paths: Vec<String> = if adhoc_files.is_empty() {
-        ctx.resolve_syncs()
-            .iter()
-            .flat_map(|e| e.paths.iter().cloned())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    } else {
-        adhoc_files.iter().map(|p| to_tilde_path(p)).collect()
-    };
+    let requested_paths = requested_sync_paths(ctx, names, positional);
 
     for host in &hosts {
         host_file_map
@@ -708,34 +684,23 @@ pub async fn sync_core(
         }
     }
 
-    // Step 1: Collect all file paths
+    // Step 1: Collect all file paths from --name entries plus positional paths.
     let (mut all_paths, recursive_entries, mut host_applicable_paths, mut path_source_map) =
-        if !adhoc_files.is_empty() {
-            let paths: Vec<String> = adhoc_files.iter().map(|p| to_tilde_path(p)).collect();
-            let mut path_src: HashMap<String, Option<&str>> = HashMap::new();
-            for p in &paths {
-                path_src.insert(p.clone(), cli_source);
-            }
-            (paths, Vec::new(), None, path_src)
-        } else {
-            let (paths, recursive, applicable, path_src) =
-                collect_sync_paths_scoped(ctx, &hosts, cli_source);
-            if paths.is_empty() && recursive.is_empty() {
-                tracing::info!("No sync entries matched the current filter");
-                let report = build_sync_report(
-                    executed_at,
-                    mode,
-                    dry_run,
-                    &host_names,
-                    &host_file_map,
-                    &summary,
-                    &[],
-                    &requested_paths,
-                );
-                return Ok(CommandReport::Sync(report));
-            }
-            (paths, recursive, applicable, path_src)
-        };
+        collect_sync_paths(ctx, &hosts, names, positional, cli_source);
+    if all_paths.is_empty() && recursive_entries.is_empty() {
+        tracing::info!("No sync paths resolved from --name entries or positional paths");
+        let report = build_sync_report(
+            executed_at,
+            mode,
+            dry_run,
+            &host_names,
+            &host_file_map,
+            &summary,
+            &[],
+            &requested_paths,
+        );
+        return Ok(CommandReport::Sync(report));
+    }
 
     if hosts.len() < 2 && (!all_paths.is_empty() || !recursive_entries.is_empty()) {
         anyhow::bail!("Need at least 2 hosts for sync (found {})", hosts.len());
@@ -1282,14 +1247,18 @@ fn build_sync_report(
     }
 }
 
-/// Collect sync paths with per-host scoping for --groups mode.
-/// Returns: (all_paths for batch collection, recursive entries with host sets, optional per-host path map).
 /// Per-path source override map: path → source host name.
 type PathSourceMap<'a> = HashMap<String, Option<&'a str>>;
 
-fn collect_sync_paths_scoped<'a>(
+/// Collect sync paths from `--name`-selected [[sync]] entries plus ad-hoc
+/// positional paths. Target mode no longer scopes entries, so there is never a
+/// per-host applicable-path map (always `None`). Recursive entries apply to all
+/// targeted hosts.
+fn collect_sync_paths<'a>(
     ctx: &'a Context,
     hosts: &[&HostEntry],
+    names: &[String],
+    positional: &'a [String],
     cli_source: Option<&'a str>,
 ) -> (
     Vec<String>,
@@ -1297,81 +1266,49 @@ fn collect_sync_paths_scoped<'a>(
     Option<HostPathMap>,
     PathSourceMap<'a>,
 ) {
-    match &ctx.mode {
-        TargetMode::Groups(groups) => {
-            let mut all_paths_set: Vec<String> = Vec::new();
-            let mut host_paths: HashMap<String, HashSet<String>> = HashMap::new();
-            let mut recursive: Vec<(&SyncEntry, HashSet<String>, Option<&str>)> = Vec::new();
-            let mut seen_recursive: HashSet<usize> = HashSet::new();
-            let mut path_sources: PathSourceMap<'a> = HashMap::new();
+    let mut paths: Vec<String> = Vec::new();
+    let mut recursive: Vec<RecursiveEntry<'a>> = Vec::new();
+    let mut path_sources: PathSourceMap<'a> = HashMap::new();
 
-            for host in hosts {
-                let mut seen_entries = HashSet::new();
-                for group in &host.groups {
-                    if !groups.contains(group) {
-                        continue;
-                    }
-                    for entry in ctx.resolve_syncs_for_group(group) {
-                        let ptr = std::ptr::from_ref(entry) as usize;
-                        if !seen_entries.insert(ptr) {
-                            continue;
-                        }
-                        let effective_source = cli_source.or(entry.source.as_deref());
-                        if entry.recursive {
-                            // Track which hosts apply to this recursive entry
-                            if let Some(existing) = recursive
-                                .iter_mut()
-                                .find(|(e, _, _)| std::ptr::from_ref(*e) as usize == ptr)
-                            {
-                                existing.1.insert(host.name.clone());
-                            } else if seen_recursive.insert(ptr) {
-                                let mut host_set = HashSet::new();
-                                host_set.insert(host.name.clone());
-                                recursive.push((entry, host_set, effective_source));
-                            }
-                        } else {
-                            for p in &entry.paths {
-                                host_paths
-                                    .entry(host.name.clone())
-                                    .or_default()
-                                    .insert(p.clone());
-                                if !all_paths_set.contains(p) {
-                                    all_paths_set.push(p.clone());
-                                }
-                                path_sources.entry(p.clone()).or_insert(effective_source);
-                            }
-                        }
-                    }
+    for entry in ctx.resolve_syncs(names) {
+        let effective_source = cli_source.or(entry.source.as_deref());
+        if entry.recursive {
+            let all_host_names: HashSet<String> = hosts.iter().map(|h| h.name.clone()).collect();
+            recursive.push((entry, all_host_names, effective_source));
+        } else {
+            for p in &entry.paths {
+                if !paths.contains(p) {
+                    paths.push(p.clone());
                 }
+                path_sources.entry(p.clone()).or_insert(effective_source);
             }
-
-            (all_paths_set, recursive, Some(host_paths), path_sources)
-        }
-        _ => {
-            // Flat merge for --hosts, --shell, and --all
-            let sync_entries = ctx.resolve_syncs();
-            let mut paths = Vec::new();
-            let mut recursive = Vec::new();
-            let mut path_sources: PathSourceMap<'a> = HashMap::new();
-            for entry in sync_entries {
-                let effective_source = cli_source.or(entry.source.as_deref());
-                if entry.recursive {
-                    // For flat merge, all hosts are applicable
-                    let all_host_names: HashSet<String> =
-                        hosts.iter().map(|h| h.name.clone()).collect();
-                    recursive.push((entry, all_host_names, effective_source));
-                } else {
-                    for p in &entry.paths {
-                        if !paths.contains(p) {
-                            paths.push(p.clone());
-                        }
-                        path_sources.entry(p.clone()).or_insert(effective_source);
-                    }
-                }
-            }
-            (paths, recursive, None, path_sources)
         }
     }
+
+    // Ad-hoc positional paths (non-recursive), sourced from --source if given.
+    for p in positional {
+        let tp = to_tilde_path(p);
+        if !paths.contains(&tp) {
+            paths.push(tp.clone());
+        }
+        path_sources.entry(tp).or_insert(cli_source);
+    }
+
+    (paths, recursive, None, path_sources)
+}
+
+/// Distinct paths requested for a run (named entry paths ∪ positional paths),
+/// used as the report `task`.
+fn requested_sync_paths(ctx: &Context, names: &[String], positional: &[String]) -> Vec<String> {
+    let mut set: std::collections::BTreeSet<String> = ctx
+        .resolve_syncs(names)
+        .iter()
+        .flat_map(|e| e.paths.iter().cloned())
+        .collect();
+    for p in positional {
+        set.insert(to_tilde_path(p));
+    }
+    set.into_iter().collect()
 }
 
 /// Filter collect results to only include hosts whose applicable path set includes the path.

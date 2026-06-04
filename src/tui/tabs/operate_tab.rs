@@ -62,6 +62,10 @@ pub enum OpField {
     CpLocal,
     /// cp: remote destination input (optional).
     CpRemote,
+    /// check: name(s) of [[check]] entries to apply (comma-separated; default).
+    CheckName,
+    /// sync (config mode): name(s) of [[sync]] entries to apply.
+    SyncName,
     /// `-o/--out` report path (all operations).
     Out,
     /// Read-only applicable [[check]]/[[sync]] entries (scrolls with ↑↓).
@@ -97,7 +101,9 @@ pub fn operate_fields(
     // -o/--out lives at the bottom of the Common zone (applies to every op).
     v.push(OpField::Out);
     match op {
-        OperationKind::Check => {}
+        OperationKind::Check => {
+            v.push(OpField::CheckName);
+        }
         OperationKind::Run => {
             v.push(OpField::Command);
             v.push(OpField::Sudo);
@@ -112,6 +118,9 @@ pub fn operate_fields(
             // (anchored on top), then the ad-hoc add-path input below it.
             v.push(OpField::SyncModeToggle);
             v.push(OpField::SyncSource);
+            if sync_mode == SyncMode::ConfigEntries {
+                v.push(OpField::SyncName);
+            }
             if sync_mode == SyncMode::AdHoc {
                 v.push(OpField::SyncAdhocInput);
             }
@@ -163,7 +172,9 @@ pub fn layer_of(field: OpField) -> OpLayer {
         | OpField::SyncAdhocInput
         | OpField::SyncSource
         | OpField::CpLocal
-        | OpField::CpRemote => OpLayer::CommandSpecific,
+        | OpField::CpRemote
+        | OpField::CheckName
+        | OpField::SyncName => OpLayer::CommandSpecific,
         OpField::Entries => OpLayer::Entries,
         OpField::Execute => OpLayer::Execute,
     }
@@ -182,6 +193,8 @@ pub struct OperateRenderData<'a> {
     pub exec_script: &'a InputField,
     pub cp_local_input: &'a InputField,
     pub cp_remote_input: &'a InputField,
+    pub check_name_input: &'a InputField,
+    pub sync_name_input: &'a InputField,
     pub out_input: &'a InputField,
     pub run_sudo: bool,
     pub exec_sudo: bool,
@@ -296,10 +309,11 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     )));
     match data.operation {
         OperationKind::Check => {
-            rows.push(RowItem::Plain(Line::from(Span::styled(
-                "  (none)",
-                Style::default().fg(theme.inactive),
-            ))));
+            rows.push(RowItem::Field(
+                data.check_name_input,
+                "Entry name(s) (comma-sep; empty = \"default\")",
+                data.focus == OpField::CheckName,
+            ));
         }
         OperationKind::Run => {
             rows.push(RowItem::Field(
@@ -345,6 +359,13 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                 "Source override (optional)",
                 data.focus == OpField::SyncSource,
             ));
+            if data.sync_mode == SyncMode::ConfigEntries {
+                rows.push(RowItem::Field(
+                    data.sync_name_input,
+                    "Entry name(s) (comma-separated)",
+                    data.focus == OpField::SyncName,
+                ));
+            }
             if data.sync_mode == SyncMode::AdHoc {
                 rows.push(RowItem::Field(
                     data.sync_adhoc_input,
@@ -684,14 +705,7 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
                 } else {
                     entry.enabled.join(",")
                 };
-                let groups = if entry.groups.is_empty() {
-                    "unscoped".to_string()
-                } else {
-                    format!("groups:[{}]", entry.groups.join(","))
-                };
-                lines.push(Line::from(format!(
-                    "  ▸ {label} — {groups}  metrics:{metrics}"
-                )));
+                lines.push(Line::from(format!("  ▸ {label} — metrics:{metrics}")));
             }
         }
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
@@ -737,6 +751,11 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
             )));
         } else {
             for entry in data.config.sync.iter().skip(scroll).take(page_size) {
+                let name = entry
+                    .name
+                    .as_deref()
+                    .filter(|n| !n.is_empty())
+                    .unwrap_or("(unnamed)");
                 let paths = entry
                     .paths
                     .iter()
@@ -744,17 +763,12 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ");
-                let groups = if entry.groups.is_empty() {
-                    "unscoped".to_string()
-                } else {
-                    format!("groups:[{}]", entry.groups.join(","))
-                };
                 let src = entry
                     .source
                     .as_deref()
                     .map(|s| format!("  src:{s}"))
                     .unwrap_or_default();
-                lines.push(Line::from(format!("  ▸ {paths}  {groups}{src}")));
+                lines.push(Line::from(format!("  ▸ {name}: {paths}{src}")));
             }
         }
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);

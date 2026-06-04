@@ -102,9 +102,6 @@ fn default_concurrency() -> usize {
 fn default_per_host_concurrency() -> usize {
     4
 }
-fn default_true() -> bool {
-    true
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -148,7 +145,8 @@ impl std::fmt::Display for ShellType {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckEntry {
-    /// Display label for the TUI sidebar. Pure UI metadata; never a lookup key.
+    /// Selection key: `check -n <name>` runs this entry. Absent name → only
+    /// reachable via a `name = "default"` entry. Also the TUI sidebar label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
@@ -162,18 +160,6 @@ pub struct CheckEntry {
 
     #[serde(default)]
     pub path: Vec<CheckPath>,
-
-    /// Groups this check applies to. Empty = unscoped.
-    #[serde(default)]
-    pub groups: Vec<String>,
-
-    /// Whether this entry applies when using --host or --shell.
-    #[serde(default = "default_true")]
-    pub enable_hosts: bool,
-
-    /// Whether this entry applies when using --all.
-    #[serde(default = "default_true")]
-    pub enable_all: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,7 +170,8 @@ pub struct CheckPath {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncEntry {
-    /// Display label for the TUI sidebar. Pure UI metadata; never a lookup key.
+    /// Selection key: `sync -n <name>` runs this entry's paths. Also the TUI
+    /// sidebar label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 
@@ -194,15 +181,6 @@ pub struct SyncEntry {
     pub id: String,
 
     pub paths: Vec<String>,
-    /// Groups this sync applies to. Empty = unscoped.
-    #[serde(default)]
-    pub groups: Vec<String>,
-    /// Whether this entry applies when using --host or --shell.
-    #[serde(default = "default_true")]
-    pub enable_hosts: bool,
-    /// Whether this entry applies when using --all.
-    #[serde(default = "default_true")]
-    pub enable_all: bool,
     #[serde(default)]
     pub recursive: bool,
     pub mode: Option<String>,

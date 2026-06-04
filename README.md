@@ -108,8 +108,11 @@ sshi init --update
 Collect system snapshots from hosts:
 
 ```bash
-# All hosts
+# All hosts — applies the [[check]] entry named "default"
 sshi check --all
+
+# Apply specific named [[check]] entries (comma-separated)
+sshi check --all -n cpu,disk
 
 # Specific group
 sshi check -g servers
@@ -121,26 +124,34 @@ sshi check -h host1,host2
 sshi check --all --serial
 ```
 
+Target flags (`-a`/`-g`/`-h`/`-s`) select **which hosts** to act on; `-n/--name`
+selects **which `[[check]]` entries** to apply. With no `-n`, the entry named
+`"default"` is used (if present).
+
 ### Sync
 
 Synchronize files across hosts:
 
 ```bash
-# Sync configured files
-sshi sync --all
+# Sync paths directly (positional, space-separated)
+sshi sync --all /etc/hosts /etc/resolv.conf
+
+# Apply named [[sync]] entries from config
+sshi sync --all -n dotfiles,nginx
+
+# Combine named entries with extra ad-hoc paths
+sshi sync --all -n dotfiles /etc/hosts
 
 # Preview without changes
-sshi sync --all --dry-run
-
-# Sync specific files
-sshi sync --all -f /etc/hosts,/etc/resolv.conf
+sshi sync --all -n dotfiles --dry-run
 
 # Use fixed source host
-sshi sync --all -S host1
-
-# Don't push to hosts missing files
-sshi sync --all --no-push-missing
+sshi sync --all -n dotfiles -S host1
 ```
+
+Positional paths and `-n/--name` combine. Passing neither is an error — there is
+nothing to sync. (`[[sync]]`/`[[check]]` entries are selected by their `name`;
+the former `groups` / `enable_hosts` / `enable_all` entry fields were removed.)
 
 ### Run
 

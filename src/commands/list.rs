@@ -20,8 +20,9 @@ pub struct ListData {
 pub fn list_core(ctx: &Context) -> Result<ListData> {
     Ok(ListData {
         hosts: ctx.resolve_hosts()?.into_iter().cloned().collect(),
-        checks: ctx.resolve_checks().into_iter().cloned().collect(),
-        syncs: ctx.resolve_syncs().into_iter().cloned().collect(),
+        // Viewer: list every configured entry (selection now happens by --name).
+        checks: ctx.config.check.clone(),
+        syncs: ctx.config.sync.clone(),
     })
 }
 
@@ -49,13 +50,12 @@ pub async fn run(ctx: &Context, output: &crate::cli::OutputArgs) -> Result<()> {
     }
 
     // ── Checks ──
-    println!("\n── Applicable Checks ({}) ──", checks.len());
+    println!("\n── Check Entries ({}) ──", checks.len());
     if checks.is_empty() {
         println!("  (none)");
     } else {
         for (i, entry) in checks.iter().enumerate() {
-            let scope = format_scope(&entry.groups, entry.enable_hosts, entry.enable_all);
-            println!("  [{}] scope: {}", i + 1, scope);
+            println!("  [{}] name: {}", i + 1, entry_name(&entry.name));
             if !entry.enabled.is_empty() {
                 println!("      enabled: {}", entry.enabled.join(", "));
             }
@@ -66,16 +66,15 @@ pub async fn run(ctx: &Context, output: &crate::cli::OutputArgs) -> Result<()> {
     }
 
     // ── Sync ──
-    println!("\n── Applicable Sync Entries ({}) ──", syncs.len());
+    println!("\n── Sync Entries ({}) ──", syncs.len());
     if syncs.is_empty() {
         println!("  (none)");
     } else {
         for (i, entry) in syncs.iter().enumerate() {
-            let scope = format_scope(&entry.groups, entry.enable_hosts, entry.enable_all);
             println!(
-                "  [{}] scope: {}  paths: {}",
+                "  [{}] name: {}  paths: {}",
                 i + 1,
-                scope,
+                entry_name(&entry.name),
                 entry.paths.join(", ")
             );
         }
@@ -119,21 +118,10 @@ pub async fn run(ctx: &Context, output: &crate::cli::OutputArgs) -> Result<()> {
     Ok(())
 }
 
-fn format_scope(groups: &[String], enable_hosts: bool, enable_all: bool) -> String {
-    let mut parts = Vec::new();
-    if !groups.is_empty() {
-        parts.push(format!("groups=[{}]", groups.join(", ")));
-    }
-    if !enable_hosts {
-        parts.push("hosts=off".to_string());
-    }
-    if !enable_all {
-        parts.push("all=off".to_string());
-    }
-    if parts.is_empty() {
-        "global".to_string()
-    } else {
-        parts.join(" ")
+fn entry_name(name: &Option<String>) -> String {
+    match name {
+        Some(n) if !n.is_empty() => n.clone(),
+        _ => "(unnamed)".to_string(),
     }
 }
 

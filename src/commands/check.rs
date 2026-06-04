@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
 use anyhow::Result;
@@ -11,7 +11,7 @@ use crate::output::summary::Summary;
 use crate::state::retention;
 
 use super::report::{CheckHostResult, CheckReport, CommandReport, HostStatus, ProgressSink};
-use super::{Context, TargetMode};
+use super::Context;
 
 /// Per-host check configuration: (enabled_metrics, check_paths).
 type HostCheckConfig = (Vec<String>, Vec<(String, String)>);
@@ -28,10 +28,11 @@ type HostCheckConfig = (Vec<String>, Vec<(String, String)>);
 /// cleanup stay here because the TUI also needs them.
 pub async fn check_core(
     ctx: &Context,
+    names: &[String],
     progress: Option<&dyn ProgressSink>,
 ) -> Result<CommandReport> {
     let hosts = ctx.resolve_hosts()?;
-    let host_configs = build_host_check_configs(ctx, &hosts);
+    let host_configs = build_host_check_configs(ctx, &hosts, names);
 
     let run_start = chrono::Utc::now();
     let now_ts = run_start.timestamp();
@@ -245,10 +246,15 @@ pub async fn check_core(
 
 /// Thin CLI wrapper: invokes `check_core` with a printer-driven
 /// `ProgressSink`, prints the run summary, and writes `--out` reports.
-pub async fn run(ctx: &Context, dry_run: bool, output: &crate::cli::OutputArgs) -> Result<()> {
+pub async fn run(
+    ctx: &Context,
+    names: &[String],
+    dry_run: bool,
+    output: &crate::cli::OutputArgs,
+) -> Result<()> {
     if dry_run {
         let hosts = ctx.resolve_hosts()?;
-        let configs = build_host_check_configs(ctx, &hosts);
+        let configs = build_host_check_configs(ctx, &hosts, names);
         for host in &hosts {
             match configs.get(&host.name) {
                 Some((enabled, _paths)) if !enabled.is_empty() => {
@@ -268,7 +274,7 @@ pub async fn run(ctx: &Context, dry_run: bool, output: &crate::cli::OutputArgs) 
         // We need to detect the "no entries" case before invoking core to
         // print the same hint as before. Cheap: re-derive host_configs.
         let hosts = ctx.resolve_hosts()?;
-        build_host_check_configs(ctx, &hosts).is_empty()
+        build_host_check_configs(ctx, &hosts, names).is_empty()
     };
     if host_configs_empty_hint {
         println!("No check entries matched the current filter. Add [[check]] to config.toml.");
@@ -276,7 +282,7 @@ pub async fn run(ctx: &Context, dry_run: bool, output: &crate::cli::OutputArgs) 
     }
 
     let sink = PrinterSink;
-    let raw = check_core(ctx, Some(&sink)).await?;
+    let raw = check_core(ctx, names, Some(&sink)).await?;
     let CommandReport::Check(report) = &raw else {
         unreachable!("check_core always returns CommandReport::Check")
     };
@@ -336,74 +342,35 @@ impl ProgressSink for PrinterSink {
     }
 }
 
-/// Build per-host check configuration based on target mode.
-/// For --groups: each host gets metrics only from entries matching its groups (with entry dedup).
-/// For --hosts/--all: all hosts get the same merged metrics (flat merge).
+/// Build per-host check configuration from the `--name`-selected entries.
+/// Target mode only selects hosts; every targeted host gets the same merged
+/// metrics/paths from the named (or "default") [[check]] entries.
 fn build_host_check_configs(
     ctx: &Context,
     hosts: &[&HostEntry],
+    names: &[String],
 ) -> HashMap<String, HostCheckConfig> {
-    match &ctx.mode {
-        TargetMode::Groups(groups) => {
-            let mut configs = HashMap::new();
-            for host in hosts {
-                let mut enabled: Vec<String> = Vec::new();
-                let mut check_paths: Vec<(String, String)> = Vec::new();
-                let mut seen_entries = HashSet::new();
-
-                for group in &host.groups {
-                    if !groups.contains(group) {
-                        continue;
-                    }
-                    for entry in ctx.resolve_checks_for_group(group) {
-                        let ptr = std::ptr::from_ref(entry) as usize;
-                        if !seen_entries.insert(ptr) {
-                            continue;
-                        }
-                        for m in &entry.enabled {
-                            if !enabled.contains(m) {
-                                enabled.push(m.clone());
-                            }
-                        }
-                        for p in &entry.path {
-                            let key = (p.path.clone(), p.label.clone());
-                            if !check_paths.contains(&key) {
-                                check_paths.push(key);
-                            }
-                        }
-                    }
-                }
-
-                if !enabled.is_empty() || !check_paths.is_empty() {
-                    configs.insert(host.name.clone(), (enabled, check_paths));
-                }
+    let checks = ctx.resolve_checks(names);
+    let mut enabled: Vec<String> = Vec::new();
+    let mut check_paths: Vec<(String, String)> = Vec::new();
+    for entry in &checks {
+        for m in &entry.enabled {
+            if !enabled.contains(m) {
+                enabled.push(m.clone());
             }
-            configs
         }
-        _ => {
-            let checks = ctx.resolve_checks();
-            let mut enabled: Vec<String> = Vec::new();
-            let mut check_paths: Vec<(String, String)> = Vec::new();
-            for entry in &checks {
-                for m in &entry.enabled {
-                    if !enabled.contains(m) {
-                        enabled.push(m.clone());
-                    }
-                }
-                for p in &entry.path {
-                    let key = (p.path.clone(), p.label.clone());
-                    if !check_paths.contains(&key) {
-                        check_paths.push(key);
-                    }
-                }
+        for p in &entry.path {
+            let key = (p.path.clone(), p.label.clone());
+            if !check_paths.contains(&key) {
+                check_paths.push(key);
             }
-            let mut configs = HashMap::new();
-            if !enabled.is_empty() || !check_paths.is_empty() {
-                for host in hosts {
-                    configs.insert(host.name.clone(), (enabled.clone(), check_paths.clone()));
-                }
-            }
-            configs
         }
     }
+    let mut configs = HashMap::new();
+    if !enabled.is_empty() || !check_paths.is_empty() {
+        for host in hosts {
+            configs.insert(host.name.clone(), (enabled.clone(), check_paths.clone()));
+        }
+    }
+    configs
 }

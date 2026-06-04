@@ -297,11 +297,6 @@ fn check_to_table(c: &CheckEntry) -> Table {
         t.insert("id", value(c.id.as_str()));
     }
     t.insert("enabled", value(Value::Array(string_array(&c.enabled))));
-    if !c.groups.is_empty() {
-        t.insert("groups", value(Value::Array(string_array(&c.groups))));
-    }
-    t.insert("enable_hosts", value(c.enable_hosts));
-    t.insert("enable_all", value(c.enable_all));
     if !c.path.is_empty() {
         let mut aot = ArrayOfTables::new();
         for p in &c.path {
@@ -324,11 +319,6 @@ fn sync_to_table(s: &SyncEntry) -> Table {
         t.insert("id", value(s.id.as_str()));
     }
     t.insert("paths", value(Value::Array(string_array(&s.paths))));
-    if !s.groups.is_empty() {
-        t.insert("groups", value(Value::Array(string_array(&s.groups))));
-    }
-    t.insert("enable_hosts", value(s.enable_hosts));
-    t.insert("enable_all", value(s.enable_all));
     t.insert("recursive", value(s.recursive));
     if let Some(m) = &s.mode {
         t.insert("mode", value(m.as_str()));
@@ -591,17 +581,11 @@ recursive = false
                 id: String::new(),
                 enabled: vec![],
                 path: vec![],
-                groups: vec![],
-                enable_hosts: true,
-                enable_all: true,
             },
             SyncEntry {
                 name: None,
                 id: String::new(),
                 paths: vec![],
-                groups: vec![],
-                enable_hosts: true,
-                enable_all: true,
                 recursive: false,
                 mode: None,
                 propagate_deletes: None,

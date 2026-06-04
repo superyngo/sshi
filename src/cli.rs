@@ -101,6 +101,10 @@ pub enum Commands {
         #[command(flatten)]
         target: TargetArgs,
 
+        /// Apply named [[check]] entries (comma-separated). Default: the entry named "default".
+        #[arg(short = 'n', long, value_delimiter = ',', display_order = 19)]
+        name: Vec<String>,
+
         /// Preview which hosts/checks would run without collecting or writing
         #[arg(long, display_order = 20)]
         dry_run: bool,
@@ -133,13 +137,16 @@ pub enum Commands {
         #[command(flatten)]
         target: TargetArgs,
 
+        /// Paths to sync (space-separated). Combine freely with --name.
+        paths: Vec<String>,
+
+        /// Apply named [[sync]] entries (comma-separated). Combine with positional paths.
+        #[arg(short = 'n', long, value_delimiter = ',', display_order = 19)]
+        name: Vec<String>,
+
         /// Preview sync decisions without making changes
         #[arg(long, display_order = 20)]
         dry_run: bool,
-
-        /// Ad-hoc file paths to sync (comma-separated)
-        #[arg(short = 'f', long, value_delimiter = ',', display_order = 21)]
-        files: Vec<String>,
 
         /// Use a specific host as file source (bypasses auto-detection)
         #[arg(short = 'S', long, display_order = 22)]
@@ -291,6 +298,34 @@ mod tests {
     fn sync_still_parses_without_removed_flag() {
         let cli = Cli::try_parse_from(["sshi", "sync", "--all"]).unwrap();
         assert!(matches!(cli.command.unwrap(), Commands::Sync { .. }));
+    }
+
+    #[test]
+    fn sync_parses_positional_paths_and_name() {
+        let cli =
+            Cli::try_parse_from(["sshi", "sync", "--all", "/etc/hosts", "/etc/resolv.conf", "-n", "dotfiles,configs"])
+                .unwrap();
+        match cli.command.unwrap() {
+            Commands::Sync { paths, name, .. } => {
+                assert_eq!(paths, vec!["/etc/hosts", "/etc/resolv.conf"]);
+                assert_eq!(name, vec!["dotfiles", "configs"]);
+            }
+            _ => panic!("expected Sync"),
+        }
+    }
+
+    #[test]
+    fn sync_rejects_removed_files_flag() {
+        assert!(Cli::try_parse_from(["sshi", "sync", "--all", "-f", "/etc/hosts"]).is_err());
+    }
+
+    #[test]
+    fn check_parses_name() {
+        let cli = Cli::try_parse_from(["sshi", "check", "--all", "-n", "default,extra"]).unwrap();
+        match cli.command.unwrap() {
+            Commands::Check { name, .. } => assert_eq!(name, vec!["default", "extra"]),
+            _ => panic!("expected Check"),
+        }
     }
 
     #[test]
