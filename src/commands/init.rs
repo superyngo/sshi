@@ -27,6 +27,50 @@ fn partition_host_key_failures(
     (host_key_failures, other_failures)
 }
 
+/// Split connection failures into authentication failures (key rejected / no
+/// key accepted) and everything else. Auth failures surface as anyhow's outer
+/// context "Authentication failed for …" from `connect_direct`.
+#[allow(clippy::type_complexity)]
+fn partition_auth_failures(
+    failures: Vec<(String, String)>,
+) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    failures
+        .into_iter()
+        .partition(|(_, err)| err.contains("Authentication failed"))
+}
+
+/// Whether the user has any default SSH key pair (`~/.ssh/id_*.pub`).
+fn default_ssh_key_exists() -> bool {
+    let Some(ssh_dir) = dirs::home_dir().map(|h| h.join(".ssh")) else {
+        return false;
+    };
+    ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"]
+        .iter()
+        .any(|name| ssh_dir.join(format!("{name}.pub")).exists())
+}
+
+/// Prompt the user with a yes/no question on the real terminal. Returns true on
+/// an affirmative "y" answer.
+fn prompt_yes_no(question: &str) -> Result<bool> {
+    print!("{question} [y/N]: ");
+    std::io::Write::flush(&mut std::io::stdout())?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(answer.trim().eq_ignore_ascii_case("y"))
+}
+
+/// Run an interactive command on the real TTY (inherited stdio), so prompts like
+/// passphrases and remote passwords work. Returns true on success.
+fn run_interactive(program: &str, args: &[&str]) -> bool {
+    match std::process::Command::new(program).args(args).status() {
+        Ok(status) => status.success(),
+        Err(e) => {
+            eprintln!("Failed to run {program}: {e}");
+            false
+        }
+    }
+}
+
 /// Resolve the actual hostname and port for an SSH alias using `ssh -G`.
 /// Returns (hostname, port). Falls back to (alias, "22") on failure.
 /// Resolve SSH hostname and port for a host alias using ~/.ssh/config.
@@ -273,11 +317,11 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
         let failed_count = entry_refs.len() - connected;
         progress.finish_host_check(connected, failed_count);
 
-        // Partition failures: host key errors vs other errors
-        let (host_key_failures, other_failures) =
-            partition_host_key_failures(session_pool.failed_hosts());
+        // Partition failures: host-key errors, auth failures, everything else.
+        let (host_key_failures, rest) = partition_host_key_failures(session_pool.failed_hosts());
+        let (auth_failures, other_failures) = partition_auth_failures(rest);
 
-        // Report non-host-key errors immediately
+        // Report non-host-key, non-auth errors immediately
         for (name, err) in &other_failures {
             printer::print_host_line(name, "error", err);
             summary.add_failure(name, err);
@@ -361,9 +405,100 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
             }
         }
 
+        // Handle authentication failures: offer to create a key (if none) and
+        // copy it to the host via ssh-copy-id, then retry. ssh-copy-id is
+        // interactive (asks for the remote password), so it runs sequentially
+        // on the real TTY — never in the parallel pool.
+        let mut auth_retry_pool: Option<RusshSessionPool> = None;
+        if !auth_failures.is_empty() {
+            if dry_run {
+                for (name, _err) in &auth_failures {
+                    printer::print_host_line(name, "skip", "key auth failed (dry-run, skipped)");
+                    summary.add_skip();
+                }
+            } else {
+                println!(
+                    "\n{} host(s) could not authenticate with an SSH key:",
+                    auth_failures.len()
+                );
+                for (name, _err) in &auth_failures {
+                    println!("  - {}", name);
+                }
+
+                // Ensure a key exists before offering ssh-copy-id.
+                let mut have_key = default_ssh_key_exists();
+                if !have_key
+                    && prompt_yes_no("No SSH key found. Create one (ssh-keygen -t ed25519)?")?
+                {
+                    have_key = run_interactive("ssh-keygen", &["-t", "ed25519"]);
+                    if !have_key {
+                        println!("ssh-keygen did not produce a key; skipping ssh-copy-id.");
+                    }
+                }
+
+                let mut copied: Vec<String> = Vec::new();
+                if have_key {
+                    for (name, _err) in &auth_failures {
+                        if prompt_yes_no(&format!(
+                            "Copy your public key to '{name}' (ssh-copy-id)?"
+                        ))? {
+                            if run_interactive("ssh-copy-id", &[name]) {
+                                printer::print_host_line(name, "ok", "public key copied");
+                                copied.push(name.clone());
+                            } else {
+                                printer::print_host_line(name, "error", "ssh-copy-id failed");
+                                summary.add_failure(name, "ssh-copy-id failed");
+                            }
+                        } else {
+                            printer::print_host_line(name, "skip", "key copy declined");
+                            summary.add_skip();
+                        }
+                    }
+                } else {
+                    for (name, err) in &auth_failures {
+                        printer::print_host_line(name, "error", err);
+                        summary.add_failure(name, err);
+                    }
+                }
+
+                // Retry connection for hosts we copied the key to.
+                if !copied.is_empty() {
+                    let retry_entries: Vec<HostEntry> = copied
+                        .iter()
+                        .map(|name| HostEntry {
+                            name: name.clone(),
+                            ssh_host: name.clone(),
+                            shell: crate::config::schema::ShellType::Sh,
+                            groups: Vec::new(),
+                            proxy_jump: None,
+                        })
+                        .collect();
+                    let retry_refs: Vec<&HostEntry> = retry_entries.iter().collect();
+
+                    println!("\nRetrying {} host(s)...", copied.len());
+                    progress.start_host_check(retry_refs.len());
+                    let rp = RusshSessionPool::setup(&retry_refs, ctx.timeout, ctx.concurrency())
+                        .await?;
+                    let retry_connected = rp.reachable_hosts().len();
+                    let retry_failed = retry_refs.len() - retry_connected;
+                    progress.finish_host_check(retry_connected, retry_failed);
+
+                    for (name, err) in rp.failed_hosts() {
+                        printer::print_host_line(&name, "error", &err);
+                        summary.add_failure(&name, &err);
+                    }
+
+                    auth_retry_pool = Some(rp);
+                }
+            }
+        }
+
         // Detect shell type on reachable hosts using russh sessions
         let mut reachable = session_pool.reachable_hosts();
         if let Some(ref rp) = retry_pool {
+            reachable.extend(rp.reachable_hosts());
+        }
+        if let Some(ref rp) = auth_retry_pool {
             reachable.extend(rp.reachable_hosts());
         }
 
@@ -378,7 +513,12 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
             };
             let pool_ref = if session_pool.reachable_hosts().contains(host_name) {
                 &session_pool
-            } else if let Some(ref rp) = retry_pool {
+            } else if retry_pool
+                .as_ref()
+                .is_some_and(|rp| rp.reachable_hosts().contains(host_name))
+            {
+                retry_pool.as_ref().unwrap()
+            } else if let Some(ref rp) = auth_retry_pool {
                 rp
             } else {
                 continue;
@@ -404,6 +544,9 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
 
         session_pool.shutdown().await;
         if let Some(rp) = retry_pool {
+            rp.shutdown().await;
+        }
+        if let Some(rp) = auth_retry_pool {
             rp.shutdown().await;
         }
         progress.clear();
@@ -498,6 +641,27 @@ mod tests {
         let resolved = result.unwrap();
         assert_eq!(resolved.hostname, "nonexistent-test-host-xyz");
         assert_eq!(resolved.port, 22);
+    }
+
+    #[test]
+    fn test_partition_auth_failures_splits_on_auth_context() {
+        let failures = vec![
+            (
+                "host-a".to_string(),
+                "Authentication failed for bob@host-a:22".to_string(),
+            ),
+            ("host-b".to_string(), "Connection refused".to_string()),
+            (
+                "host-c".to_string(),
+                "Authentication failed for bob@host-c:22".to_string(),
+            ),
+        ];
+        let (auth, other) = partition_auth_failures(failures);
+        assert_eq!(auth.len(), 2);
+        assert_eq!(auth[0].0, "host-a");
+        assert_eq!(auth[1].0, "host-c");
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].0, "host-b");
     }
 
     #[test]

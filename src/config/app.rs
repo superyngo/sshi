@@ -68,7 +68,35 @@ pub fn load(custom_path: Option<&Path>) -> Result<Option<AppConfig>> {
     let content = strip_bom(&raw);
     let config: AppConfig =
         toml::from_str(content).with_context(|| format!("Failed to parse {}", path.display()))?;
+    warn_legacy_entry_names(&config);
     Ok(Some(config))
+}
+
+/// Non-fatal: warn about legacy `[[check]]`/`[[sync]]` entries with empty or
+/// duplicate names. Names are used as selection keys, so collisions/blanks are
+/// ambiguous, but we don't reject the file (back-compat).
+fn warn_legacy_entry_names(config: &AppConfig) {
+    use std::collections::HashSet;
+    let mut check_seen: HashSet<&str> = HashSet::new();
+    for c in &config.check {
+        match c.name.as_deref().map(str::trim) {
+            None | Some("") => tracing::warn!("[[check]] entry has an empty name"),
+            Some(n) if !check_seen.insert(n) => {
+                tracing::warn!("[[check]] name '{n}' is duplicated")
+            }
+            _ => {}
+        }
+    }
+    let mut sync_seen: HashSet<&str> = HashSet::new();
+    for s in &config.sync {
+        match s.name.as_deref().map(str::trim) {
+            None | Some("") => tracing::warn!("[[sync]] entry has an empty name"),
+            Some(n) if !sync_seen.insert(n) => {
+                tracing::warn!("[[sync]] name '{n}' is duplicated")
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Save config to disk, creating parent directories if needed.

@@ -34,6 +34,18 @@ pub enum PickerTarget {
     Hosts,
     Skip,
     Shell,
+    /// `[[check]]` entry names to apply (Operate tab; empty = "default").
+    CheckNames,
+    /// `[[sync]]` entry names to apply (Operate tab).
+    SyncNames,
+}
+
+impl PickerTarget {
+    /// Whether this picker offers the `a` = add-entry shortcut (name pickers
+    /// can jump to the Config add-entry form).
+    pub fn allows_add(self) -> bool {
+        matches!(self, PickerTarget::CheckNames | PickerTarget::SyncNames)
+    }
 }
 
 /// Outcome of a key handed to the picker.
@@ -42,6 +54,8 @@ pub enum PickerResult {
     Continue,
     Cancelled,
     Applied,
+    /// `a` pressed on a name picker — caller opens the Config add-entry form.
+    Add,
 }
 
 pub struct MemberPicker {
@@ -126,6 +140,7 @@ impl MemberPicker {
                 self.toggle();
                 PickerResult::Continue
             }
+            KeyCode::Char('a') if self.target.allows_add() => PickerResult::Add,
             _ => PickerResult::Continue,
         }
     }
@@ -161,6 +176,12 @@ impl MemberPicker {
             PickerTarget::Hosts => " Pick hosts · Space=toggle · Enter=apply · Esc=cancel ",
             PickerTarget::Skip => " Pick hosts to skip · Space=toggle · Enter=apply · Esc=cancel ",
             PickerTarget::Shell => " Pick shell · Space=select · Enter=apply · Esc=cancel ",
+            PickerTarget::CheckNames => {
+                " Pick [[check]] entries · Space=toggle · a=add · Enter=apply · Esc=cancel "
+            }
+            PickerTarget::SyncNames => {
+                " Pick [[sync]] entries · Space=toggle · a=add · Enter=apply · Esc=cancel "
+            }
         };
         let popup = centered_rect(60, 60, area);
         frame.render_widget(Clear, popup);
@@ -221,5 +242,46 @@ impl MemberPicker {
                 .collect()
         };
         frame.render_widget(Paragraph::new(lines), rows);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+    use ratatui::style::Color;
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    #[test]
+    fn a_adds_only_for_name_pickers() {
+        let mut p = MemberPicker::new(
+            PickerTarget::CheckNames,
+            vec!["a".into(), "b".into()],
+            &[],
+            Color::Cyan,
+        );
+        assert_eq!(p.handle_key(key('a')), PickerResult::Add);
+
+        let mut hosts = MemberPicker::new(PickerTarget::Hosts, vec!["h1".into()], &[], Color::Cyan);
+        // 'a' is inert for non-name pickers.
+        assert_eq!(hosts.handle_key(key('a')), PickerResult::Continue);
+    }
+
+    #[test]
+    fn name_picker_is_multi_and_prechecks_current() {
+        let mut p = MemberPicker::new(
+            PickerTarget::SyncNames,
+            vec!["x".into(), "y".into(), "z".into()],
+            &["y".into()],
+            Color::Cyan,
+        );
+        assert_eq!(p.chosen(), vec!["y".to_string()]);
+        // toggle another on (multi-select).
+        p.handle_key(key('j')); // cursor -> z? starts on 'y' (index1)
+        p.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(p.chosen(), vec!["y".to_string(), "z".to_string()]);
     }
 }

@@ -132,7 +132,9 @@ pub struct OperateState {
     pub exec_sudo: bool,
     /// Keep uploaded script on remote after execution.
     pub exec_keep: bool,
-    /// Sync tab: config_entries | adhoc
+    /// Deprecated: the Sync tab no longer has a config/ad-hoc mode toggle
+    /// (config entries and ad-hoc paths are now used together). Retained so
+    /// older state files still deserialize; no longer read.
     pub sync_mode: SyncMode,
     /// Sync tab: whether to do a dry run (no files transferred).
     pub sync_dry_run: bool,

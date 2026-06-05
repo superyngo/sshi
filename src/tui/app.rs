@@ -40,8 +40,7 @@ use super::components::popup::centered_rect;
 use super::components::viewport::Viewport;
 use super::log_layer::LogBufferHandle;
 use super::state::persist::{
-    self, ActiveTab, OperationKind, SyncMode, TargetFilterMode, TargetFilterState,
-    TuiPersistedState,
+    self, ActiveTab, OperationKind, TargetFilterMode, TargetFilterState, TuiPersistedState,
 };
 use super::tabs::config_tab::trunc;
 use super::tabs::config_tab::ConfigTabState;
@@ -189,6 +188,9 @@ pub struct App {
     operate_focus: OpField,
     /// Open member picker (groups/hosts/skip/shell), if any. Focus root.
     member_picker: Option<MemberPicker>,
+    /// When a name picker triggered `a` (add entry), the picker target to reopen
+    /// on the Operate tab once the Config add-entry form closes.
+    reopen_name_picker: Option<PickerTarget>,
     /// Shared dry-run toggle, shown by the Execute button (`d` toggles).
     op_dry_run: bool,
     /// Currently-selected operation on the Operate tab.
@@ -207,8 +209,7 @@ pub struct App {
     run_sudo: bool,
     exec_sudo: bool,
     exec_keep: bool,
-    /// Sync params (sync_mode and sync_dry_run persisted; adhoc_files NOT persisted per AD-12).
-    sync_mode: SyncMode,
+    /// Sync params (sync_dry_run persisted; adhoc_files NOT persisted per AD-12).
     sync_dry_run: bool,
     sync_adhoc_files: Vec<String>,
     sync_adhoc_input: InputField,
@@ -326,6 +327,7 @@ impl App {
             target_filter: persisted.target_filter,
             operate_focus: OpField::OpRadio,
             member_picker: None,
+            reopen_name_picker: None,
             op_dry_run: persisted.operate.sync_dry_run,
             operate_operation: persisted.operate.operation,
             run_command: InputField::new(""),
@@ -337,7 +339,6 @@ impl App {
             run_sudo: persisted.operate.run_sudo,
             exec_sudo: persisted.operate.exec_sudo,
             exec_keep: persisted.operate.exec_keep,
-            sync_mode: persisted.operate.sync_mode,
             sync_dry_run: persisted.operate.sync_dry_run,
             sync_adhoc_files: Vec::new(),
             sync_adhoc_input: InputField::new(""),
@@ -395,7 +396,6 @@ impl App {
         operate_tab::operate_fields(
             self.operate_operation,
             self.target_filter.mode,
-            self.sync_mode,
             &self.config,
         )
     }
@@ -440,16 +440,6 @@ impl App {
         self.view_dirty = true;
     }
 
-    /// Toggle the sync mode (Config entries ↔ Ad-hoc files). Shared by ←→,
-    /// Space, and Tab/BackTab while the sync mode row holds focus.
-    fn toggle_sync_mode(&mut self) {
-        self.sync_mode = match self.sync_mode {
-            SyncMode::ConfigEntries => SyncMode::AdHoc,
-            SyncMode::AdHoc => SyncMode::ConfigEntries,
-        };
-        self.save_state();
-    }
-
     /// Run the currently-selected operation. Shared by Enter-on-Execute and the
     /// `e` hotkey. Returns whether the frame should redraw.
     fn trigger_execute(&mut self) -> bool {
@@ -485,10 +475,6 @@ impl App {
             }
             OpField::TargetMode | OpField::TargetMembers => {
                 self.operate_cycle_target_mode(forward);
-                return;
-            }
-            OpField::SyncModeToggle => {
-                self.toggle_sync_mode();
                 return;
             }
             _ => {}
@@ -631,6 +617,60 @@ impl App {
         self.member_picker = Some(picker);
     }
 
+    /// Names of all `[[check]]` / `[[sync]]` entries, in config order.
+    fn config_entry_names(&self, target: PickerTarget) -> Vec<String> {
+        match target {
+            PickerTarget::CheckNames => self
+                .config
+                .check
+                .iter()
+                .filter_map(|c| c.name.clone())
+                .filter(|n| !n.is_empty())
+                .collect(),
+            PickerTarget::SyncNames => self
+                .config
+                .sync
+                .iter()
+                .filter_map(|s| s.name.clone())
+                .filter(|n| !n.is_empty())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Open the multi-select name picker for the check/sync entry field,
+    /// pre-checking whatever the field's comma value already holds.
+    fn open_name_picker(&mut self, target: PickerTarget) {
+        let current = match target {
+            PickerTarget::CheckNames => comma_names(&self.check_name.value),
+            PickerTarget::SyncNames => comma_names(&self.sync_name.value),
+            _ => return,
+        };
+        let accent = self.tab_accent();
+        self.member_picker = Some(MemberPicker::new(
+            target,
+            self.config_entry_names(target),
+            &current,
+            accent,
+        ));
+    }
+
+    /// Jump from a name picker to the Config add-entry form. The picker is
+    /// reopened on the Operate tab once the form closes (commit or cancel),
+    /// via the `reopen_name_picker` flag drained after Config key handling.
+    fn open_add_entry_from_picker(&mut self, target: PickerTarget) {
+        use super::tabs::config_tab::EntryFormKind;
+        let kind = match target {
+            PickerTarget::CheckNames => EntryFormKind::Check,
+            PickerTarget::SyncNames => EntryFormKind::Sync,
+            _ => return,
+        };
+        self.reopen_name_picker = Some(target);
+        self.active_tab = TabId::Config;
+        self.navbar_focused = false;
+        self.config_tab.start_add_entry(kind);
+    }
+
     fn save_state(&self) {
         let state = TuiPersistedState {
             tui_state: super::state::persist::TuiSection {
@@ -642,7 +682,6 @@ impl App {
                 run_sudo: self.run_sudo,
                 exec_sudo: self.exec_sudo,
                 exec_keep: self.exec_keep,
-                sync_mode: self.sync_mode,
                 sync_dry_run: self.sync_dry_run,
                 view_operation: self.view_op,
                 log_last: self.log_last,
@@ -1544,14 +1583,10 @@ impl App {
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
         let dry_run = self.sync_dry_run;
-        let adhoc_files = match self.sync_mode {
-            SyncMode::AdHoc => self.sync_adhoc_files.clone(),
-            SyncMode::ConfigEntries => Vec::new(),
-        };
-        let names = match self.sync_mode {
-            SyncMode::ConfigEntries => comma_names(&self.sync_name.value),
-            SyncMode::AdHoc => Vec::new(),
-        };
+        // Config-entry names and ad-hoc paths are passed together; the sync core
+        // merges both (plus the optional source override).
+        let adhoc_files = self.sync_adhoc_files.clone();
+        let names = comma_names(&self.sync_name.value);
         let source_override: Option<String> = {
             let v = self.sync_source_input.value.trim().to_string();
             if v.is_empty() {
@@ -2103,6 +2138,13 @@ impl App {
                     self.member_picker = None;
                     return Ok(true);
                 }
+                PickerResult::Add => {
+                    // Name picker → jump to the Config add-entry form; remember
+                    // to reopen this picker once the entry is committed.
+                    let target = self.member_picker.take().unwrap().target;
+                    self.open_add_entry_from_picker(target);
+                    return Ok(true);
+                }
                 PickerResult::Applied => {
                     let picker = self.member_picker.take().unwrap();
                     let chosen = picker.chosen();
@@ -2118,6 +2160,17 @@ impl App {
                                     _ => super::state::persist::ShellMode::Sh,
                                 };
                             }
+                        }
+                        // Name pickers write the comma-separated value back into
+                        // the field the executor already reads; no target-filter
+                        // post-processing applies.
+                        PickerTarget::CheckNames => {
+                            self.check_name.value = chosen.join(", ");
+                            return Ok(true);
+                        }
+                        PickerTarget::SyncNames => {
+                            self.sync_name.value = chosen.join(", ");
+                            return Ok(true);
                         }
                     }
                     // Deliberately no validate_filter() here: it would force an
@@ -2266,14 +2319,7 @@ impl App {
         // §popup-guard: while any config popup is open, suspend all global shortcuts.
         if self.active_tab == TabId::Config && self.config_tab.is_any_popup_open() {
             let handled = self.config_tab.handle_key(key, &mut self.config);
-            if let Some((kind, index)) = self.config_tab.pending_delete.take() {
-                self.config_tab
-                    .execute_delete(&mut self.config, kind, index);
-            }
-            if self.config_tab.pending_save {
-                self.config_tab.pending_save = false;
-                self.save_config();
-            }
+            self.after_config_key();
             return Ok(handled);
         }
 
@@ -2530,14 +2576,7 @@ impl App {
             // All other Config tab keys routed to ConfigTabState (including 'e'/Enter for inline edit).
             _ if self.active_tab == TabId::Config => {
                 let handled = self.config_tab.handle_key(key, &mut self.config);
-                if let Some((kind, index)) = self.config_tab.pending_delete.take() {
-                    self.config_tab
-                        .execute_delete(&mut self.config, kind, index);
-                }
-                if self.config_tab.pending_save {
-                    self.config_tab.pending_save = false;
-                    self.save_config();
-                }
+                self.after_config_key();
                 Ok(handled)
             }
 
@@ -2595,7 +2634,6 @@ impl App {
                     OpField::TargetMode | OpField::TargetMembers => {
                         self.operate_cycle_target_mode(right)
                     }
-                    OpField::SyncModeToggle => self.toggle_sync_mode(),
                     OpField::Timeout => {
                         let cur = self.target_filter.timeout;
                         self.target_filter.timeout = if right {
@@ -2633,8 +2671,8 @@ impl App {
                     OpField::SyncSource => self.sync_source_input.activate(),
                     OpField::CpLocal => self.cp_local.activate(),
                     OpField::CpRemote => self.cp_remote.activate(),
-                    OpField::CheckName => self.check_name.activate(),
-                    OpField::SyncName => self.sync_name.activate(),
+                    OpField::CheckName => self.open_name_picker(PickerTarget::CheckNames),
+                    OpField::SyncName => self.open_name_picker(PickerTarget::SyncNames),
                     OpField::Out => self.out_input.activate(),
                     OpField::Execute => return Ok(self.trigger_execute()),
                     _ => {}
@@ -2676,7 +2714,6 @@ impl App {
                         };
                         self.save_state();
                     }
-                    OpField::SyncModeToggle => self.toggle_sync_mode(),
                     _ => {}
                 }
                 Ok(true)
@@ -3023,6 +3060,34 @@ impl App {
             self.config_path.as_deref(),
             self.navbar_focused,
         );
+    }
+
+    /// Post-process state after a key was delegated to the Config tab. Shared by
+    /// the popup-guard and general Config key paths so both flush pending
+    /// deletes, autosave, validation errors, and the name-picker reopen
+    /// consistently (entry-form keys go through the popup-guard path).
+    fn after_config_key(&mut self) {
+        if let Some((kind, index)) = self.config_tab.pending_delete.take() {
+            self.config_tab
+                .execute_delete(&mut self.config, kind, index);
+        }
+        // Autosave: every committed mutation marks the config dirty + pending,
+        // which we flush to disk here (no explicit save key).
+        if self.config_tab.pending_save {
+            self.config_tab.pending_save = false;
+            self.save_config();
+        }
+        if let Some(err) = self.config_tab.pending_error.take() {
+            self.error = Some(err);
+        }
+        // The add-entry form was opened from an Operate name picker: once it
+        // closes (commit or cancel), return to Operate and reopen the picker
+        // with the (possibly new) entry available.
+        if self.reopen_name_picker.is_some() && self.config_tab.entry_form.is_none() {
+            let target = self.reopen_name_picker.take().unwrap();
+            self.active_tab = TabId::Operate;
+            self.open_name_picker(target);
+        }
     }
 
     fn save_config(&mut self) {
@@ -3379,7 +3444,6 @@ impl App {
         let data = OperateRenderData {
             focus: self.operate_focus,
             operation: self.operate_operation,
-            sync_mode: self.sync_mode,
             dry_run: self.op_dry_run,
             sync_adhoc_files: &self.sync_adhoc_files,
             sync_adhoc_input: &self.sync_adhoc_input,
@@ -3741,29 +3805,11 @@ impl App {
         } else if let Some(err) = &self.error {
             let p = Paragraph::new(err.as_str()).style(Style::default().fg(self.theme.error));
             frame.render_widget(p, chunks[0]);
-        } else if self.active_tab == TabId::Operate
-            && self.operate_operation == OperationKind::Sync
-            && self.sync_mode == SyncMode::AdHoc
-        {
-            // Req #5: the ad-hoc notice lives here, not as a top banner.
-            let p = Paragraph::new(Line::from(vec![
-                Span::styled(
-                    "  ⚡ Ad-hoc mode",
-                    Style::default()
-                        .fg(self.theme.warning)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    " — sync uses the ad-hoc file list, not [[sync]] config entries",
-                    Style::default().fg(self.theme.inactive),
-                ),
-            ]));
-            frame.render_widget(p, chunks[0]);
         }
 
         let hints = match self.active_tab {
             TabId::Config => {
-                "↑↓:Rows ←→:Zones e:Edit E:Editor s:Save a:Add d:Del L:Log i:Info ?:Help q:Quit"
+                "↑↓:Rows ←→:Zones e:Edit E:Editor a:Add d:Del L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => {
                 "↑↓:Fields ←→/Tab:Value Enter:Pick/Edit Space:Toggle e:Exec s:Serial d:Dry-run ?:Help q:Quit"
@@ -3834,7 +3880,7 @@ Config tab
   Space       Cycle the focused option field (bool/shell/tri-bool/enum)
   a           Add new entry (host / check / sync)
   d           Delete focused entry
-  s           Save config (format-preserving via toml_edit)
+              (changes autosave to disk, format-preserving via toml_edit)
   E           Open config in $VISUAL/$EDITOR (TUI suspends, reloads on change)
 
 Log overlay

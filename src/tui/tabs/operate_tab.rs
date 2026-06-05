@@ -17,9 +17,7 @@ use crate::commands::report::HostStatus;
 use crate::config::schema::{AppConfig, SyncEntry};
 
 use super::super::components::input_field::InputField;
-use super::super::state::persist::{
-    OperationKind, ShellMode, SyncMode, TargetFilterMode, TargetFilterState,
-};
+use super::super::state::persist::{OperationKind, ShellMode, TargetFilterMode, TargetFilterState};
 use super::super::theme::Theme;
 
 /// A single focusable element on the Operate tab, walked linearly with ↑↓.
@@ -52,8 +50,6 @@ pub enum OpField {
     Sudo,
     /// exec: --keep toggle.
     Keep,
-    /// sync: config/ad-hoc mode — ←→ toggles.
-    SyncModeToggle,
     /// sync ad-hoc: add-path input.
     SyncAdhocInput,
     /// sync: source override input.
@@ -64,7 +60,7 @@ pub enum OpField {
     CpRemote,
     /// check: name(s) of [[check]] entries to apply (comma-separated; default).
     CheckName,
-    /// sync (config mode): name(s) of [[sync]] entries to apply.
+    /// sync: name(s) of [[sync]] entries to apply (multi-select popup).
     SyncName,
     /// `-o/--out` report path (all operations).
     Out,
@@ -75,10 +71,10 @@ pub enum OpField {
 }
 
 /// Whether the operation has a scrollable applicable-entries panel right now.
-pub fn has_entries(op: OperationKind, sync_mode: SyncMode, config: &AppConfig) -> bool {
+pub fn has_entries(op: OperationKind, config: &AppConfig) -> bool {
     match op {
         OperationKind::Check => !config.check.is_empty(),
-        OperationKind::Sync => sync_mode == SyncMode::ConfigEntries && !config.sync.is_empty(),
+        OperationKind::Sync => !config.sync.is_empty(),
         _ => false,
     }
 }
@@ -87,7 +83,6 @@ pub fn has_entries(op: OperationKind, sync_mode: SyncMode, config: &AppConfig) -
 pub fn operate_fields(
     op: OperationKind,
     target_mode: TargetFilterMode,
-    sync_mode: SyncMode,
     config: &AppConfig,
 ) -> Vec<OpField> {
     let mut v = vec![OpField::OpRadio, OpField::TargetMode];
@@ -114,23 +109,18 @@ pub fn operate_fields(
             v.push(OpField::Keep);
         }
         OperationKind::Sync => {
-            // Order must match the render order: mode, then Source override
-            // (anchored on top), then the ad-hoc add-path input below it.
-            v.push(OpField::SyncModeToggle);
+            // Config-entry selector and ad-hoc paths are shown together (both
+            // feed the sync core simultaneously); Source override sits last.
+            v.push(OpField::SyncName);
+            v.push(OpField::SyncAdhocInput);
             v.push(OpField::SyncSource);
-            if sync_mode == SyncMode::ConfigEntries {
-                v.push(OpField::SyncName);
-            }
-            if sync_mode == SyncMode::AdHoc {
-                v.push(OpField::SyncAdhocInput);
-            }
         }
         OperationKind::Cp => {
             v.push(OpField::CpLocal);
             v.push(OpField::CpRemote);
         }
     }
-    if has_entries(op, sync_mode, config) {
+    if has_entries(op, config) {
         v.push(OpField::Entries);
     }
     v.push(OpField::Execute);
@@ -168,7 +158,6 @@ pub fn layer_of(field: OpField) -> OpLayer {
         | OpField::Script
         | OpField::Sudo
         | OpField::Keep
-        | OpField::SyncModeToggle
         | OpField::SyncAdhocInput
         | OpField::SyncSource
         | OpField::CpLocal
@@ -184,7 +173,6 @@ pub fn layer_of(field: OpField) -> OpLayer {
 pub struct OperateRenderData<'a> {
     pub focus: OpField,
     pub operation: OperationKind,
-    pub sync_mode: SyncMode,
     pub dry_run: bool,
     pub sync_adhoc_files: &'a [String],
     pub sync_adhoc_input: &'a InputField,
@@ -309,11 +297,14 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     )));
     match data.operation {
         OperationKind::Check => {
-            rows.push(RowItem::Field(
-                data.check_name_input,
-                "Entry name(s) (comma-sep; empty = \"default\")",
+            rows.push(RowItem::Plain(name_select_line(
+                "Entries:",
+                &data.check_name_input.value,
+                "default",
                 data.focus == OpField::CheckName,
-            ));
+                active,
+                theme,
+            )));
         }
         OperationKind::Run => {
             rows.push(RowItem::Field(
@@ -351,38 +342,36 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Sync => {
-            rows.push(RowItem::Plain(sync_mode_line(data)));
-            // Source override stays anchored on top for visual stability; the
-            // ad-hoc add-path input + file list appear below it.
+            // Config-entry selector and ad-hoc paths coexist; both feed the sync
+            // core at once. Source override is anchored last (Req #6).
+            rows.push(RowItem::Plain(name_select_line(
+                "Entries:",
+                &data.sync_name_input.value,
+                "none",
+                data.focus == OpField::SyncName,
+                active,
+                theme,
+            )));
+            rows.push(RowItem::Field(
+                data.sync_adhoc_input,
+                "Add path",
+                data.focus == OpField::SyncAdhocInput,
+            ));
+            if data.sync_adhoc_files.is_empty() {
+                rows.push(RowItem::Plain(Line::from(Span::styled(
+                    "  (no paths)",
+                    Style::default().fg(theme.inactive),
+                ))));
+            } else {
+                for p in data.sync_adhoc_files.iter().rev().take(4) {
+                    rows.push(RowItem::Plain(Line::from(format!("  · {p}"))));
+                }
+            }
             rows.push(RowItem::Field(
                 data.sync_source_input,
                 "Source override (optional)",
                 data.focus == OpField::SyncSource,
             ));
-            if data.sync_mode == SyncMode::ConfigEntries {
-                rows.push(RowItem::Field(
-                    data.sync_name_input,
-                    "Entry name(s) (comma-separated)",
-                    data.focus == OpField::SyncName,
-                ));
-            }
-            if data.sync_mode == SyncMode::AdHoc {
-                rows.push(RowItem::Field(
-                    data.sync_adhoc_input,
-                    "Add path",
-                    data.focus == OpField::SyncAdhocInput,
-                ));
-                if data.sync_adhoc_files.is_empty() {
-                    rows.push(RowItem::Plain(Line::from(Span::styled(
-                        "  (no paths)",
-                        Style::default().fg(theme.inactive),
-                    ))));
-                } else {
-                    for p in data.sync_adhoc_files.iter().rev().take(4) {
-                        rows.push(RowItem::Plain(Line::from(format!("  · {p}"))));
-                    }
-                }
-            }
         }
         OperationKind::Cp => {
             rows.push(RowItem::Field(
@@ -588,19 +577,25 @@ fn toggle_line<'a>(label: &str, on: bool, focused: bool, active: bool, theme: &T
     ])
 }
 
-fn sync_mode_line<'a>(data: &OperateRenderData) -> Line<'a> {
-    let focused = data.focus == OpField::SyncModeToggle;
-    let active = !data.navbar_focused;
-    let (config_glyph, adhoc_glyph) = match data.sync_mode {
-        SyncMode::ConfigEntries => ("◉", "○"),
-        SyncMode::AdHoc => ("○", "◉"),
+/// A name-selector row (Enter opens a multi-select popup). Shows the chosen
+/// comma-separated names, or the `empty` hint when nothing is selected.
+fn name_select_line<'a>(
+    label: &str,
+    value: &str,
+    empty: &str,
+    focused: bool,
+    active: bool,
+    theme: &Theme,
+) -> Line<'a> {
+    let display = if value.trim().is_empty() {
+        format!("({empty})")
+    } else {
+        value.to_string()
     };
-    let style = focus_style(focused, active, data.theme);
     Line::from(vec![
-        Span::raw("  Mode: "),
-        Span::styled(format!("{config_glyph} Config entries"), style),
-        Span::raw("   "),
-        Span::styled(format!("{adhoc_glyph} Ad-hoc files"), style),
+        Span::raw(format!(" {label} ")),
+        Span::styled(display, focus_style(focused, active, theme)),
+        Span::styled("  (Enter: choose)", Style::default().fg(theme.inactive)),
     ])
 }
 
@@ -709,7 +704,7 @@ fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut F
             }
         }
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    } else if data.operation == OperationKind::Sync && data.sync_mode == SyncMode::ConfigEntries {
+    } else if data.operation == OperationKind::Sync {
         let mut lines: Vec<Line> = Vec::new();
         let total = data.config.sync.len();
         let scroll = data.entries_scroll.min(total.saturating_sub(page_size));
@@ -909,7 +904,6 @@ mod tests {
             OpField::Script,
             OpField::Sudo,
             OpField::Keep,
-            OpField::SyncModeToggle,
             OpField::SyncAdhocInput,
             OpField::SyncSource,
         ] {

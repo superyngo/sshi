@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-05 — Config autosave, name-based entry selection, sync simplification, init key-copy
+- feat(tui): Config changes now **autosave** to disk on every committed edit
+  (format-preserving via `toml_edit`); the main-view `s:Save` key and footer hint
+  are removed.
+- feat(config): `[[check]]`/`[[sync]]` entry names are now required to be
+  **non-empty and unique** — the add/edit form rejects empty or duplicate names;
+  legacy duplicates/blanks emit a non-fatal warning on load.
+- feat(tui): the Operate Check/Sync **entry-name fields are now multi-select
+  popups** (Enter to choose) instead of free-text; `a` inside the popup jumps to
+  the Config add-entry form and returns to the picker afterward.
+- change(tui): the sync **config/ad-hoc mode toggle is removed** — config-entry
+  names and ad-hoc paths are now shown together and both feed the sync at once;
+  the **Source override input moved to the bottom** of the sync params.
+- feat(init): hosts that fail **key authentication** are now offered an
+  interactive `ssh-copy-id` (and `ssh-keygen -t ed25519` first if no key exists),
+  then retried — alongside the existing host-key handling.
+
 ### 2026-06-05 — TUI Operate fixes: Execute hotkey label, progress-bar bleed
 - fix(tui): the Operate Execute button now advertises the `e` shortcut —
   `[ Execute check (Enter) ] (e)`.

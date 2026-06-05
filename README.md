@@ -66,8 +66,8 @@ cargo build --bin sshi --features tui             # TUI build
 | Config | `Tab` | Sidebar → FieldTable (within Config tab only) |
 | Config | `PgUp` `PgDn` `Home` `End` | Page / jump navigation |
 | Config | `e` / `Enter` | Edit selected field inline; cycle radio fields; open group picker for `groups` |
-| Config | `E` | Open config file in `$VISUAL` / `$EDITOR` / `vi` — prompts if unsaved changes; reloads on change |
-| Config | `S` | Save config (preserves comments and unknown keys via `toml_edit`) |
+| Config | `E` | Open config file in `$VISUAL` / `$EDITOR` / `vi`; reloads on change |
+| Config | _(autosave)_ | Edits are saved to disk automatically on commit (preserves comments and unknown keys via `toml_edit`) |
 | Config | `a` | Add new entry (host / check / sync based on sidebar selection) |
 | Config | `d` | Delete selected entry (with confirmation) |
 | Config (group picker) | `Space` | Toggle group selection |

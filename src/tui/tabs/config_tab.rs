@@ -228,6 +228,9 @@ pub struct ConfigTabState {
     pub pending_delete: Option<(EntryFormKind, usize)>,
     pub pending_open_editor: bool,
     pub pending_save: bool,
+    /// Validation error raised at commit time (e.g. empty/duplicate name).
+    /// Drained by `app.rs` into the shared error banner after `handle_key`.
+    pub pending_error: Option<String>,
     /// Cursor snapshot captured at every commit site (entry form, direct
     /// popup, inline edit, cycle). Consumed by `app.rs` once after save+reload
     /// via [`consume_pending_snapshot`]. Using a stored snapshot (instead of
@@ -292,6 +295,7 @@ impl ConfigTabState {
             pending_delete: None,
             pending_open_editor: false,
             pending_save: false,
+            pending_error: None,
             pending_restore_snapshot: None,
             direct_vec_editor: None,
             direct_group_picker: None,
@@ -310,28 +314,15 @@ impl ConfigTabState {
     /// Call at every site that mutates `AppConfig` from the UI. This is the
     /// single chokepoint that protects the user's cursor across save+reload.
     ///
-    /// Does NOT trigger save — the user explicitly presses `s` from the main
-    /// view to flush changes. (Quit also flushes via `flush_dirty_config_to_disk`
-    /// as a safety net.) Earlier versions also set `pending_save`; that
-    /// autosave-on-mutate path was removed because it masked persistence bugs
-    /// that only surfaced on next program start.
+    /// Autosaves: sets `pending_save` so `app.rs` flushes every committed
+    /// mutation to disk (there is no explicit save key). Quit also flushes via
+    /// `flush_dirty_config_to_disk` as a safety net.
     fn mark_dirty(&mut self) {
         if self.pending_restore_snapshot.is_none() {
             self.pending_restore_snapshot = Some(self.capture_selection());
         }
         self.config_dirty = true;
-    }
-
-    /// Explicit save trigger from main-view `s` key. Returns true when a
-    /// save should be performed (i.e. config is dirty). Used by app.rs to
-    /// route the save through its existing save_config() path.
-    pub fn request_save_if_dirty(&mut self) -> bool {
-        if self.config_dirty {
-            self.pending_save = true;
-            true
-        } else {
-            false
-        }
+        self.pending_save = true;
     }
 
     pub(super) fn capture_selection(&self) -> ConfigSelectionSnapshot {
@@ -670,10 +661,6 @@ impl ConfigTabState {
                     self.start_edit_entry(config);
                     true
                 }
-                KeyCode::Char('s') => {
-                    self.request_save_if_dirty();
-                    true
-                }
                 KeyCode::Char(' ') => {
                     // Space toggles collapse on a section header; no-op elsewhere.
                     self.toggle_section_collapse(config)
@@ -699,12 +686,6 @@ impl ConfigTabState {
                 _ => false,
             },
             ConfigZone::FieldTable => match key.code {
-                KeyCode::Char('s') => {
-                    // Explicit save (matches Sidebar 's'). Only fires if
-                    // there's a dirty change to flush.
-                    self.request_save_if_dirty();
-                    true
-                }
                 KeyCode::Up | KeyCode::Char('k') => {
                     self.field_vp.move_up();
                     true
@@ -1325,7 +1306,57 @@ impl ConfigTabState {
         }
     }
 
+    /// Validate the name of the open Check/Sync entry form. Returns an error
+    /// message if the name is empty or collides with another entry of the same
+    /// kind. Hosts already require a name elsewhere and are not checked here.
+    fn validate_entry_name(&self, config: &AppConfig) -> Option<String> {
+        let form = self.entry_form.as_ref()?;
+        let (kind_label, existing): (&str, Vec<&str>) = match form.kind {
+            EntryFormKind::Check => (
+                "[[check]]",
+                config
+                    .check
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| Some(*i) != form.edit_index)
+                    .filter_map(|(_, c)| c.name.as_deref())
+                    .collect(),
+            ),
+            EntryFormKind::Sync => (
+                "[[sync]]",
+                config
+                    .sync
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| Some(*i) != form.edit_index)
+                    .filter_map(|(_, s)| s.name.as_deref())
+                    .collect(),
+            ),
+            EntryFormKind::Host => return None,
+        };
+        let name = form
+            .fields
+            .iter()
+            .find(|f| f.key == "name")
+            .map(|f| f.display_value.trim())
+            .unwrap_or("");
+        if name.is_empty() {
+            return Some(format!("{kind_label} name cannot be empty."));
+        }
+        if existing.iter().any(|n| n.trim() == name) {
+            return Some(format!("{kind_label} name '{name}' is already in use."));
+        }
+        None
+    }
+
     fn commit_entry_form(&mut self, config: &mut AppConfig) {
+        // Check/Sync names are keys (used for name-based selection): reject empty
+        // or duplicate names before committing. The form stays open so the user
+        // can fix the name; the error is drained into the shared banner.
+        if let Some(err) = self.validate_entry_name(config) {
+            self.pending_error = Some(err);
+            return;
+        }
         // Snapshot BEFORE any state mutation. After this point the entry form
         // closes and the sidebar/field viewports get rebuilt; capturing later
         // would lose the user's cursor position.
@@ -3317,5 +3348,78 @@ mod tests {
             &mut config,
         );
         assert_eq!(config.check[0].enabled, vec!["online", "cpu_load"]);
+    }
+
+    /// Set the open entry form's `name` field display value.
+    fn set_form_name(state: &mut ConfigTabState, name: &str) {
+        let form = state.entry_form.as_mut().unwrap();
+        let f = form.fields.iter_mut().find(|f| f.key == "name").unwrap();
+        f.display_value = name.to_string();
+    }
+
+    #[test]
+    fn commit_rejects_empty_check_name() {
+        let mut config = AppConfig::default();
+        let mut state = ConfigTabState::new(&config, None);
+        state.start_add_entry(EntryFormKind::Check);
+        set_form_name(&mut state, "   ");
+        state.commit_entry_form(&mut config);
+        assert!(state.entry_form.is_some(), "form stays open on empty name");
+        assert!(state.pending_error.is_some());
+        assert!(config.check.is_empty());
+    }
+
+    #[test]
+    fn commit_rejects_duplicate_sync_name() {
+        let mut config = AppConfig::default();
+        config.sync.push(crate::config::schema::SyncEntry {
+            name: Some("alpha".to_string()),
+            id: "sync-a".to_string(),
+            paths: vec!["x".to_string()],
+            recursive: false,
+            mode: None,
+            propagate_deletes: None,
+            source: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        state.start_add_entry(EntryFormKind::Sync);
+        set_form_name(&mut state, "alpha");
+        state.commit_entry_form(&mut config);
+        assert!(state.entry_form.is_some(), "form stays open on duplicate");
+        assert!(state.pending_error.is_some());
+        assert_eq!(config.sync.len(), 1);
+    }
+
+    #[test]
+    fn commit_accepts_unique_nonempty_name() {
+        let mut config = AppConfig::default();
+        let mut state = ConfigTabState::new(&config, None);
+        state.start_add_entry(EntryFormKind::Check);
+        set_form_name(&mut state, "beta");
+        state.commit_entry_form(&mut config);
+        assert!(state.entry_form.is_none(), "form closes on success");
+        assert!(state.pending_error.is_none());
+        assert_eq!(config.check.len(), 1);
+        assert_eq!(config.check[0].name.as_deref(), Some("beta"));
+    }
+
+    #[test]
+    fn commit_allows_editing_entry_keeping_its_own_name() {
+        let mut config = AppConfig::default();
+        config.check.push(crate::config::schema::CheckEntry {
+            name: Some("gamma".to_string()),
+            id: "check-g".to_string(),
+            enabled: vec![],
+            path: vec![],
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let mut form = EntryFormState::new_check(&config.check[0]);
+        form.edit_index = Some(0);
+        state.entry_form = Some(form);
+        set_form_name(&mut state, "gamma");
+        state.commit_entry_form(&mut config);
+        assert!(state.entry_form.is_none());
+        assert!(state.pending_error.is_none());
+        assert_eq!(config.check.len(), 1);
     }
 }
