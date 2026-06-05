@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.0] - 2026-06-05
+
 ### 2026-06-05 — Del quick-clears optional fields; inline name validation
 - feat(tui): **Del** clears the focused optional field — Operate: target
   members, skip, check/sync names, source, `-o/--out`, cp-remote (and removes
