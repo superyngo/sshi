@@ -13,6 +13,12 @@ SSH-config-based cross-platform remote management tool.
 
 ## Installation
 
+### With Wenget
+
+```bash
+wenget install sshi
+```
+
 ### Windows
 
 ```powershell
