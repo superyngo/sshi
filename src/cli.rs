@@ -243,7 +243,7 @@ pub enum Commands {
     /// View operation logs
     #[command(disable_help_flag = true)]
     Log {
-        /// Show last N entries (default: 20)
+        /// Show last N entries (default: 20; 0 = all)
         #[arg(long, default_value = "20")]
         last: usize,
 

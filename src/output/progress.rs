@@ -1,6 +1,18 @@
 use std::io::IsTerminal;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+
+/// Process-wide kill switch for indicatif progress rendering. The TUI sets this
+/// on startup so background operations (which share the same terminal) don't
+/// draw CLI progress bars over the alternate-screen UI.
+static SUPPRESSED: AtomicBool = AtomicBool::new(false);
+
+/// Disable all indicatif progress output for the rest of the process. Called by
+/// the TUI entry point; no-op for plain CLI commands.
+pub fn suppress() {
+    SUPPRESSED.store(true, Ordering::Relaxed);
+}
 
 pub struct SyncProgress {
     is_tty: bool,
@@ -10,7 +22,7 @@ pub struct SyncProgress {
 
 impl SyncProgress {
     pub fn new() -> Self {
-        let is_tty = std::io::stderr().is_terminal();
+        let is_tty = std::io::stderr().is_terminal() && !SUPPRESSED.load(Ordering::Relaxed);
         Self {
             is_tty,
             multi: MultiProgress::new(),

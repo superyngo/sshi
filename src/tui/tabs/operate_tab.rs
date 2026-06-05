@@ -632,7 +632,7 @@ fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let exec_label = if data.is_running {
         " [ running… — Esc to cancel ] ".to_string()
     } else {
-        format!(" [ Execute {} (Enter) ] ", op_name(data.operation))
+        format!(" [ Execute {} (Enter) ] (e)", op_name(data.operation))
     };
     let exec_style = if exec_focused && active && !data.is_running {
         Style::default()

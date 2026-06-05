@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-05 — TUI Operate fixes: Execute hotkey label, progress-bar bleed
+- fix(tui): the Operate Execute button now advertises the `e` shortcut —
+  `[ Execute check (Enter) ] (e)`.
+- fix(tui): suppress the CLI indicatif progress bar while the TUI is running. It
+  was drawing to the shared terminal (stderr) during an operation, corrupting the
+  alternate-screen layout (stray `Hosts ░░… 0/6` / `█████ 6/6` artifacts).
+- feat(log): `log --last 0` now returns all matching entries (maps to SQLite
+  `LIMIT -1`); any non-zero value still caps the result as before.
+
 ## [v1.2.0] - 2026-06-05
 
 ### 2026-06-05 — TUI polish: entry names, `e` to execute, Tab-cycling radios, version header

@@ -2075,10 +2075,17 @@ impl App {
                 // must not trigger a redundant refresh.
                 if committed && key.code == KeyCode::Enter {
                     if matches!(self.view_focus, ViewFocus::Specific(0)) {
-                        match self.log_last_input.value.trim().parse::<usize>() {
-                            Ok(v) => self.log_last = v,
-                            // Non-numeric input — revert to the active value.
-                            Err(_) => self.log_last_input.value = self.log_last.to_string(),
+                        let trimmed = self.log_last_input.value.trim();
+                        if trimmed.is_empty() {
+                            // Empty input means "no limit" → 0 (all entries).
+                            self.log_last = 0;
+                            self.log_last_input.value = "0".to_string();
+                        } else {
+                            match trimmed.parse::<usize>() {
+                                Ok(v) => self.log_last = v,
+                                // Non-numeric input — revert to the active value.
+                                Err(_) => self.log_last_input.value = self.log_last.to_string(),
+                            }
                         }
                     }
                     self.view_dirty = true;

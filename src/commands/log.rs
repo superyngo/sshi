@@ -52,7 +52,9 @@ pub fn log_core(
         bind_values.push(Box::new(since_ts));
     }
     query.push_str(" ORDER BY timestamp DESC");
-    query.push_str(&format!(" LIMIT {}", last));
+    // `last == 0` means "no limit"; SQLite treats LIMIT -1 as unbounded.
+    let limit: i64 = if last == 0 { -1 } else { last as i64 };
+    query.push_str(&format!(" LIMIT {}", limit));
 
     let mut stmt = ctx.db.prepare(&query)?;
     let params_refs: Vec<&dyn rusqlite::types::ToSql> =

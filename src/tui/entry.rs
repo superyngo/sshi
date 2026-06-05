@@ -57,6 +57,10 @@ pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Resul
         verbose,
     };
 
+    // Background operations share this terminal; silence their CLI progress
+    // bars so they don't draw over the alternate-screen TUI.
+    crate::output::progress::suppress();
+
     install_panic_hook();
     let _guard = TerminalGuard::install()?;
 
