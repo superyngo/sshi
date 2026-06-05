@@ -38,6 +38,8 @@ pub enum PickerTarget {
     CheckNames,
     /// `[[sync]]` entry names to apply (Operate tab).
     SyncNames,
+    /// Single source host for a sync (Operate tab; "(none)" clears it).
+    SyncSource,
 }
 
 impl PickerTarget {
@@ -64,6 +66,9 @@ pub struct MemberPicker {
     selected: Vec<bool>,
     cursor: usize,
     multi: bool,
+    /// Optional per-option detail hint shown dimmed after the name (e.g. a
+    /// `[[check]]` entry's metrics or a `[[sync]]` entry's paths). Empty = none.
+    descriptions: Vec<String>,
     /// Accent colour of the tab that opened the picker (keeps the popup visually
     /// consistent with its origin — green for View, cyan for Operate, …).
     accent: Color,
@@ -79,7 +84,7 @@ impl MemberPicker {
         current: &[String],
         accent: Color,
     ) -> Self {
-        let multi = !matches!(target, PickerTarget::Shell);
+        let multi = !matches!(target, PickerTarget::Shell | PickerTarget::SyncSource);
         let selected = options
             .iter()
             .map(|o| current.iter().any(|c| c == o))
@@ -95,8 +100,16 @@ impl MemberPicker {
             selected,
             cursor,
             multi,
+            descriptions: Vec::new(),
             accent,
         }
+    }
+
+    /// Attach per-option detail hints (same order/len as `options`). Shown dimmed
+    /// after each name.
+    pub fn with_descriptions(mut self, descriptions: Vec<String>) -> Self {
+        self.descriptions = descriptions;
+        self
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> PickerResult {
@@ -182,6 +195,9 @@ impl MemberPicker {
             PickerTarget::SyncNames => {
                 " Pick [[sync]] entries · Space=toggle · a=add · Enter=apply · Esc=cancel "
             }
+            PickerTarget::SyncSource => {
+                " Pick source host · Space=select · Enter=apply · Esc=cancel "
+            }
         };
         let popup = centered_rect(60, 60, area);
         frame.render_widget(Clear, popup);
@@ -237,7 +253,14 @@ impl MemberPicker {
                     } else {
                         Style::default()
                     };
-                    Line::from(Span::styled(format!(" {glyph} {opt}"), style))
+                    let mut spans = vec![Span::styled(format!(" {glyph} {opt}"), style)];
+                    if let Some(desc) = self.descriptions.get(i).filter(|d| !d.is_empty()) {
+                        spans.push(Span::styled(
+                            format!("  {desc}"),
+                            Style::default().fg(theme.inactive),
+                        ));
+                    }
+                    Line::from(spans)
                 })
                 .collect()
         };
@@ -283,5 +306,22 @@ mod tests {
         p.handle_key(key('j')); // cursor -> z? starts on 'y' (index1)
         p.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
         assert_eq!(p.chosen(), vec!["y".to_string(), "z".to_string()]);
+    }
+
+    #[test]
+    fn source_picker_is_single_select() {
+        let mut p = MemberPicker::new(
+            PickerTarget::SyncSource,
+            vec!["(none)".into(), "h1".into(), "h2".into()],
+            &["(none)".into()],
+            Color::Cyan,
+        );
+        // Select h1, then h2 — single-select replaces, never accumulates.
+        p.handle_key(key('j'));
+        p.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(p.chosen(), vec!["h1".to_string()]);
+        p.handle_key(key('j'));
+        p.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(p.chosen(), vec!["h2".to_string()]);
     }
 }

@@ -716,6 +716,28 @@ impl ConfigTabState {
                     self.zone = ConfigZone::Sidebar;
                     true
                 }
+                // Del quick-clears an optional scalar field. `[[check]]`/`[[sync]]`
+                // names are required, so clearing them is refused with a banner.
+                KeyCode::Delete => {
+                    let sel = self.field_vp.selected;
+                    let fields = self.current_descriptors(config);
+                    let target = fields.get(sel).and_then(|f| {
+                        matches!(f.kind, FieldKind::OptionalString)
+                            .then(|| (f.key.clone(), f.display_value.is_empty()))
+                    });
+                    if let Some((key, is_empty)) = target {
+                        if key == "name" {
+                            self.pending_error =
+                                Some("Name is required and cannot be cleared.".to_string());
+                        } else if !is_empty {
+                            self.editing_field_index = sel;
+                            self.commit_inline_edit("", config);
+                            self.mark_dirty();
+                        }
+                        return true;
+                    }
+                    false
+                }
                 KeyCode::Char(' ') => {
                     let fields = self.current_descriptors(config);
                     if let Some(f) = fields.get(self.field_vp.selected) {
@@ -838,7 +860,13 @@ impl ConfigTabState {
             }
             input.handle_key(key);
             if input.mode == InputMode::Normal {
-                // Confirmed via Enter
+                // Confirmed via Enter. Required [[check]]/[[sync]] names are
+                // validated here too (not just in the add/edit form); on failure
+                // the edit is rejected and the old value kept.
+                if let Some(err) = self.validate_inline_name(&input.value, config) {
+                    self.pending_error = Some(err);
+                    return true;
+                }
                 self.commit_inline_edit(&input.value, config);
                 self.mark_dirty();
             }
@@ -876,6 +904,57 @@ impl ConfigTabState {
         self.editing_field = Some(input);
         self.editing_field_index = idx;
         true
+    }
+
+    /// Validate an inline edit of a `[[check]]`/`[[sync]]` `name` field: reject
+    /// empty or duplicate names. Returns `None` for any other field. Mirrors
+    /// [`validate_entry_name`] for the inline-edit path.
+    fn validate_inline_name(&self, new_value: &str, config: &AppConfig) -> Option<String> {
+        let item = self.items.get(self.sidebar_vp.selected)?.clone();
+        let idx = self.editing_field_index;
+        let (kind_label, others): (&str, Vec<&str>) = match item {
+            SidebarItem::Check(i) => {
+                let key = check_fields(config.check.get(i)?).get(idx)?.key.clone();
+                if key != "name" {
+                    return None;
+                }
+                (
+                    "[[check]]",
+                    config
+                        .check
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, _)| *j != i)
+                        .filter_map(|(_, c)| c.name.as_deref())
+                        .collect(),
+                )
+            }
+            SidebarItem::Sync(i) => {
+                let key = sync_fields(config.sync.get(i)?).get(idx)?.key.clone();
+                if key != "name" {
+                    return None;
+                }
+                (
+                    "[[sync]]",
+                    config
+                        .sync
+                        .iter()
+                        .enumerate()
+                        .filter(|(j, _)| *j != i)
+                        .filter_map(|(_, s)| s.name.as_deref())
+                        .collect(),
+                )
+            }
+            _ => return None,
+        };
+        let name = new_value.trim();
+        if name.is_empty() {
+            return Some(format!("{kind_label} name cannot be empty."));
+        }
+        if others.iter().any(|n| n.trim() == name) {
+            return Some(format!("{kind_label} name '{name}' is already in use."));
+        }
+        None
     }
 
     fn commit_inline_edit(&mut self, new_value: &str, config: &mut AppConfig) {
@@ -3421,5 +3500,63 @@ mod tests {
         assert!(state.entry_form.is_none());
         assert!(state.pending_error.is_none());
         assert_eq!(config.check.len(), 1);
+    }
+
+    #[test]
+    fn inline_name_validation_rejects_empty_and_duplicate() {
+        let mut config = AppConfig::default();
+        config.check.push(crate::config::schema::CheckEntry {
+            name: Some("a".to_string()),
+            id: "c-a".to_string(),
+            enabled: vec![],
+            path: vec![],
+        });
+        config.check.push(crate::config::schema::CheckEntry {
+            name: Some("b".to_string()),
+            id: "c-b".to_string(),
+            enabled: vec![],
+            path: vec![],
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|it| matches!(it, SidebarItem::Check(1)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        state.editing_field_index = 0; // the "name" field
+
+        assert!(state.validate_inline_name("", &config).is_some());
+        assert!(state.validate_inline_name("a", &config).is_some());
+        assert!(state.validate_inline_name("b", &config).is_none()); // own name
+        assert!(state.validate_inline_name("c", &config).is_none()); // unique
+    }
+
+    #[test]
+    fn inline_name_validation_ignores_non_name_fields() {
+        let mut config = AppConfig::default();
+        config.sync.push(crate::config::schema::SyncEntry {
+            name: Some("s1".to_string()),
+            id: "s-1".to_string(),
+            paths: vec!["p".to_string()],
+            recursive: false,
+            mode: None,
+            propagate_deletes: None,
+            source: None,
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|it| matches!(it, SidebarItem::Sync(0)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        // `source` field (not "name") → never validated, even when empty.
+        let source_idx = sync_fields(&config.sync[0])
+            .iter()
+            .position(|f| f.key == "source")
+            .unwrap();
+        state.editing_field_index = source_idx;
+        assert!(state.validate_inline_name("", &config).is_none());
     }
 }

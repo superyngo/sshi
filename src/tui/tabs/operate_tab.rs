@@ -1,9 +1,7 @@
 //! Operate tab — operation selection, parameter panels, target filter, execution.
 //!
-//! Phase 5 scope: check/run/exec/sync operations with param panels.
-//! Phase 3 adds: applicable entries panel with scroll, ad-hoc banner, conflict detection.
-
-use std::collections::HashMap;
+//! Check/Sync entry names and the sync source host are chosen via multi/single
+//! select popups; each entry's detail shows as an inline hint in the popup.
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -14,7 +12,6 @@ use ratatui::{
 };
 
 use crate::commands::report::HostStatus;
-use crate::config::schema::{AppConfig, SyncEntry};
 
 use super::super::components::input_field::InputField;
 use super::super::state::persist::{OperationKind, ShellMode, TargetFilterMode, TargetFilterState};
@@ -64,27 +61,12 @@ pub enum OpField {
     SyncName,
     /// `-o/--out` report path (all operations).
     Out,
-    /// Read-only applicable [[check]]/[[sync]] entries (scrolls with ↑↓).
-    Entries,
     /// Execute button.
     Execute,
 }
 
-/// Whether the operation has a scrollable applicable-entries panel right now.
-pub fn has_entries(op: OperationKind, config: &AppConfig) -> bool {
-    match op {
-        OperationKind::Check => !config.check.is_empty(),
-        OperationKind::Sync => !config.sync.is_empty(),
-        _ => false,
-    }
-}
-
 /// Ordered list of focusable fields for the current operation/mode.
-pub fn operate_fields(
-    op: OperationKind,
-    target_mode: TargetFilterMode,
-    config: &AppConfig,
-) -> Vec<OpField> {
+pub fn operate_fields(op: OperationKind, target_mode: TargetFilterMode) -> Vec<OpField> {
     let mut v = vec![OpField::OpRadio, OpField::TargetMode];
     if target_mode != TargetFilterMode::All {
         v.push(OpField::TargetMembers);
@@ -120,9 +102,6 @@ pub fn operate_fields(
             v.push(OpField::CpRemote);
         }
     }
-    if has_entries(op, config) {
-        v.push(OpField::Entries);
-    }
     v.push(OpField::Execute);
     v
 }
@@ -137,8 +116,6 @@ pub enum OpLayer {
     Common,
     /// Per-operation fields (command/script/sudo/keep/sync inputs).
     CommandSpecific,
-    /// Read-only applicable-entries panel.
-    Entries,
     /// Execute button.
     Execute,
 }
@@ -164,7 +141,6 @@ pub fn layer_of(field: OpField) -> OpLayer {
         | OpField::CpRemote
         | OpField::CheckName
         | OpField::SyncName => OpLayer::CommandSpecific,
-        OpField::Entries => OpLayer::Entries,
         OpField::Execute => OpLayer::Execute,
     }
 }
@@ -187,8 +163,6 @@ pub struct OperateRenderData<'a> {
     pub run_sudo: bool,
     pub exec_sudo: bool,
     pub exec_keep: bool,
-    pub entries_scroll: usize,
-    pub config: &'a AppConfig,
     pub theme: &'a Theme,
     pub is_running: bool,
     pub target_filter: &'a TargetFilterState,
@@ -242,7 +216,7 @@ impl RowItem<'_> {
 #[allow(clippy::vec_init_then_push)] // rows are appended conditionally per op
 pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     // Config-style layout: no outer wrapper. The body block (" Operate ") holds
-    // OpRadio/Common/Command-specific/Entries; Execute is its own block below.
+    // OpRadio/Common/Command-specific rows; Execute is its own block below.
     let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(0), Constraint::Length(3)])
@@ -367,11 +341,14 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                     rows.push(RowItem::Plain(Line::from(format!("  · {p}"))));
                 }
             }
-            rows.push(RowItem::Field(
-                data.sync_source_input,
-                "Source override (optional)",
+            rows.push(RowItem::Plain(name_select_line(
+                "Source: ",
+                &data.sync_source_input.value,
+                "none",
                 data.focus == OpField::SyncSource,
-            ));
+                active,
+                theme,
+            )));
         }
         OperationKind::Cp => {
             rows.push(RowItem::Field(
@@ -387,12 +364,12 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         }
     }
 
-    // ── Layout: fixed rows, entries (Min 0), execute bar (2) ──
+    // ── Layout: fixed rows + trailing spacer (absorbs leftover height) ──
     let mut constraints: Vec<Constraint> = rows
         .iter()
         .map(|r| Constraint::Length(r.height()))
         .collect();
-    constraints.push(Constraint::Min(0)); // entries
+    constraints.push(Constraint::Min(0)); // spacer
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints(constraints)
@@ -408,8 +385,6 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             }
         }
     }
-    let entries_area = chunks[rows.len()];
-    render_applicable_entries(data, entries_area, frame);
     render_execute_bar(data, exec_area, frame);
 }
 
@@ -647,129 +622,6 @@ fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     frame.render_widget(Paragraph::new(line), inner);
 }
 
-fn render_applicable_entries(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let entries_focused = data.focus == OpField::Entries;
-    let page_size = 6usize;
-
-    if data.operation == OperationKind::Check {
-        let mut lines: Vec<Line> = Vec::new();
-        let total = data.config.check.len();
-        let scroll = data.entries_scroll.min(total.saturating_sub(page_size));
-        let scroll_hint = if total > page_size {
-            format!(
-                " [{}-{}/{}] ↑↓",
-                scroll + 1,
-                (scroll + page_size).min(total),
-                total
-            )
-        } else {
-            String::new()
-        };
-        let header_style = if entries_focused {
-            Style::default()
-                .fg(data.theme.accent_operate)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(data.theme.inactive)
-        };
-        lines.push(Line::from(Span::styled(
-            format!("─ Applicable [[check]] entries ─{scroll_hint}"),
-            header_style,
-        )));
-        if data.config.check.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  (no [[check]] entries — add one to config.toml)",
-                Style::default().fg(data.theme.inactive),
-            )));
-        } else {
-            for (i, entry) in data
-                .config
-                .check
-                .iter()
-                .enumerate()
-                .skip(scroll)
-                .take(page_size)
-            {
-                let label = entry
-                    .name
-                    .clone()
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or_else(|| format!("Check #{}", i + 1));
-                let metrics = if entry.enabled.is_empty() {
-                    "(no metrics)".to_string()
-                } else {
-                    entry.enabled.join(",")
-                };
-                lines.push(Line::from(format!("  ▸ {label} — metrics:{metrics}")));
-            }
-        }
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    } else if data.operation == OperationKind::Sync {
-        let mut lines: Vec<Line> = Vec::new();
-        let total = data.config.sync.len();
-        let scroll = data.entries_scroll.min(total.saturating_sub(page_size));
-        let scroll_hint = if total > page_size {
-            format!(
-                " [{}-{}/{}] ↑↓",
-                scroll + 1,
-                (scroll + page_size).min(total),
-                total
-            )
-        } else {
-            String::new()
-        };
-        let header_style = if entries_focused {
-            Style::default()
-                .fg(data.theme.accent_operate)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(data.theme.inactive)
-        };
-        lines.push(Line::from(Span::styled(
-            format!("─ Applicable [[sync]] entries ─{scroll_hint}"),
-            header_style,
-        )));
-        let conflicts = detect_sync_source_conflicts(&data.config.sync);
-        if !conflicts.is_empty() {
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "  ⚠ Source conflict: {} entries share the same source path",
-                    conflicts.len()
-                ),
-                Style::default().fg(data.theme.warning),
-            )));
-        }
-        if data.config.sync.is_empty() {
-            lines.push(Line::from(Span::styled(
-                "  (no [[sync]] entries — add one to config.toml)",
-                Style::default().fg(data.theme.inactive),
-            )));
-        } else {
-            for entry in data.config.sync.iter().skip(scroll).take(page_size) {
-                let name = entry
-                    .name
-                    .as_deref()
-                    .filter(|n| !n.is_empty())
-                    .unwrap_or("(unnamed)");
-                let paths = entry
-                    .paths
-                    .iter()
-                    .take(3)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let src = entry
-                    .source
-                    .as_deref()
-                    .map(|s| format!("  src:{s}"))
-                    .unwrap_or_default();
-                lines.push(Line::from(format!("  ▸ {name}: {paths}{src}")));
-            }
-        }
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    }
-}
-
 /// Render the progress popup showing running operation status.
 #[allow(clippy::too_many_arguments)]
 pub fn render_progress_popup(
@@ -843,23 +695,6 @@ pub fn render_progress_popup(
     frame.render_widget(p, inner);
 }
 
-/// Detect sync entries that share the same (non-empty) source path.
-pub fn detect_sync_source_conflicts(sync_entries: &[SyncEntry]) -> Vec<String> {
-    let mut source_counts: HashMap<&str, usize> = HashMap::new();
-    for entry in sync_entries {
-        if let Some(src) = entry.source.as_deref() {
-            if !src.is_empty() {
-                *source_counts.entry(src).or_insert(0) += 1;
-            }
-        }
-    }
-    source_counts
-        .into_iter()
-        .filter(|(_, count)| *count > 1)
-        .map(|(src, _)| src.to_string())
-        .collect()
-}
-
 pub fn truncate(s: &str, max: usize) -> String {
     use unicode_width::UnicodeWidthStr;
     if s.width() <= max {
@@ -913,7 +748,6 @@ mod tests {
                 "{f:?} should be CommandSpecific"
             );
         }
-        assert_eq!(layer_of(OpField::Entries), OpLayer::Entries);
         assert_eq!(layer_of(OpField::Execute), OpLayer::Execute);
     }
 }

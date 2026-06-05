@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-06-05 — Del quick-clears optional fields; inline name validation
+- feat(tui): **Del** clears the focused optional field — Operate: target
+  members, skip, check/sync names, source, `-o/--out`, cp-remote (and removes
+  the last ad-hoc path); Config: optional scalar fields (`proxy_jump`, sync
+  `mode`/`source`). Required fields (Command/Script/cp-local, host name/ssh_host,
+  `[[check]]`/`[[sync]]` names) are intentionally not clearable.
+- fix(config): inline-editing a `[[check]]`/`[[sync]]` name to empty/duplicate is
+  now rejected (previously only the add/edit form validated it).
+
+### 2026-06-05 — Operate sync source picker, drop applicable-entries panel, error auto-dismiss
+- change(tui): the sync **Source override** is now a single-select host popup
+  (Enter to choose; "(none)" clears it) instead of a free-text field. Space
+  cycles the value in place (none → host → … → none), mirroring Target Shell.
+- change(tui): the read-only **"Applicable [[check]]/[[sync]] entries" panel is
+  removed** — each entry's detail (metrics / paths + source) now shows inline as
+  a dimmed hint after its name in the selection popup.
+- fix(tui): the bottom error/warning banner now **clears when you switch tabs**,
+  so a stale message (e.g. "name cannot be empty") no longer sticks.
+
 ### 2026-06-05 — Config autosave, name-based entry selection, sync simplification, init key-copy
 - feat(tui): Config changes now **autosave** to disk on every committed edit
   (format-preserving via `toml_edit`); the main-view `s:Save` key and footer hint

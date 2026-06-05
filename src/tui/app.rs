@@ -264,8 +264,6 @@ pub struct App {
     auth_popup: Option<AuthPopup>,
     /// Sender side of the auth bridge channel; cloned into each execute operation.
     auth_bridge_tx: Option<SshAuthSender>,
-    /// Scroll offset for the Applicable Entries panel (0 = top).
-    entries_scroll: usize,
     /// User-controlled scroll offset for the progress popup (None = auto-scroll to bottom).
     progress_popup_scroll: Option<usize>,
 }
@@ -376,28 +374,13 @@ impl App {
             auth_popup: None,
             export_popup: None,
             auth_bridge_tx: None,
-            entries_scroll: 0,
             progress_popup_scroll: None,
-        }
-    }
-
-    /// Persist current state to disk. Errors are logged but never propagated.
-    /// Returns the total number of entries in the currently-applicable panel.
-    fn entries_panel_count(&self) -> usize {
-        match self.operate_operation {
-            OperationKind::Check => self.config.check.len(),
-            OperationKind::Sync => self.config.sync.len(),
-            _ => 0,
         }
     }
 
     /// Ordered list of focusable Operate fields for the current op/mode.
     fn operate_field_list(&self) -> Vec<OpField> {
-        operate_tab::operate_fields(
-            self.operate_operation,
-            self.target_filter.mode,
-            &self.config,
-        )
+        operate_tab::operate_fields(self.operate_operation, self.target_filter.mode)
     }
 
     /// Move Operate focus by `delta` steps through the field list. Moving up
@@ -638,6 +621,49 @@ impl App {
         }
     }
 
+    /// Per-entry detail hints shown after each name in the picker (metrics for
+    /// check entries; paths + source for sync entries).
+    fn config_entry_descriptions(&self, target: PickerTarget) -> Vec<String> {
+        match target {
+            PickerTarget::CheckNames => self
+                .config
+                .check
+                .iter()
+                .filter(|c| c.name.as_deref().is_some_and(|n| !n.is_empty()))
+                .map(|c| {
+                    if c.enabled.is_empty() {
+                        "(no metrics)".to_string()
+                    } else {
+                        format!("— {}", c.enabled.join(","))
+                    }
+                })
+                .collect(),
+            PickerTarget::SyncNames => self
+                .config
+                .sync
+                .iter()
+                .filter(|s| s.name.as_deref().is_some_and(|n| !n.is_empty()))
+                .map(|s| {
+                    let paths = s
+                        .paths
+                        .iter()
+                        .take(3)
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    let src = s
+                        .source
+                        .as_deref()
+                        .filter(|v| !v.is_empty())
+                        .map(|v| format!("  src:{v}"))
+                        .unwrap_or_default();
+                    format!("— {paths}{src}")
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Open the multi-select name picker for the check/sync entry field,
     /// pre-checking whatever the field's comma value already holds.
     fn open_name_picker(&mut self, target: PickerTarget) {
@@ -647,9 +673,46 @@ impl App {
             _ => return,
         };
         let accent = self.tab_accent();
+        self.member_picker = Some(
+            MemberPicker::new(target, self.config_entry_names(target), &current, accent)
+                .with_descriptions(self.config_entry_descriptions(target)),
+        );
+    }
+
+    /// Cycle the sync source override in place: none → host1 → … → none.
+    /// Mirrors the Space-to-cycle behaviour of the Target Shell value.
+    fn cycle_sync_source(&mut self) {
+        let hosts = self.available_hosts();
+        let cur = self.sync_source_input.value.trim().to_string();
+        // Slot 0 = "(none)"; slots 1.. map to hosts.
+        let pos = if cur.is_empty() {
+            0
+        } else {
+            hosts.iter().position(|h| h == &cur).map_or(0, |i| i + 1)
+        };
+        let next = (pos + 1) % (hosts.len() + 1);
+        self.sync_source_input.value = if next == 0 {
+            String::new()
+        } else {
+            hosts[next - 1].clone()
+        };
+    }
+
+    /// Open the single-select source-host picker for sync. A leading "(none)"
+    /// option clears the override; the current value is pre-selected.
+    fn open_source_picker(&mut self) {
+        let mut options = vec!["(none)".to_string()];
+        options.extend(self.available_hosts());
+        let cur = self.sync_source_input.value.trim();
+        let current = if cur.is_empty() {
+            vec!["(none)".to_string()]
+        } else {
+            vec![cur.to_string()]
+        };
+        let accent = self.tab_accent();
         self.member_picker = Some(MemberPicker::new(
-            target,
-            self.config_entry_names(target),
+            PickerTarget::SyncSource,
+            options,
             &current,
             accent,
         ));
@@ -2172,6 +2235,14 @@ impl App {
                             self.sync_name.value = chosen.join(", ");
                             return Ok(true);
                         }
+                        // Single source host; "(none)" or nothing clears it.
+                        PickerTarget::SyncSource => {
+                            self.sync_source_input.value = match chosen.first() {
+                                Some(h) if h != "(none)" => h.clone(),
+                                _ => String::new(),
+                            };
+                            return Ok(true);
+                        }
                     }
                     // Deliberately no validate_filter() here: it would force an
                     // emptied Groups/Hosts selection back to All. The picker only
@@ -2232,25 +2303,25 @@ impl App {
             // and Up/Down which scroll the progress popup.
             match key.code {
                 KeyCode::Char('1') => {
-                    self.active_tab = TabId::Config;
+                    self.goto_tab(TabId::Config);
                     return Ok(true);
                 }
                 KeyCode::Char('2') => {
-                    self.active_tab = TabId::Operate;
+                    self.goto_tab(TabId::Operate);
                     return Ok(true);
                 }
                 KeyCode::Char('3') => {
-                    self.active_tab = TabId::View;
+                    self.goto_tab(TabId::View);
                     return Ok(true);
                 }
                 KeyCode::Tab => {
                     self.navbar_focused = false;
-                    self.active_tab = self.active_tab.next();
+                    self.goto_tab(self.active_tab.next());
                     return Ok(true);
                 }
                 KeyCode::BackTab => {
                     self.navbar_focused = false;
-                    self.active_tab = self.active_tab.prev();
+                    self.goto_tab(self.active_tab.prev());
                     return Ok(true);
                 }
                 KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::Operate => {
@@ -2351,17 +2422,17 @@ impl App {
                     return Ok(true);
                 }
                 KeyCode::Char('1') => {
-                    self.active_tab = TabId::Config;
+                    self.goto_tab(TabId::Config);
                     self.navbar_focused = false;
                     return Ok(true);
                 }
                 KeyCode::Char('2') => {
-                    self.active_tab = TabId::Operate;
+                    self.goto_tab(TabId::Operate);
                     self.navbar_focused = false;
                     return Ok(true);
                 }
                 KeyCode::Char('3') => {
-                    self.active_tab = TabId::View;
+                    self.goto_tab(TabId::View);
                     self.navbar_focused = false;
                     return Ok(true);
                 }
@@ -2418,7 +2489,7 @@ impl App {
                     );
                     return Ok(true);
                 }
-                self.active_tab = TabId::Config;
+                self.goto_tab(TabId::Config);
                 Ok(true)
             }
             KeyCode::Char('2') => {
@@ -2428,7 +2499,7 @@ impl App {
                     );
                     return Ok(true);
                 }
-                self.active_tab = TabId::Operate;
+                self.goto_tab(TabId::Operate);
                 Ok(true)
             }
             KeyCode::Char('3') => {
@@ -2438,18 +2509,18 @@ impl App {
                     );
                     return Ok(true);
                 }
-                self.active_tab = TabId::View;
+                self.goto_tab(TabId::View);
                 Ok(true)
             }
             // Tab/BackTab: context-aware cycling within the focused layer.
             KeyCode::Tab | KeyCode::BackTab => {
                 let forward = key.code == KeyCode::Tab;
                 if self.navbar_focused {
-                    self.active_tab = if forward {
+                    self.goto_tab(if forward {
                         self.active_tab.next()
                     } else {
                         self.active_tab.prev()
-                    };
+                    });
                 } else {
                     match self.active_tab {
                         TabId::Config => match self.config_tab.zone {
@@ -2582,46 +2653,11 @@ impl App {
 
             // ── Operate tab (unified linear field walk) ─────────────────────
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::Operate => {
-                if self.operate_focus == OpField::Entries && self.entries_scroll > 0 {
-                    self.entries_scroll -= 1;
-                } else {
-                    self.operate_move_focus(-1);
-                    if self.operate_focus == OpField::Entries {
-                        // Entered the entries panel from below: start at the bottom.
-                        self.entries_scroll = self.entries_panel_count().saturating_sub(6);
-                    }
-                }
+                self.operate_move_focus(-1);
                 Ok(true)
             }
             KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::Operate => {
-                if self.operate_focus == OpField::Entries {
-                    let max = self.entries_panel_count().saturating_sub(6);
-                    if self.entries_scroll < max {
-                        self.entries_scroll += 1;
-                    } else {
-                        self.operate_move_focus(1);
-                    }
-                } else {
-                    self.operate_move_focus(1);
-                    if self.operate_focus == OpField::Entries {
-                        self.entries_scroll = 0;
-                    }
-                }
-                Ok(true)
-            }
-            // PageUp/PageDown/Home/End scroll the applicable-entries panel
-            // (page size matches the 6-row render window).
-            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
-                if self.active_tab == TabId::Operate && self.operate_focus == OpField::Entries =>
-            {
-                let max = self.entries_panel_count().saturating_sub(6);
-                self.entries_scroll = match key.code {
-                    KeyCode::PageUp => self.entries_scroll.saturating_sub(6),
-                    KeyCode::PageDown => (self.entries_scroll + 6).min(max),
-                    KeyCode::Home => 0,
-                    KeyCode::End => max,
-                    _ => self.entries_scroll,
-                };
+                self.operate_move_focus(1);
                 Ok(true)
             }
             // ←→ change the value of the focused field.
@@ -2668,7 +2704,7 @@ impl App {
                     OpField::Command => self.run_command.activate(),
                     OpField::Script => self.exec_script.activate(),
                     OpField::SyncAdhocInput => self.sync_adhoc_input.activate(),
-                    OpField::SyncSource => self.sync_source_input.activate(),
+                    OpField::SyncSource => self.open_source_picker(),
                     OpField::CpLocal => self.cp_local.activate(),
                     OpField::CpRemote => self.cp_remote.activate(),
                     OpField::CheckName => self.open_name_picker(PickerTarget::CheckNames),
@@ -2714,6 +2750,9 @@ impl App {
                         };
                         self.save_state();
                     }
+                    // Sync source cycles in place (mirrors Shell); Enter still
+                    // opens the full picker.
+                    OpField::SyncSource => self.cycle_sync_source(),
                     _ => {}
                 }
                 Ok(true)
@@ -2732,12 +2771,39 @@ impl App {
                 self.save_state();
                 Ok(true)
             }
-            // Delete removes the last item from the sync ad-hoc file list.
-            KeyCode::Delete
-                if self.active_tab == TabId::Operate
-                    && self.operate_focus == OpField::SyncAdhocInput =>
-            {
-                self.sync_adhoc_files.pop();
+            // Del quick-clears the focused optional field (chip lists, optional
+            // text inputs, single-select source). Required fields (Command,
+            // Script, CpLocal) are intentionally absent so Del can't blank them.
+            // For the ad-hoc list Del removes the last path (incremental).
+            KeyCode::Delete if self.active_tab == TabId::Operate => {
+                match self.operate_focus {
+                    OpField::TargetMembers | OpField::TargetMode => {
+                        match self.target_filter.mode {
+                            TargetFilterMode::Groups => self.target_filter.groups.clear(),
+                            TargetFilterMode::Hosts => self.target_filter.hosts.clear(),
+                            // Shell is a fixed single value; All has no members.
+                            _ => {}
+                        }
+                        self.save_state();
+                        self.apply_checkout_filter();
+                        self.view_dirty = true;
+                    }
+                    OpField::Skip => {
+                        self.target_filter.skip.clear();
+                        self.save_state();
+                        self.apply_checkout_filter();
+                        self.view_dirty = true;
+                    }
+                    OpField::CheckName => self.check_name.value.clear(),
+                    OpField::SyncName => self.sync_name.value.clear(),
+                    OpField::SyncSource => self.sync_source_input.value.clear(),
+                    OpField::CpRemote => self.cp_remote.value.clear(),
+                    OpField::Out => self.out_input.value.clear(),
+                    OpField::SyncAdhocInput => {
+                        self.sync_adhoc_files.pop();
+                    }
+                    _ => {}
+                }
                 Ok(true)
             }
 
@@ -3088,6 +3154,15 @@ impl App {
             self.active_tab = TabId::Operate;
             self.open_name_picker(target);
         }
+    }
+
+    /// Switch the active tab, clearing any transient error banner so it does
+    /// not stay stuck on screen after the user navigates away.
+    fn goto_tab(&mut self, tab: TabId) {
+        if self.active_tab != tab {
+            self.error = None;
+        }
+        self.active_tab = tab;
     }
 
     fn save_config(&mut self) {
@@ -3458,8 +3533,6 @@ impl App {
             run_sudo: self.run_sudo,
             exec_sudo: self.exec_sudo,
             exec_keep: self.exec_keep,
-            entries_scroll: self.entries_scroll,
-            config: &self.config,
             theme: &self.theme,
             is_running: self.running_op.is_some(),
             target_filter: &self.target_filter,
@@ -3809,10 +3882,10 @@ impl App {
 
         let hints = match self.active_tab {
             TabId::Config => {
-                "↑↓:Rows ←→:Zones e:Edit E:Editor a:Add d:Del L:Log i:Info ?:Help q:Quit"
+                "↑↓:Rows ←→:Zones e:Edit Del:Clear E:Editor a:Add d:DelEntry L:Log i:Info ?:Help q:Quit"
             }
             TabId::Operate => {
-                "↑↓:Fields ←→/Tab:Value Enter:Pick/Edit Space:Toggle e:Exec s:Serial d:Dry-run ?:Help q:Quit"
+                "↑↓:Fields ←→/Tab:Value Enter:Pick Space:Toggle Del:Clear e:Exec s:Serial d:Dry ?:Help q:Quit"
             }
             TabId::View => {
                 "↑↓:Fields ←→/Tab:Show/Mode Enter:Pick PgUp/PgDn o:Export L:Log i:Info ?:Help q:Quit"
@@ -3846,15 +3919,17 @@ Operate tab
   f           Open Target Filter popup
   Enter       (ParamPanel text field) activate input; (Execute) run operation
   e           Run the current operation (from anywhere on the tab)
-  Space       (checkbox) toggle sudo / yes / keep / dry-run / sync-mode
-  Del         (SyncAdHocInput focused) remove last ad-hoc path
+  Space       (checkbox) toggle sudo / keep / dry-run; (Source) cycle host
+  Del         Clear the focused optional field (members/skip/names/source/
+              out/cp-remote); on the ad-hoc input, remove the last path
   Esc         Dismiss results popup / cancel running operation
   (while typing) Enter to confirm, Esc to revert
 
 Sync operation (ParamPanel)
-  Space on Mode toggle   Switch between Config-entries ↔ Ad-hoc
-  Enter on Ad-hoc input  Add typed path to the list
-  Del on Ad-hoc input    Remove last path from the list
+  Enter on Entries / Source  Open the multi/single-select popup
+  Space on Source            Cycle source host (none → host → … → none)
+  Enter on Ad-hoc input      Add typed path to the list
+  Del on Ad-hoc input        Remove last path from the list
   Space on Dry-run       Toggle dry-run flag
 
 View tab
@@ -3878,6 +3953,7 @@ Config tab
   Home/End    Jump to top / bottom
   e / Enter   Edit text field inline; cycle option fields (bool/shell/enum)
   Space       Cycle the focused option field (bool/shell/tri-bool/enum)
+  Del         Clear the focused optional field (required names are kept)
   a           Add new entry (host / check / sync)
   d           Delete focused entry
               (changes autosave to disk, format-preserving via toml_edit)
