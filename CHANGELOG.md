@@ -7,15 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Unreleased Update — 2026-06-05
-- **feat(config):** `AppConfig::default()` 預設包含一筆 `[[check]]` name="default"，enabled 所有 metrics（online/system_info/cpu_arch/memory/swap/disk/cpu_load/network/battery/ip_address）；首次 `sshi init` 或在無 config 環境下執行時會自動帶入這筆 entry
+## [v1.3.1] - 2026-06-05
 
-- **fix(view):** View tab List result panel 焦點不再卡在結果區塊中，↑ 在最頂端時可正確離開回到上方 stop（移除多餘的 `scroll_y == 0` 條件）
+### Added
+- **feat(config):** `AppConfig::default()` 預設包含一筆 `[[check]]` name="default"，enabled 所有 metrics（online/system_info/cpu_arch/memory/swap/disk/cpu_load/network/battery/ip_address）；首次 `sshi init` 或在無 config 環境下執行時會自動帶入這筆 entry
 - **feat(log):** View Log action filter 新增 `cp` 選項（check/run/exec/cp/sync）
-- **fix(check):** `check` 操作現在會寫入 `operation_log`，使 View Log 可顯示 check 執行記錄
-- **fix(cp):** operate cp 的 local path 支援 `~/…` tilde 展開（Linux/Windows 都適用）
 - **feat(operate):** Del 鍵可清空 Command、Script、CpLocal 欄位（同 CpRemote、Out 等）
 - **feat(persist):** Operate tab 的 run command、exec script path、cp local/remote 欄位在重啟後保留上次輸入值
+
+### Fixed
+- **fix(view):** View tab List result panel 焦點不再卡在結果區塊中，↑ 在最頂端時可正確離開回到上方 stop（移除多餘的 `scroll_y == 0` 條件）
+- **fix(check):** `check` 操作現在會寫入 `operation_log`，使 View Log 可顯示 check 執行記錄
+- **fix(cp):** operate cp 的 local path 支援 `~/…` tilde 展開（Linux/Windows 都適用）
 
 ## [v1.3.0] - 2026-06-05
 
