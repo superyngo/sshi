@@ -83,6 +83,7 @@ pub fn action_str(action: Option<&ActionFilter>) -> &'static str {
         Some(ActionFilter::Run) => "run",
         Some(ActionFilter::Exec) => "exec",
         Some(ActionFilter::Check) => "check",
+        Some(ActionFilter::Cp) => "cp",
     }
 }
 
@@ -99,7 +100,7 @@ pub fn log_specific_fields(
             "action",
             action_str(action).into(),
             FieldKind::Enum {
-                variants: vec!["all", "sync", "run", "exec", "check"],
+                variants: vec!["all", "sync", "run", "exec", "check", "cp"],
             },
         ),
     ]
@@ -138,6 +139,7 @@ pub fn apply_view_specific(view_op: ViewOperationKind, s: &mut OpSpecific, key: 
                 "run" => Some(ActionFilter::Run),
                 "exec" => Some(ActionFilter::Exec),
                 "check" => Some(ActionFilter::Check),
+                "cp" => Some(ActionFilter::Cp),
                 _ => None,
             };
         }

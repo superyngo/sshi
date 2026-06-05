@@ -152,6 +152,11 @@ pub struct OperateState {
     pub log_last: usize,
     /// View tab: restrict log results to error rows.
     pub log_errors: bool,
+    /// Operate tab: persisted input field values.
+    pub run_command: String,
+    pub exec_script: String,
+    pub cp_local: String,
+    pub cp_remote: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

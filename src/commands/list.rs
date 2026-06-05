@@ -160,8 +160,8 @@ mod tests {
         let ctx = make_ctx(&[("h1", &["web"]), ("h2", &[])]);
         let data = list_core(&ctx).unwrap();
         assert_eq!(data.hosts.len(), 2);
-        // checks/syncs default-empty config → empty
-        assert!(data.checks.is_empty());
+        // checks: default config has one "default" entry; syncs still empty
+        assert_eq!(data.checks.len(), 1);
         assert!(data.syncs.is_empty());
     }
 

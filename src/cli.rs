@@ -371,4 +371,5 @@ pub enum ActionFilter {
     Run,
     Exec,
     Check,
+    Cp,
 }

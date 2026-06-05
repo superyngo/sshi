@@ -39,6 +39,7 @@ pub fn log_core(
             ActionFilter::Run => "run",
             ActionFilter::Exec => "exec",
             ActionFilter::Check => "check",
+            ActionFilter::Cp => "cp",
         };
         query.push_str(&format!(" AND command = ?{}", bind_values.len() + 1));
         bind_values.push(Box::new(action_str.to_string()));
@@ -159,6 +160,7 @@ pub async fn run(
                     ActionFilter::Run => "run".to_string(),
                     ActionFilter::Exec => "exec".to_string(),
                     ActionFilter::Check => "check".to_string(),
+                    ActionFilter::Cp => "cp".to_string(),
                 }),
                 errors,
             },

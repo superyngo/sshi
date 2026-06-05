@@ -328,10 +328,10 @@ impl App {
             reopen_name_picker: None,
             op_dry_run: persisted.operate.sync_dry_run,
             operate_operation: persisted.operate.operation,
-            run_command: InputField::new(""),
-            exec_script: InputField::new(""),
-            cp_local: InputField::new(""),
-            cp_remote: InputField::new(""),
+            run_command: InputField::new(&persisted.operate.run_command),
+            exec_script: InputField::new(&persisted.operate.exec_script),
+            cp_local: InputField::new(&persisted.operate.cp_local),
+            cp_remote: InputField::new(&persisted.operate.cp_remote),
             check_name: InputField::new(""),
             sync_name: InputField::new(""),
             run_sudo: persisted.operate.run_sudo,
@@ -749,6 +749,10 @@ impl App {
                 view_operation: self.view_op,
                 log_last: self.log_last,
                 log_errors: self.log_errors,
+                run_command: self.run_command.value.clone(),
+                exec_script: self.exec_script.value.clone(),
+                cp_local: self.cp_local.value.clone(),
+                cp_remote: self.cp_remote.value.clone(),
                 ..Default::default()
             },
         };
@@ -1027,6 +1031,7 @@ impl App {
                     ActionFilter::Run => "run".to_string(),
                     ActionFilter::Exec => "exec".to_string(),
                     ActionFilter::Check => "check".to_string(),
+                    ActionFilter::Cp => "cp".to_string(),
                 });
 
                 let report = CommandReport::Log(LogReport {
@@ -1924,7 +1929,7 @@ impl App {
 
     fn view_focus_up(&mut self) {
         if self.view_focus == ViewFocus::Result {
-            if self.result_at_top() && self.checkout_viewport.scroll_y == 0 {
+            if self.result_at_top() {
                 // At top of result — move focus to previous stop.
                 let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
                 let idx = stops
@@ -2141,6 +2146,10 @@ impl App {
                 {
                     let path = std::mem::take(&mut self.sync_adhoc_input.value);
                     self.sync_adhoc_files.push(path);
+                }
+                // Persist text fields when Enter commits them (mode just flipped to Normal).
+                if key.code == KeyCode::Enter {
+                    self.save_state();
                 }
                 return Ok(changed);
             }
@@ -2623,7 +2632,7 @@ impl App {
                     && self.config_tab.entry_form.is_none()
                     && self.config_tab.confirm.is_none() =>
             {
-                self.config_tab.request_delete();
+                self.config_tab.request_delete(&self.config);
                 Ok(true)
             }
             // Up at top of Config Sidebar escapes to NavBar.
@@ -2797,7 +2806,22 @@ impl App {
                     OpField::CheckName => self.check_name.value.clear(),
                     OpField::SyncName => self.sync_name.value.clear(),
                     OpField::SyncSource => self.sync_source_input.value.clear(),
-                    OpField::CpRemote => self.cp_remote.value.clear(),
+                    OpField::Command => {
+                        self.run_command.value.clear();
+                        self.save_state();
+                    }
+                    OpField::Script => {
+                        self.exec_script.value.clear();
+                        self.save_state();
+                    }
+                    OpField::CpLocal => {
+                        self.cp_local.value.clear();
+                        self.save_state();
+                    }
+                    OpField::CpRemote => {
+                        self.cp_remote.value.clear();
+                        self.save_state();
+                    }
                     OpField::Out => self.out_input.value.clear(),
                     OpField::SyncAdhocInput => {
                         self.sync_adhoc_files.pop();
@@ -2865,12 +2889,13 @@ impl App {
                     self.log_errors = !self.log_errors;
                     self.view_dirty = true;
                 } else if self.view_focus == ViewFocus::Specific(2) {
-                    // action enum: cycle forward (None → check → run → exec → sync → None)
+                    // action enum: cycle forward (None → check → run → exec → cp → sync → None)
                     self.log_action = match self.log_action {
                         None => Some(ActionFilter::Check),
                         Some(ActionFilter::Check) => Some(ActionFilter::Run),
                         Some(ActionFilter::Run) => Some(ActionFilter::Exec),
-                        Some(ActionFilter::Exec) => Some(ActionFilter::Sync),
+                        Some(ActionFilter::Exec) => Some(ActionFilter::Cp),
+                        Some(ActionFilter::Cp) => Some(ActionFilter::Sync),
                         Some(ActionFilter::Sync) => None,
                     };
                     self.view_dirty = true;

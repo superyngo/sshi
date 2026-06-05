@@ -21,7 +21,7 @@ pub fn generate_entry_id(name: &str) -> String {
     )
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
     pub settings: Settings,
@@ -34,6 +34,33 @@ pub struct AppConfig {
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sync: Vec<SyncEntry>,
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            settings: Settings::default(),
+            host: Vec::new(),
+            check: vec![CheckEntry {
+                name: Some("default".to_string()),
+                id: String::new(),
+                enabled: vec![
+                    "online".to_string(),
+                    "system_info".to_string(),
+                    "cpu_arch".to_string(),
+                    "memory".to_string(),
+                    "swap".to_string(),
+                    "disk".to_string(),
+                    "cpu_load".to_string(),
+                    "network".to_string(),
+                    "battery".to_string(),
+                    "ip_address".to_string(),
+                ],
+                path: Vec::new(),
+            }],
+            sync: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

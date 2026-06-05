@@ -317,8 +317,21 @@ fn plan_transfers(local: &str, remote: Option<&str>) -> Result<Vec<Transfer>> {
 ///
 /// Only the final path component may contain `*` / `?` wildcards (single
 /// directory level — the documented `dir/*.ext` form). A literal path must
-/// exist or this errors.
+/// exist or this errors. Leading `~` is expanded to the current user's home
+/// directory (both Unix `~/…` and Windows `~\…` forms).
 fn expand_glob(local: &str) -> Result<Vec<PathBuf>> {
+    // Expand a leading `~` to the home directory before anything else.
+    let expanded: String = if local == "~" || local.starts_with("~/") || local.starts_with("~\\") {
+        let home = dirs::home_dir().ok_or_else(|| {
+            anyhow::anyhow!("Cannot determine home directory for path: {}", local)
+        })?;
+        let rest = &local[1..]; // strip the `~`
+        format!("{}{}", home.display(), rest)
+    } else {
+        local.to_string()
+    };
+    let local = expanded.as_str();
+
     let path = Path::new(local);
     let file_name = path
         .file_name()

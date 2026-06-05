@@ -1620,15 +1620,21 @@ impl ConfigTabState {
         }
     }
 
-    pub fn request_delete(&mut self) {
+    pub fn request_delete(&mut self, config: &AppConfig) {
         let item = match self.items.get(self.sidebar_vp.selected) {
             Some(i) => i.clone(),
             None => return,
         };
         match item {
             SidebarItem::Host(i) => {
+                let name = config
+                    .host
+                    .get(i)
+                    .map(|h| h.name.as_str())
+                    .unwrap_or("?")
+                    .to_string();
                 self.confirm = Some(ConfirmState {
-                    prompt: format!("Delete host entry #{},?", i + 1),
+                    prompt: format!("Delete host \"{name}\"?"),
                     action: ConfirmAction::DeleteEntry {
                         kind: EntryFormKind::Host,
                         index: i,
@@ -1637,8 +1643,14 @@ impl ConfigTabState {
                 });
             }
             SidebarItem::Check(i) => {
+                let name = config
+                    .check
+                    .get(i)
+                    .and_then(|c| c.name.as_deref())
+                    .unwrap_or("?")
+                    .to_string();
                 self.confirm = Some(ConfirmState {
-                    prompt: format!("Delete check entry #{},?", i + 1),
+                    prompt: format!("Delete check \"{name}\"?"),
                     action: ConfirmAction::DeleteEntry {
                         kind: EntryFormKind::Check,
                         index: i,
@@ -1647,8 +1659,14 @@ impl ConfigTabState {
                 });
             }
             SidebarItem::Sync(i) => {
+                let name = config
+                    .sync
+                    .get(i)
+                    .and_then(|s| s.name.as_deref())
+                    .unwrap_or("?")
+                    .to_string();
                 self.confirm = Some(ConfirmState {
-                    prompt: format!("Delete sync entry #{},?", i + 1),
+                    prompt: format!("Delete sync \"{name}\"?"),
                     action: ConfirmAction::DeleteEntry {
                         kind: EntryFormKind::Sync,
                         index: i,
@@ -3439,6 +3457,7 @@ mod tests {
     #[test]
     fn commit_rejects_empty_check_name() {
         let mut config = AppConfig::default();
+        config.check.clear(); // test needs an empty list
         let mut state = ConfigTabState::new(&config, None);
         state.start_add_entry(EntryFormKind::Check);
         set_form_name(&mut state, "   ");
@@ -3472,6 +3491,7 @@ mod tests {
     #[test]
     fn commit_accepts_unique_nonempty_name() {
         let mut config = AppConfig::default();
+        config.check.clear(); // test needs an empty list to check final len == 1
         let mut state = ConfigTabState::new(&config, None);
         state.start_add_entry(EntryFormKind::Check);
         set_form_name(&mut state, "beta");
@@ -3485,6 +3505,7 @@ mod tests {
     #[test]
     fn commit_allows_editing_entry_keeping_its_own_name() {
         let mut config = AppConfig::default();
+        config.check.clear(); // start clean, add our own entry only
         config.check.push(crate::config::schema::CheckEntry {
             name: Some("gamma".to_string()),
             id: "check-g".to_string(),
@@ -3505,6 +3526,7 @@ mod tests {
     #[test]
     fn inline_name_validation_rejects_empty_and_duplicate() {
         let mut config = AppConfig::default();
+        config.check.clear(); // start clean so indices are predictable
         config.check.push(crate::config::schema::CheckEntry {
             name: Some("a".to_string()),
             id: "c-a".to_string(),
