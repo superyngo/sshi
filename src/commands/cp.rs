@@ -321,15 +321,9 @@ fn plan_transfers(local: &str, remote: Option<&str>) -> Result<Vec<Transfer>> {
 /// directory (both Unix `~/…` and Windows `~\…` forms).
 fn expand_glob(local: &str) -> Result<Vec<PathBuf>> {
     // Expand a leading `~` to the home directory before anything else.
-    let expanded: String = if local == "~" || local.starts_with("~/") || local.starts_with("~\\") {
-        let home = dirs::home_dir().ok_or_else(|| {
-            anyhow::anyhow!("Cannot determine home directory for path: {}", local)
-        })?;
-        let rest = &local[1..]; // strip the `~`
-        format!("{}{}", home.display(), rest)
-    } else {
-        local.to_string()
-    };
+    let expanded = crate::util::expand_tilde(Path::new(local))
+        .to_string_lossy()
+        .into_owned();
     let local = expanded.as_str();
 
     let path = Path::new(local);

@@ -7,6 +7,7 @@ mod output;
 mod state;
 #[cfg(feature = "tui")]
 mod tui;
+mod util;
 
 use anyhow::Result;
 use clap::Parser;

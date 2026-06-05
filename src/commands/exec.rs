@@ -23,7 +23,7 @@ pub async fn exec_core(
     keep: bool,
     progress: Option<&dyn ProgressSink>,
 ) -> Result<CommandReport> {
-    let script_path = Path::new(script);
+    let script_path = crate::util::expand_tilde(Path::new(script));
     if !script_path.exists() {
         bail!("Script not found: {}", script);
     }
@@ -188,7 +188,7 @@ pub async fn run(
     dry_run: bool,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
-    let script_path = Path::new(script);
+    let script_path = crate::util::expand_tilde(Path::new(script));
 
     if dry_run {
         if !script_path.exists() {

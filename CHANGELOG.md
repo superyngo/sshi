@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **fix(path):** `--out` 報告路徑與 `exec` 腳本路徑現在支援前導 `~` / `~/` / `~\` 展開——Windows shell（cmd/PowerShell）與 TUI 文字欄位不會自動展開 `~`，先前在 Windows 寫報告會出現 `Failed to write report to '~\test.html'`。同時將分散的三份 `expand_tilde` 收斂為共用的 `crate::util::expand_tilde`（config 路徑、cp 來源、ssh identity_file 一併改用）。
+
 ## [v1.3.1] - 2026-06-05
 
 ### Added

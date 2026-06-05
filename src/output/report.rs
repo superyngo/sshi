@@ -337,7 +337,10 @@ pub fn write_report(
         let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
         format!("sshi-{}-{}.{}", command, ts, auto_ext)
     } else {
-        out.to_string()
+        // Expand a leading `~` — Windows shells and TUI fields don't.
+        crate::util::expand_tilde(Path::new(out))
+            .to_string_lossy()
+            .into_owned()
     };
 
     let ext = Path::new(&path)

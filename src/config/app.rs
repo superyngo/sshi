@@ -25,29 +25,11 @@ pub fn config_path() -> Result<PathBuf> {
     Ok(config_dir()?.join("config.toml"))
 }
 
-/// Expand a leading `~` or `~/` in `p` to the user's home directory.
-/// Returns the path unchanged if no tilde prefix is present or home cannot be resolved.
-fn expand_tilde(p: &Path) -> PathBuf {
-    let s = match p.to_str() {
-        Some(s) => s,
-        None => return p.to_path_buf(),
-    };
-    if s == "~" {
-        return dirs::home_dir().unwrap_or_else(|| p.to_path_buf());
-    }
-    if let Some(rest) = s.strip_prefix("~/").or_else(|| s.strip_prefix("~\\")) {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
-    }
-    p.to_path_buf()
-}
-
 /// Resolve the effective config file path (AD-16): expands `~` so explicit and
 /// default paths hash identically.
 pub fn resolve_path(custom_path: Option<&Path>) -> Result<PathBuf> {
     match custom_path {
-        Some(p) => Ok(expand_tilde(p)),
+        Some(p) => Ok(crate::util::expand_tilde(p)),
         None => config_path(),
     }
 }

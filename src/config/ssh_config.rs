@@ -66,7 +66,7 @@ impl ParsedSshConfig {
             .or_else(|| d.identity_file.clone());
 
         let identity_files = identity_file
-            .map(|f| vec![expand_tilde(std::path::Path::new(&f))])
+            .map(|f| vec![crate::util::expand_tilde(std::path::Path::new(&f))])
             .unwrap_or_default();
 
         let proxy_jump = specific
@@ -254,17 +254,6 @@ pub fn resolve_host_with_config(
 pub fn resolve_host(alias: &str) -> Result<ResolvedHostConfig> {
     let config = load_ssh_config()?;
     resolve_host_with_config(alias, &config)
-}
-
-/// Expand a leading `~` to the user's home directory.
-fn expand_tilde(path: &std::path::Path) -> std::path::PathBuf {
-    let s = path.to_string_lossy();
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(rest);
-        }
-    }
-    path.to_path_buf()
 }
 
 #[cfg(test)]
