@@ -81,6 +81,7 @@ impl Context {
         serial: bool,
         timeout: u64,
         verbose: bool,
+        skip: Vec<String>,
     ) -> Result<Self> {
         let db = crate::state::db::open(config.settings.state_dir.as_deref())?;
         Ok(Self {
@@ -90,7 +91,7 @@ impl Context {
             timeout,
             mode,
             serial,
-            skip: Vec::new(),
+            skip,
             verbose,
         })
     }

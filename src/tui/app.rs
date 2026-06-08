@@ -1273,6 +1273,7 @@ impl App {
         let names = comma_names(&self.check_name.value);
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
+        let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -1305,6 +1306,7 @@ impl App {
                         serial,
                         timeout,
                         verbose,
+                        skip,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1373,6 +1375,7 @@ impl App {
         let out_for_op = self.out_path();
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
+        let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -1394,7 +1397,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1463,6 +1466,7 @@ impl App {
         let out_for_op = self.out_path();
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
+        let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -1485,7 +1489,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1562,6 +1566,7 @@ impl App {
         let out_for_op = self.out_path();
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
+        let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
@@ -1581,7 +1586,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1646,6 +1651,7 @@ impl App {
         let out_for_op = self.out_path();
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
+        let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -1679,7 +1685,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
