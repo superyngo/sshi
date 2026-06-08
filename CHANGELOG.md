@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.3.3] - 2026-06-08
+
+### Fixed
+- **fix(tui):** TUI 的 skip 清單（target filter）現在對所有操作指令（cp、run、exec、sync、check）正確生效——`from_tui_parts()` 先前硬編碼 `skip: Vec::new()`，導致在 TUI 中設定的 skip hosts 被完全忽略，每個 `execute_*` 函數現在會捕獲 `target_filter.skip` 並傳入 `Context`
+
 ## [v1.3.2] - 2026-06-05
 
 ### Fixed
