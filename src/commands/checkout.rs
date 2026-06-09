@@ -41,13 +41,21 @@ pub async fn run(
     ctx: &Context,
     _history: bool,
     _since: Option<String>,
+    combined_view: bool,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
     let hosts = ctx.resolve_hosts()?;
     let host_names: Vec<&str> = hosts.iter().map(|h| h.name.as_str()).collect();
     let columns = DisplayColumns::from_context(ctx);
 
-    let snapshots = fetch_latest_snapshots(ctx, &host_names)?;
+    let snapshots = if combined_view {
+        fetch_combined_snapshots(ctx, &host_names, &columns.metrics)?
+    } else {
+        fetch_latest_snapshots(ctx, &host_names)?
+    };
+    if combined_view {
+        println!("(combined view — each metric shows its most recent recorded value)");
+    }
     print_table_report(&snapshots, &columns);
 
     if let Some(out) = &output.out {
@@ -163,6 +171,89 @@ pub(crate) fn fetch_latest_snapshots(
                 });
             }
         }
+    }
+    Ok(snapshots)
+}
+
+/// Per-metric combined snapshot: for each host and each metric, find the most
+/// recent snapshot that has a non-null value for that metric, then assemble a
+/// synthetic `HostSnapshot` from those best-available values.
+///
+/// Looks back through at most `LOOKBACK` snapshots per host so that the scan
+/// stays O(hosts × LOOKBACK) and doesn't read the entire history.
+pub(crate) fn fetch_combined_snapshots(
+    ctx: &Context,
+    host_names: &[&str],
+    metrics: &[String],
+) -> Result<Vec<HostSnapshot>> {
+    const LOOKBACK: i64 = 50;
+    let mut snapshots = Vec::new();
+
+    for host in host_names {
+        // Fetch the most recent LOOKBACK snapshots for this host.
+        let mut stmt = ctx.db.prepare(
+            "SELECT collected_at, online, raw_json FROM check_snapshots \
+             WHERE host = ?1 ORDER BY collected_at DESC LIMIT ?2",
+        )?;
+        let history: Vec<(i64, bool, serde_json::Value)> = stmt
+            .query_map(params![host, LOOKBACK], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, bool>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .filter_map(|r| r.ok())
+            .filter_map(|(ts, online, json_str)| {
+                serde_json::from_str::<serde_json::Value>(&json_str)
+                    .ok()
+                    .map(|v| (ts, online, v))
+            })
+            .collect();
+
+        let last_online: i64 = ctx
+            .db
+            .query_row(
+                "SELECT last_online FROM host_last_seen WHERE host = ?1",
+                params![host],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if history.is_empty() {
+            snapshots.push(HostSnapshot {
+                host: host.to_string(),
+                collected_at: 0,
+                online: false,
+                data: serde_json::Value::Null,
+                last_online,
+            });
+            continue;
+        }
+
+        let (latest_ts, latest_online, _) = &history[0];
+
+        // Build the combined data map: for each metric take the value from the
+        // most recent snapshot that actually contains it (non-null).
+        let mut combined = serde_json::Map::new();
+        for metric in metrics {
+            for (_, _, data) in &history {
+                if let Some(val) = data.get(metric) {
+                    if !val.is_null() {
+                        combined.insert(metric.clone(), val.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
+        snapshots.push(HostSnapshot {
+            host: host.to_string(),
+            collected_at: *latest_ts,
+            online: *latest_online,
+            data: serde_json::Value::Object(combined),
+            last_online,
+        });
     }
     Ok(snapshots)
 }

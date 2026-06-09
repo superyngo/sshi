@@ -154,11 +154,11 @@ async fn main() -> Result<()> {
             target,
             history,
             since,
+            combined_view,
             output,
-            ..
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::checkout::run(&ctx, history, since, &output).await
+            commands::checkout::run(&ctx, history, since, combined_view, &output).await
         }
         Commands::Sync {
             target,

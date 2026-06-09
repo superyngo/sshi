@@ -106,8 +106,8 @@ pub async fn run_core(
                 }
 
                 ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
-                     VALUES (?1, 'run', ?2, ?3, ?4, ?5, ?6)",
+                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note, stdout) \
+                     VALUES (?1, 'run', ?2, ?3, ?4, ?5, ?6, ?7)",
                     rusqlite::params![
                         now,
                         host.name,
@@ -115,6 +115,7 @@ pub async fn run_core(
                         if matches!(status, HostStatus::Online) { "ok" } else { "error" },
                         elapsed.as_millis() as i64,
                         if matches!(status, HostStatus::Error) { Some(exec_output.stderr.trim().to_string()) } else { None::<String> },
+                        exec_output.stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string()),
                     ],
                 )?;
 

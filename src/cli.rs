@@ -127,6 +127,11 @@ pub enum Commands {
         #[arg(long, display_order = 21)]
         since: Option<String>,
 
+        /// Per-metric combined view: each column shows the most recent recorded
+        /// value for that metric rather than the single latest snapshot
+        #[arg(long, display_order = 22)]
+        combined_view: bool,
+
         #[command(flatten)]
         output: OutputArgs,
     },

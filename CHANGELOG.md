@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.4.0] - 2026-06-09
+
+### Added
+- **feat(checkout):** `--combined-view` flag and TUI toggle (`c` shortcut) — each metric column shows the most recent recorded value across up to 50 historical snapshots instead of the single latest snapshot, so mixed probe coverage fills in from different collection times
+- **feat(log):** `run` and `exec` now record the first non-empty line of stdout in `operation_log.stdout` (schema v2 migration); `sshi log` and the TUI View Log display a `↳` preview line for entries without a note
+- **feat(tui):** completed-operation report popup now supports scrolling (↑↓/j/k/PgUp/PgDn/Home/End) for long outputs; previously only Esc/Enter to dismiss was supported
+- **feat(tui):** `checkout_combined` preference is persisted across restarts
+
+### Fixed
+- **fix(tui):** member picker scroll no longer anchors the cursor to the bottom row when navigating backward — replaced the hand-rolled scroll window with the shared `Viewport` component so `move_up`/`move_down` update `scroll_y` independently of `selected`
+
 ## [v1.3.3] - 2026-06-08
 
 ### Fixed

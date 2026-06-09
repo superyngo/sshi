@@ -13,6 +13,9 @@ pub struct LogRow {
     pub status: String,
     pub duration_ms: Option<i64>,
     pub note: Option<String>,
+    /// First line of command stdout, stored at record time (may be absent for
+    /// rows written before schema v2 or for commands that produce no output).
+    pub stdout: Option<String>,
 }
 
 /// Query the operation log with no I/O side effects (returns rows newest-first).
@@ -25,7 +28,7 @@ pub fn log_core(
     errors: bool,
 ) -> Result<Vec<LogRow>> {
     let mut query = String::from(
-        "SELECT timestamp, command, host, action, status, duration_ms, note FROM operation_log WHERE 1=1",
+        "SELECT timestamp, command, host, action, status, duration_ms, note, stdout FROM operation_log WHERE 1=1",
     );
     let mut bind_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -69,6 +72,7 @@ pub fn log_core(
             status: row.get(4)?,
             duration_ms: row.get(5)?,
             note: row.get(6)?,
+            stdout: row.get(7)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -119,6 +123,17 @@ pub async fn run(
             "{} {} [{}] {} {}{}{}",
             time, status_icon, r.host, r.command, r.action, duration, note_str
         );
+        if let Some(ref s) = r.stdout {
+            let trimmed = s.trim();
+            if !trimmed.is_empty() && r.note.is_none() {
+                let preview = if trimmed.len() > 72 {
+                    &trimmed[..72]
+                } else {
+                    trimmed
+                };
+                println!("     ↳ {preview}");
+            }
+        }
     }
 
     if let Some(ref out) = output.out {

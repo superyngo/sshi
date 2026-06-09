@@ -148,6 +148,8 @@ pub struct OperateState {
     pub view_operation: ViewOperationKind,
     /// View tab: include history when running checkout.
     pub checkout_history: bool,
+    /// View tab: show combined (per-metric latest) instead of single-snapshot checkout.
+    pub checkout_combined: bool,
     /// View tab: number of log entries to fetch (0 → App default of 20).
     pub log_last: usize,
     /// View tab: restrict log results to error rows.

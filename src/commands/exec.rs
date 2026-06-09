@@ -133,9 +133,12 @@ pub async fn exec_core(
                     p.host_completed(&host.name, HostStatus::Online, &detail, ms);
                 }
                 ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
-                     VALUES (?1, 'exec', ?2, ?3, 'ok', ?4)",
-                    rusqlite::params![now, host.name, script, elapsed.as_millis() as i64],
+                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, stdout) \
+                     VALUES (?1, 'exec', ?2, ?3, 'ok', ?4, ?5)",
+                    rusqlite::params![
+                        now, host.name, script, elapsed.as_millis() as i64,
+                        exec_stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string()),
+                    ],
                 )?;
                 host_results.push(ExecHostResult {
                     host: host.name.clone(),

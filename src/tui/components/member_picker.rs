@@ -22,10 +22,7 @@ use ratatui::{
 use crate::tui::theme::Theme;
 
 use super::popup::centered_rect;
-
-/// Fixed page step for PageUp/PageDown (the popup height is dynamic; a fixed
-/// step keeps the handler stateless and matches the other scroll popups).
-const PICKER_PAGE: usize = 10;
+use super::viewport::Viewport;
 
 /// Which target-filter field the picker edits when applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +61,10 @@ pub struct MemberPicker {
     pub target: PickerTarget,
     options: Vec<String>,
     selected: Vec<bool>,
-    cursor: usize,
+    /// Viewport decouples the selection cursor from the scroll offset so that
+    /// navigating backward does not immediately re-anchor to the bottom edge
+    /// (fixes the "cursor sticks to bottom row" regression).
+    viewport: Viewport,
     multi: bool,
     /// Optional per-option detail hint shown dimmed after the name (e.g. a
     /// `[[check]]` entry's metrics or a `[[sync]]` entry's paths). Empty = none.
@@ -90,15 +90,20 @@ impl MemberPicker {
             .map(|o| current.iter().any(|c| c == o))
             .collect();
         // Place the cursor on the first already-selected option, if any.
-        let cursor = options
+        let initial_cursor = options
             .iter()
             .position(|o| current.iter().any(|c| c == o))
             .unwrap_or(0);
+        let mut viewport = Viewport::new();
+        // visible_height is unknown until first render; set to 0 so clamp is
+        // a no-op until set_dims is called from render().
+        viewport.set_dims(options.len(), 0);
+        viewport.selected = initial_cursor;
         Self {
             target,
             options,
             selected,
-            cursor,
+            viewport,
             multi,
             descriptions: Vec::new(),
             accent,
@@ -120,33 +125,27 @@ impl MemberPicker {
             KeyCode::Esc => PickerResult::Cancelled,
             KeyCode::Enter => PickerResult::Applied,
             KeyCode::Up | KeyCode::Char('k') => {
-                if !self.options.is_empty() && self.cursor > 0 {
-                    self.cursor -= 1;
-                }
+                self.viewport.move_up();
                 PickerResult::Continue
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.cursor + 1 < self.options.len() {
-                    self.cursor += 1;
-                }
+                self.viewport.move_down();
                 PickerResult::Continue
             }
             KeyCode::PageUp => {
-                self.cursor = self.cursor.saturating_sub(PICKER_PAGE);
+                self.viewport.page_up();
                 PickerResult::Continue
             }
             KeyCode::PageDown => {
-                if !self.options.is_empty() {
-                    self.cursor = (self.cursor + PICKER_PAGE).min(self.options.len() - 1);
-                }
+                self.viewport.page_down();
                 PickerResult::Continue
             }
             KeyCode::Home => {
-                self.cursor = 0;
+                self.viewport.home();
                 PickerResult::Continue
             }
             KeyCode::End => {
-                self.cursor = self.options.len().saturating_sub(1);
+                self.viewport.end();
                 PickerResult::Continue
             }
             KeyCode::Char(' ') | KeyCode::Char('x') => {
@@ -162,14 +161,15 @@ impl MemberPicker {
         if self.options.is_empty() {
             return;
         }
+        let cursor = self.viewport.selected;
         if self.multi {
-            self.selected[self.cursor] = !self.selected[self.cursor];
+            self.selected[cursor] = !self.selected[cursor];
         } else {
             // Single select: clear all, set cursor.
             for s in self.selected.iter_mut() {
                 *s = false;
             }
-            self.selected[self.cursor] = true;
+            self.selected[cursor] = true;
         }
     }
 
@@ -183,7 +183,7 @@ impl MemberPicker {
             .collect()
     }
 
-    pub fn render(&self, area: Rect, theme: &Theme, frame: &mut Frame) {
+    pub fn render(&mut self, area: Rect, theme: &Theme, frame: &mut Frame) {
         let title = match self.target {
             PickerTarget::Groups => " Pick groups · Space=toggle · Enter=apply · Esc=cancel ",
             PickerTarget::Hosts => " Pick hosts · Space=toggle · Enter=apply · Esc=cancel ",
@@ -213,15 +213,12 @@ impl MemberPicker {
             .constraints([Constraint::Min(0)])
             .split(inner)[0];
 
-        // Scroll window: keep the cursor visible when options overflow the popup.
+        // Update viewport dims so scroll_y is clamped to the actual visible
+        // height. This must happen at render time (not key time) because the
+        // terminal size is only known here.
         let vis = (rows.height as usize).max(1);
-        let n = self.options.len();
-        let start = if self.cursor < vis {
-            0
-        } else {
-            (self.cursor + 1 - vis).min(n.saturating_sub(vis))
-        };
-        let end = (start + vis).min(n);
+        self.viewport.set_dims(self.options.len(), vis);
+        let (start, end) = self.viewport.visible_range();
 
         let lines: Vec<Line> = if self.options.is_empty() {
             vec![Line::from(Span::styled(
@@ -245,7 +242,7 @@ impl MemberPicker {
                     } else {
                         "○"
                     };
-                    let focused = i == self.cursor;
+                    let focused = i == self.viewport.selected;
                     let style = if focused {
                         Style::default()
                             .fg(self.accent)

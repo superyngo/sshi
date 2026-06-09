@@ -83,6 +83,8 @@ enum ViewFocus {
     TargetMembers,
     /// Inline Common-zone skip-host list (Checkout/List only).
     Skip,
+    /// Combined-view toggle row (Checkout only).
+    CombinedToggle,
     Specific(usize),
     Result,
 }
@@ -92,9 +94,20 @@ impl ViewFocus {
     ///
     /// Checkout/List expose an inline Common zone (target mode → members →
     /// skip) in place of the old `f` filter popup; Log has no target.
+    /// Checkout additionally exposes the CombinedToggle row.
     fn stops(op: ViewOperationKind, mode: TargetFilterMode) -> Vec<ViewFocus> {
         match op {
-            ViewOperationKind::Checkout | ViewOperationKind::List => {
+            ViewOperationKind::Checkout => {
+                let mut v = vec![ViewFocus::OpSelector, ViewFocus::TargetMode];
+                if mode != TargetFilterMode::All {
+                    v.push(ViewFocus::TargetMembers);
+                }
+                v.push(ViewFocus::Skip);
+                v.push(ViewFocus::CombinedToggle);
+                v.push(ViewFocus::Result);
+                v
+            }
+            ViewOperationKind::List => {
                 let mut v = vec![ViewFocus::OpSelector, ViewFocus::TargetMode];
                 if mode != TargetFilterMode::All {
                     v.push(ViewFocus::TargetMembers);
@@ -236,6 +249,8 @@ pub struct App {
     view_list: Option<crate::commands::list::ListData>,
     /// View tab: cached log result rows.
     view_log: Vec<crate::commands::log::LogRow>,
+    /// View tab: whether combined (per-metric latest) mode is active for Checkout.
+    checkout_combined: bool,
     /// View tab: stale flag — triggers refresh on next render.
     view_dirty: bool,
     /// View tab: loading spinner (unused stub for 11a).
@@ -266,6 +281,8 @@ pub struct App {
     auth_bridge_tx: Option<SshAuthSender>,
     /// User-controlled scroll offset for the progress popup (None = auto-scroll to bottom).
     progress_popup_scroll: Option<usize>,
+    /// Scroll offset for the completed-results popup (0 = top).
+    completed_report_scroll: usize,
 }
 
 impl App {
@@ -350,6 +367,7 @@ impl App {
             view_op: persisted.operate.view_operation,
             view_list: None,
             view_log: Vec::new(),
+            checkout_combined: persisted.operate.checkout_combined,
             view_dirty: true,
             view_loading: false,
             log_last: if persisted.operate.log_last == 0 {
@@ -375,6 +393,7 @@ impl App {
             export_popup: None,
             auth_bridge_tx: None,
             progress_popup_scroll: None,
+            completed_report_scroll: 0,
         }
     }
 
@@ -747,6 +766,7 @@ impl App {
                 exec_keep: self.exec_keep,
                 sync_dry_run: self.sync_dry_run,
                 view_operation: self.view_op,
+                checkout_combined: self.checkout_combined,
                 log_last: self.log_last,
                 log_errors: self.log_errors,
                 run_command: self.run_command.value.clone(),
@@ -903,6 +923,7 @@ impl App {
                 // View tab data is now stale — force a refresh on next render.
                 self.view_dirty = true;
                 self.completed_report = Some(report);
+                self.completed_report_scroll = 0;
                 true
             }
             TuiEvent::OperationCancelled => {
@@ -1237,6 +1258,7 @@ impl App {
         let n = targets.len();
         self.progress_popup_scroll = None;
         self.completed_report = Some(report);
+        self.completed_report_scroll = 0;
         self.error = Some(format!(
             "Dry-run preview — {n} target(s), no hosts contacted"
         ));
@@ -1990,6 +2012,37 @@ impl App {
             super::state::persist::ViewOperationKind::Checkout => {
                 self.maybe_reload_checkout();
                 self.apply_checkout_filter();
+                // If combined mode is on, re-derive snapshots using per-metric
+                // best-available lookback instead of the single latest snapshot.
+                if self.checkout_combined {
+                    if let Ok(conn) =
+                        crate::state::db::open(self.config.settings.state_dir.as_deref())
+                    {
+                        let ctx = Context {
+                            config: self.config.clone(),
+                            config_path: self.config_path.clone(),
+                            db: conn,
+                            timeout: self.last_timeout_secs,
+                            mode: TargetMode::All,
+                            serial: false,
+                            skip: Vec::new(),
+                            verbose: false,
+                        };
+                        let columns = crate::commands::checkout::DisplayColumns::from_context(&ctx);
+                        let host_names: Vec<&str> = self
+                            .checkout_snapshots
+                            .iter()
+                            .map(|s| s.host.as_str())
+                            .collect();
+                        if let Ok(combined) = crate::commands::checkout::fetch_combined_snapshots(
+                            &ctx,
+                            &host_names,
+                            &columns.metrics,
+                        ) {
+                            self.checkout_snapshots = combined;
+                        }
+                    }
+                }
                 self.view_dirty = false;
             }
             super::state::persist::ViewOperationKind::List => {
@@ -2297,11 +2350,37 @@ impl App {
             return self.handle_log_overlay_key(key);
         }
 
-        // Completed report popup: Esc / Enter dismisses it.
+        // Completed report popup: Esc / Enter dismisses; ↑↓/PgUp/PgDn scroll.
         if self.completed_report.is_some() {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => {
                     self.completed_report = None;
+                    self.completed_report_scroll = 0;
+                    return Ok(true);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.completed_report_scroll = self.completed_report_scroll.saturating_sub(1);
+                    return Ok(true);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.completed_report_scroll = self.completed_report_scroll.saturating_add(1);
+                    return Ok(true);
+                }
+                KeyCode::PageUp => {
+                    self.completed_report_scroll = self.completed_report_scroll.saturating_sub(10);
+                    return Ok(true);
+                }
+                KeyCode::PageDown => {
+                    self.completed_report_scroll = self.completed_report_scroll.saturating_add(10);
+                    return Ok(true);
+                }
+                KeyCode::Home => {
+                    self.completed_report_scroll = 0;
+                    return Ok(true);
+                }
+                KeyCode::End => {
+                    // Jump far enough down; render will clamp to actual content.
+                    self.completed_report_scroll = usize::MAX / 2;
                     return Ok(true);
                 }
                 _ => return Ok(false),
@@ -2905,6 +2984,12 @@ impl App {
                         Some(ActionFilter::Sync) => None,
                     };
                     self.view_dirty = true;
+                } else if self.view_focus == ViewFocus::CombinedToggle
+                    && self.view_op == ViewOperationKind::Checkout
+                {
+                    self.checkout_combined = !self.checkout_combined;
+                    self.save_state();
+                    self.view_dirty = true;
                 } else if matches!(
                     self.view_focus,
                     ViewFocus::TargetMode | ViewFocus::TargetMembers
@@ -2920,6 +3005,16 @@ impl App {
                     self.apply_checkout_filter();
                     self.view_dirty = true;
                 }
+                Ok(true)
+            }
+            // `c` as a shortcut for toggling combined view from anywhere in Checkout.
+            KeyCode::Char('c')
+                if self.active_tab == TabId::View
+                    && self.view_op == ViewOperationKind::Checkout =>
+            {
+                self.checkout_combined = !self.checkout_combined;
+                self.save_state();
+                self.view_dirty = true;
                 Ok(true)
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::View => {
@@ -3006,8 +3101,12 @@ impl App {
                 } else {
                     2
                 };
+                // Chrome height: 6 base (View block border + op selector + Result block border)
+                // + common_zone (target/skip) + per-op extras.
+                // Checkout adds 1 for the combined toggle row + 1 for table header.
+                // List adds nothing extra. Log uses a fixed 12.
                 let chrome = match self.view_op {
-                    ViewOperationKind::Checkout => 6 + common_zone + 1,
+                    ViewOperationKind::Checkout => 6 + common_zone + 1 + 1, // +toggle +header
                     ViewOperationKind::List => 6 + common_zone,
                     ViewOperationKind::Log => 12, // 6 base + 1 summary + 5 specific
                 };
@@ -3047,6 +3146,8 @@ impl App {
                 let target_mode_focused = active && self.view_focus == ViewFocus::TargetMode;
                 let target_members_focused = active && self.view_focus == ViewFocus::TargetMembers;
                 let skip_focused = active && self.view_focus == ViewFocus::Skip;
+                let combined_toggle_focused =
+                    active && self.view_focus == ViewFocus::CombinedToggle;
                 let view_target_count = resolve_target_names(
                     &build_target_mode(&self.target_filter, &self.config),
                     &self.config,
@@ -3065,6 +3166,8 @@ impl App {
                     target_mode_focused,
                     target_members_focused,
                     skip_focused,
+                    combined_toggle_focused,
+                    checkout_combined: self.checkout_combined,
                     loading: self.view_loading,
                     checkout,
                     list,
@@ -3089,14 +3192,15 @@ impl App {
         if self.info_open {
             self.render_info_popup(area, frame);
         }
-        if let Some(picker) = &self.member_picker {
-            picker.render(area, &self.theme, frame);
+        if let Some(picker) = &mut self.member_picker {
+            let theme = self.theme;
+            picker.render(area, &theme, frame);
         }
         if self.running_op.is_some() {
             self.render_progress_popup(area, frame);
         }
         if let Some(report) = self.completed_report.clone() {
-            self.render_results_popup(area, frame, &report);
+            self.render_results_popup(area, frame, &report, self.completed_report_scroll);
         }
         if self.log_overlay_open {
             self.render_log_overlay(area, frame);
@@ -3597,7 +3701,13 @@ impl App {
         );
     }
 
-    fn render_results_popup(&self, area: Rect, frame: &mut ratatui::Frame, report: &CommandReport) {
+    fn render_results_popup(
+        &mut self,
+        area: Rect,
+        frame: &mut ratatui::Frame,
+        report: &CommandReport,
+        scroll: usize,
+    ) {
         let popup_area = centered_rect(75, 75, area);
         frame.render_widget(Clear, popup_area);
 
@@ -3647,7 +3757,8 @@ impl App {
             ),
         };
 
-        let title = format!(" Results — {host_count} hosts  (Enter / Esc to dismiss) ");
+        let title =
+            format!(" Results — {host_count} hosts  (↑↓/PgUp/PgDn scroll · Enter/Esc dismiss) ");
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.border_active))
@@ -3857,7 +3968,15 @@ impl App {
             }
         }
 
-        let p = Paragraph::new(lines).wrap(Wrap { trim: false });
+        // Clamp scroll so it never exceeds the content height.
+        let max_scroll = lines.len().saturating_sub(1);
+        let clamped_scroll = scroll.min(max_scroll);
+        // Store back so End key settles at real bottom on next frame.
+        self.completed_report_scroll = clamped_scroll;
+
+        let p = Paragraph::new(lines)
+            .scroll((clamped_scroll as u16, 0))
+            .wrap(Wrap { trim: false });
         frame.render_widget(p, inner);
     }
 
@@ -4236,7 +4355,7 @@ mod view_focus_tests {
 
     #[test]
     fn checkout_list_have_common_zone_stops() {
-        // All mode: OpSelector → TargetMode → Skip → Result (no Members row).
+        // Checkout All mode: OpSelector → TargetMode → Skip → CombinedToggle → Result.
         let stops = ViewFocus::stops(ViewOperationKind::Checkout, TargetFilterMode::All);
         assert_eq!(
             stops,
@@ -4244,11 +4363,12 @@ mod view_focus_tests {
                 ViewFocus::OpSelector,
                 ViewFocus::TargetMode,
                 ViewFocus::Skip,
+                ViewFocus::CombinedToggle,
                 ViewFocus::Result,
             ]
         );
 
-        // Groups mode adds the Members stop.
+        // List Groups mode adds Members but no CombinedToggle.
         let stops = ViewFocus::stops(ViewOperationKind::List, TargetFilterMode::Groups);
         assert_eq!(
             stops,

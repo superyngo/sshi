@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use rusqlite::Connection;
 
-const CURRENT_VERSION: u32 = 1;
+const CURRENT_VERSION: u32 = 2;
 
 /// Returns the platform-appropriate state directory for sshi.
 pub fn state_dir() -> Result<PathBuf> {
@@ -65,8 +65,22 @@ fn migrate(conn: &Connection) -> Result<()> {
 
     if version < 1 {
         conn.execute_batch(include_str!("migrations/001_init.sql"))?;
-        conn.pragma_update(None, "user_version", CURRENT_VERSION)?;
     }
+    if version < 2 {
+        // ALTER TABLE is not idempotent; check first in case two connections
+        // race to apply this migration against the same on-disk DB.
+        let has_col: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('operation_log') WHERE name = 'stdout'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if has_col == 0 {
+            conn.execute_batch(include_str!("migrations/002_log_stdout.sql"))?;
+        }
+    }
+    conn.pragma_update(None, "user_version", CURRENT_VERSION)?;
 
     Ok(())
 }

@@ -34,6 +34,10 @@ pub struct ViewRenderData<'a> {
     pub list: Option<&'a ListData>,
     /// Log result payload.
     pub log: Option<&'a [LogRow]>,
+    /// Whether the Checkout combined-view mode is active.
+    pub checkout_combined: bool,
+    /// Whether the Combined toggle row currently holds the focus cursor.
+    pub combined_toggle_focused: bool,
     /// Number of lines to skip at the top of the result area (scroll offset).
     pub result_scroll: usize,
     /// Selected row index for the Checkout table (highlighted with ▶ + reverse).
@@ -67,14 +71,16 @@ pub struct ViewRenderData<'a> {
 #[allow(dead_code)]
 pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let is_log = data.view_op == ViewOperationKind::Log;
+    let is_checkout = data.view_op == ViewOperationKind::Checkout;
     // Log has no target zone; Checkout/List get the inline Common zone
     // (mode row, optional members row, skip row) that replaced the `f` popup.
+    // Checkout also gets a Combined toggle row (+1).
     let target_height: u16 = if is_log {
         1 // greyed "log has no target" summary
     } else if data.target_filter.mode != TargetFilterMode::All {
-        3
+        3 + if is_checkout { 1 } else { 0 }
     } else {
-        2
+        2 + if is_checkout { 1 } else { 0 }
     };
     let specific_height: u16 = if is_log { 5 } else { 0 };
     // Config-style layout: no outer wrapper. The " View " block holds the op
@@ -97,6 +103,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
             || data.target_mode_focused
             || data.target_members_focused
             || data.skip_focused
+            || data.combined_toggle_focused
             || data.specific_focused.is_some());
     let s_border = if settings_focused {
         data.theme.accent_checkout
@@ -133,6 +140,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         data.theme.border_inactive
     };
     let r_title = match data.view_op {
+        ViewOperationKind::Checkout if data.checkout_combined => " Checkout (combined) ",
         ViewOperationKind::Checkout => " Checkout ",
         ViewOperationKind::List => " List ",
         ViewOperationKind::Log => " Log ",
@@ -147,7 +155,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
 }
 
 /// Inline Common zone for Checkout/List: target mode radio, optional members
-/// row, and skip row — the flat replacement for the old filter popup.
+/// row, skip row, and (Checkout only) the combined-view toggle row.
 fn render_view_common(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let tf = data.target_filter;
     let mut rows: Vec<Line> = vec![view_target_mode_line(data)];
@@ -155,6 +163,10 @@ fn render_view_common(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         rows.push(view_members_line(data));
     }
     rows.push(view_skip_line(data));
+    // Combined toggle — Checkout only.
+    if data.view_op == ViewOperationKind::Checkout {
+        rows.push(view_combined_toggle_line(data));
+    }
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -242,6 +254,21 @@ fn view_skip_line<'a>(data: &ViewRenderData) -> Line<'a> {
             view_focus_style(data.skip_focused, data.theme),
         ),
     ])
+}
+
+/// Combined-view toggle row (Checkout only): shows a checkbox that the user
+/// can toggle with Space / `c` while this row is focused.
+fn view_combined_toggle_line<'a>(data: &ViewRenderData) -> Line<'a> {
+    let glyph = if data.checkout_combined {
+        "[✓]"
+    } else {
+        "[ ]"
+    };
+    let label = format!(" Combined: {glyph}  c=toggle");
+    Line::from(Span::styled(
+        label,
+        view_focus_style(data.combined_toggle_focused, data.theme),
+    ))
 }
 
 fn view_chips(items: &[String], empty: &str) -> String {
@@ -746,6 +773,25 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
             .map(|n| format!(" — {}", n))
             .unwrap_or_default();
 
+        // Show first-line stdout preview for successful run/exec entries.
+        let stdout_hint = if note_str.is_empty() {
+            r.stdout
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .map(|s| {
+                    // Truncate to ~50 chars so it fits in one line alongside the host/action.
+                    let trimmed = s.trim_end();
+                    if trimmed.len() > 50 {
+                        format!(" ↳ {}…", &trimmed[..50])
+                    } else {
+                        format!(" ↳ {trimmed}")
+                    }
+                })
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+
         let (glyph, glyph_color) = match r.status.as_str() {
             "ok" => ("✓", data.theme.accent_checkout),
             "error" => ("✗", data.theme.error),
@@ -757,8 +803,8 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
             Span::raw(format!("{} ", time)),
             Span::styled(glyph, Style::default().fg(glyph_color)),
             Span::raw(format!(
-                " [{}] {} {}{}{}",
-                r.host, r.command, r.action, duration, note_str
+                " [{}] {} {}{}{}{}",
+                r.host, r.command, r.action, duration, note_str, stdout_hint
             )),
         ]);
         lines.push(line);
