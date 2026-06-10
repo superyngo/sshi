@@ -162,11 +162,11 @@ pub enum ShellType {
 
 impl std::fmt::Display for ShellType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ShellType::Sh => write!(f, "sh"),
-            ShellType::PowerShell => write!(f, "powershell"),
-            ShellType::Cmd => write!(f, "cmd"),
-        }
+        f.pad(match self {
+            ShellType::Sh => "sh",
+            ShellType::PowerShell => "powershell",
+            ShellType::Cmd => "cmd",
+        })
     }
 }
 

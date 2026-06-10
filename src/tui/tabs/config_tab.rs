@@ -1620,6 +1620,31 @@ impl ConfigTabState {
         }
     }
 
+    /// Navigate the sidebar to a specific entry (expanding its section if
+    /// collapsed) so that `start_edit_entry` will target the right item.
+    pub fn navigate_to_entry(&mut self, kind: EntryFormKind, index: usize, config: &AppConfig) {
+        // Expand the relevant section if collapsed.
+        match kind {
+            EntryFormKind::Host => self.collapsed.hosts = false,
+            EntryFormKind::Check => self.collapsed.checks = false,
+            EntryFormKind::Sync => self.collapsed.syncs = false,
+        }
+        self.items = build_sidebar_items(config, &self.collapsed);
+        self.sidebar_vp
+            .set_dims(self.items.len(), self.sidebar_vp.visible_height);
+
+        // Find the sidebar position for this entry.
+        let target = match kind {
+            EntryFormKind::Host => SidebarItem::Host(index),
+            EntryFormKind::Check => SidebarItem::Check(index),
+            EntryFormKind::Sync => SidebarItem::Sync(index),
+        };
+        if let Some(pos) = self.items.iter().position(|it| *it == target) {
+            self.sidebar_vp.selected = pos;
+        }
+        self.zone = ConfigZone::Sidebar;
+    }
+
     pub fn request_delete(&mut self, config: &AppConfig) {
         let item = match self.items.get(self.sidebar_vp.selected) {
             Some(i) => i.clone(),

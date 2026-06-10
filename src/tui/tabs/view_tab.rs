@@ -719,6 +719,75 @@ fn format_entry_name(name: &Option<String>) -> String {
     }
 }
 
+/// Identify which config entry a selected list row belongs to, so that `e`
+/// can open the corresponding edit form on the Config tab.
+///
+/// Returns `None` for decorative lines (titles, separators, blanks, `(none)`).
+/// For multi-line entries (checks with enabled/path sub-lines), all rows in
+/// the group resolve to the same entry index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListEditTarget {
+    Host(usize),
+    Check(usize),
+    Sync(usize),
+}
+
+/// Map an absolute line index to the config entry it represents.
+/// Mirrors the exact layout of `render_list_result` / `list_selectable_lines`.
+pub fn list_entry_at_line(list: &ListData, line: usize) -> Option<ListEditTarget> {
+    let mut cursor = 0usize;
+
+    // ── Hosts ──: title, column header, separator.
+    cursor += 3;
+    if line < cursor {
+        return None;
+    }
+    let host_count = list.hosts.len();
+    if line < cursor + host_count {
+        return Some(ListEditTarget::Host(line - cursor));
+    }
+    cursor += host_count;
+
+    // ── Checks ──: blank + title.
+    cursor += 2;
+    if line < cursor {
+        return None;
+    }
+    if list.checks.is_empty() {
+        // "(none)" placeholder.
+        return None;
+    }
+    for (i, entry) in list.checks.iter().enumerate() {
+        let _start = cursor;
+        let mut height = 1; // scope line
+        if !entry.enabled.is_empty() {
+            height += 1;
+        }
+        height += entry.path.len();
+        cursor += height;
+        if line < cursor {
+            return Some(ListEditTarget::Check(i));
+        }
+    }
+
+    // ── Syncs ──: blank + title.
+    cursor += 2;
+    if line < cursor {
+        return None;
+    }
+    if list.syncs.is_empty() {
+        return None;
+    }
+    for (i, _entry) in list.syncs.iter().enumerate() {
+        if line == cursor {
+            return Some(ListEditTarget::Sync(i));
+        }
+        cursor += 1;
+    }
+
+    None
+}
+
 // ── Log result ────────────────────────────────────────────────────────────────
 
 /// Render `&[LogRow]` mirroring `log::run`'s format, using theme colors instead
@@ -834,7 +903,7 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
 
 #[cfg(test)]
 mod tests {
-    use super::{list_line_count, list_selectable_lines};
+    use super::{list_entry_at_line, list_line_count, list_selectable_lines, ListEditTarget};
     use crate::commands::list::ListData;
 
     fn sample(populated: bool) -> ListData {
@@ -884,5 +953,47 @@ mod tests {
         assert!(!sel[0] && !sel[1] && !sel[2]);
         // Lines 3,4 are the two host rows → selectable.
         assert!(sel[3] && sel[4]);
+    }
+
+    #[test]
+    fn list_entry_at_line_resolves_hosts() {
+        let d = sample(true);
+        // Lines 3,4 = host 0, host 1.
+        assert_eq!(list_entry_at_line(&d, 3), Some(ListEditTarget::Host(0)));
+        assert_eq!(list_entry_at_line(&d, 4), Some(ListEditTarget::Host(1)));
+    }
+
+    #[test]
+    fn list_entry_at_line_resolves_checks() {
+        let d = sample(true);
+        // Layout: hosts title(0) hdr(1) sep(2) h1(3) h2(4) blank(5) checks_title(6)
+        // check[0] scope(7) enabled(8) path(9)
+        assert_eq!(list_entry_at_line(&d, 7), Some(ListEditTarget::Check(0)));
+        assert_eq!(list_entry_at_line(&d, 8), Some(ListEditTarget::Check(0)));
+        assert_eq!(list_entry_at_line(&d, 9), Some(ListEditTarget::Check(0)));
+    }
+
+    #[test]
+    fn list_entry_at_line_resolves_syncs() {
+        let d = sample(true);
+        // After checks: blank(10) syncs_title(11) sync[0](12)
+        assert_eq!(list_entry_at_line(&d, 12), Some(ListEditTarget::Sync(0)));
+    }
+
+    #[test]
+    fn list_entry_at_line_decorative_lines_are_none() {
+        let d = sample(true);
+        assert_eq!(list_entry_at_line(&d, 0), None); // hosts title
+        assert_eq!(list_entry_at_line(&d, 1), None); // column header
+        assert_eq!(list_entry_at_line(&d, 2), None); // separator
+        assert_eq!(list_entry_at_line(&d, 5), None); // blank
+        assert_eq!(list_entry_at_line(&d, 6), None); // checks title
+    }
+
+    #[test]
+    fn list_entry_at_line_empty_sections() {
+        let d = sample(false);
+        assert_eq!(list_entry_at_line(&d, 5), None); // checks title
+        assert_eq!(list_entry_at_line(&d, 6), None); // "(none)"
     }
 }

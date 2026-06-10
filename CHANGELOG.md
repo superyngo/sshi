@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.5.0] - 2026-06-10
+
+### Added
+- **feat(tui):** ESC key now cycles through 3 focus levels (NavBar → TopField → Content) on Operate and View tabs — Config tab retains the original 2-way toggle
+- **feat(tui):** Press `e` on a View List result row to open the Config edit form for that entry; cursor returns to the same row after commit or cancel
+
+### Changed
+- **refactor:** `ShellType::fmt` uses `f.pad()` instead of explicit `write!` matches
+
 ## [v1.4.0] - 2026-06-09
 
 ### Added

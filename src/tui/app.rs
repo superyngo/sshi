@@ -73,6 +73,30 @@ const MIN_COLS: u16 = 60;
 const MIN_ROWS: u16 = 20;
 const POLL_INTERVAL_MS: u64 = 50;
 
+/// ESC-toggle level for Operate and View tabs (3-way cycling).
+///
+/// Config tab is excluded — it keeps the original 2-way NavBar toggle.
+/// The cycle is: NavBar → TopField → Content → NavBar → …
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EscLevel {
+    /// Focused on the tab-bar (NavBar).
+    NavBar,
+    /// Focused on the top field of the content area (OpRadio / OpSelector).
+    TopField,
+    /// Focused somewhere deeper in the content area.
+    Content,
+}
+
+impl EscLevel {
+    fn next(self) -> EscLevel {
+        match self {
+            EscLevel::NavBar => EscLevel::TopField,
+            EscLevel::TopField => EscLevel::Content,
+            EscLevel::Content => EscLevel::NavBar,
+        }
+    }
+}
+
 /// Focus zone within the View tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ViewFocus {
@@ -204,6 +228,9 @@ pub struct App {
     /// When a name picker triggered `a` (add entry), the picker target to reopen
     /// on the Operate tab once the Config add-entry form closes.
     reopen_name_picker: Option<PickerTarget>,
+    /// When `e` was pressed on a List result row, the saved cursor position so
+    /// we can restore it when the Config edit form closes.
+    reopen_view_edit: Option<usize>,
     /// Shared dry-run toggle, shown by the Execute button (`d` toggles).
     op_dry_run: bool,
     /// Currently-selected operation on the Operate tab.
@@ -269,6 +296,10 @@ pub struct App {
     view_focus: ViewFocus,
     /// Tracks the most recent timeout used (filter timeout or default).
     last_timeout_secs: u64,
+    /// ESC-toggle level for the Operate tab (3-way: NavBar / OpRadio / content).
+    operate_esc_level: EscLevel,
+    /// ESC-toggle level for the View tab (3-way: NavBar / OpSelector / content).
+    view_esc_level: EscLevel,
     /// Log overlay open state (Phase 7, §17.3 item 3).
     log_overlay_open: bool,
     /// Log overlay viewport for scrolling.
@@ -343,6 +374,7 @@ impl App {
             operate_focus: OpField::OpRadio,
             member_picker: None,
             reopen_name_picker: None,
+            reopen_view_edit: None,
             op_dry_run: persisted.operate.sync_dry_run,
             operate_operation: persisted.operate.operation,
             run_command: InputField::new(&persisted.operate.run_command),
@@ -385,6 +417,8 @@ impl App {
             log_since_input: InputField::new(""),
             log_host_input: InputField::new(""),
             view_focus: ViewFocus::OpSelector,
+            operate_esc_level: EscLevel::NavBar,
+            view_esc_level: EscLevel::NavBar,
             last_timeout_secs: timeout,
             log_overlay_open: false,
             log_overlay_vp: Viewport::new(),
@@ -402,6 +436,55 @@ impl App {
         operate_tab::operate_fields(self.operate_operation, self.target_filter.mode)
     }
 
+    /// Descend from NavBar into the content area, respecting ESC levels.
+    ///
+    /// - Config: focus stays on sidebar (no ESC-level tracking).
+    /// - Operate: go to TopField (OpRadio) or first content field.
+    /// - View: go to TopField (OpSelector) or first content stop.
+    fn navbar_descend(&mut self) {
+        self.navbar_focused = false;
+        match self.active_tab {
+            TabId::Config => {}
+            TabId::Operate => {
+                self.operate_focus = match self.operate_esc_level {
+                    EscLevel::NavBar | EscLevel::TopField => {
+                        self.operate_esc_level = EscLevel::TopField;
+                        OpField::OpRadio
+                    }
+                    EscLevel::Content => {
+                        let list = self.operate_field_list();
+                        // Skip OpRadio, land on the first content field.
+                        if list.len() > 1 {
+                            list[1]
+                        } else {
+                            OpField::OpRadio
+                        }
+                    }
+                };
+            }
+            TabId::View => {
+                self.view_focus = match self.view_esc_level {
+                    EscLevel::NavBar | EscLevel::TopField => {
+                        self.view_esc_level = EscLevel::TopField;
+                        ViewFocus::OpSelector
+                    }
+                    EscLevel::Content => {
+                        let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
+                        if stops.len() > 1 {
+                            let f = stops[1];
+                            if f == ViewFocus::Result {
+                                self.snap_result_selection(true);
+                            }
+                            f
+                        } else {
+                            ViewFocus::OpSelector
+                        }
+                    }
+                };
+            }
+        }
+    }
+
     /// Move Operate focus by `delta` steps through the field list. Moving up
     /// past the first field escapes to the NavBar; moving down past the last
     /// stays put.
@@ -414,8 +497,14 @@ impl App {
         let next = pos + delta;
         if next < 0 {
             self.navbar_focused = true;
+            self.operate_esc_level = EscLevel::NavBar;
         } else if (next as usize) < list.len() {
             self.operate_focus = list[next as usize];
+            self.operate_esc_level = if self.operate_focus == OpField::OpRadio {
+                EscLevel::TopField
+            } else {
+                EscLevel::Content
+            };
         }
     }
 
@@ -751,6 +840,39 @@ impl App {
         self.active_tab = TabId::Config;
         self.navbar_focused = false;
         self.config_tab.start_add_entry(kind);
+    }
+
+    /// Open the Config edit form for a specific host/check/sync entry from the
+    /// View tab's List result. Stores the cursor position so it can be restored
+    /// when the form closes.
+    fn open_edit_from_view_list(&mut self) {
+        use super::tabs::config_tab::EntryFormKind;
+        use super::tabs::view_tab::ListEditTarget;
+
+        let list_data = match self.view_list.as_ref() {
+            Some(d) => d,
+            None => return,
+        };
+        let selected = self.checkout_viewport.selected;
+        let target = match super::tabs::view_tab::list_entry_at_line(list_data, selected) {
+            Some(t) => t,
+            None => return,
+        };
+
+        let (kind, index) = match target {
+            ListEditTarget::Host(i) => (EntryFormKind::Host, i),
+            ListEditTarget::Check(i) => (EntryFormKind::Check, i),
+            ListEditTarget::Sync(i) => (EntryFormKind::Sync, i),
+        };
+
+        // Navigate the config sidebar to the right entry so start_edit_entry
+        // picks it up.
+        self.config_tab.navigate_to_entry(kind, index, &self.config);
+
+        self.reopen_view_edit = Some(selected);
+        self.active_tab = TabId::Config;
+        self.navbar_focused = false;
+        self.config_tab.start_edit_entry(&self.config);
     }
 
     fn save_state(&self) {
@@ -1981,7 +2103,15 @@ impl App {
             } else {
                 // At first stop (OpSelector) — escape to navbar.
                 self.navbar_focused = true;
+                self.view_esc_level = EscLevel::NavBar;
             }
+        }
+        if !self.navbar_focused {
+            self.view_esc_level = if self.view_focus == ViewFocus::OpSelector {
+                EscLevel::TopField
+            } else {
+                EscLevel::Content
+            };
         }
     }
 
@@ -2002,6 +2132,11 @@ impl App {
                 }
             }
         }
+        self.view_esc_level = if self.view_focus == ViewFocus::OpSelector {
+            EscLevel::TopField
+        } else {
+            EscLevel::Content
+        };
     }
 
     /// Refresh the View tab result data for the active `view_op`.
@@ -2508,26 +2643,41 @@ impl App {
                     return Ok(true);
                 }
                 KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
-                    self.navbar_focused = false;
+                    self.navbar_descend();
                     return Ok(true);
                 }
                 KeyCode::Esc => {
-                    self.navbar_focused = false;
+                    // In NavBar: Config stays, Operate/View cycle to TopField.
+                    match self.active_tab {
+                        TabId::Config => {
+                            self.navbar_focused = false;
+                        }
+                        TabId::Operate => {
+                            self.navbar_focused = false;
+                            self.operate_focus = OpField::OpRadio;
+                            self.operate_esc_level = EscLevel::TopField;
+                        }
+                        TabId::View => {
+                            self.navbar_focused = false;
+                            self.view_focus = ViewFocus::OpSelector;
+                            self.view_esc_level = EscLevel::TopField;
+                        }
+                    }
                     return Ok(true);
                 }
                 KeyCode::Char('1') => {
                     self.goto_tab(TabId::Config);
-                    self.navbar_focused = false;
+                    self.navbar_descend();
                     return Ok(true);
                 }
                 KeyCode::Char('2') => {
                     self.goto_tab(TabId::Operate);
-                    self.navbar_focused = false;
+                    self.navbar_descend();
                     return Ok(true);
                 }
                 KeyCode::Char('3') => {
                     self.goto_tab(TabId::View);
-                    self.navbar_focused = false;
+                    self.navbar_descend();
                     return Ok(true);
                 }
                 KeyCode::Char('q') => {
@@ -2569,10 +2719,86 @@ impl App {
                     self.error = None;
                     return Ok(true);
                 }
-                // Any other position: Esc jumps focus to NavBar.
-                if !self.navbar_focused {
-                    self.navbar_focused = true;
-                    return Ok(true);
+                match self.active_tab {
+                    // Config tab: unchanged 2-way toggle (NavBar ↔ content).
+                    TabId::Config => {
+                        if !self.navbar_focused {
+                            self.navbar_focused = true;
+                            return Ok(true);
+                        }
+                    }
+                    // Operate tab: 3-way cycle NavBar → OpRadio → content → NavBar.
+                    TabId::Operate => {
+                        if self.navbar_focused {
+                            // NavBar → OpRadio (top field).
+                            self.navbar_focused = false;
+                            self.operate_focus = OpField::OpRadio;
+                            self.operate_esc_level = EscLevel::TopField;
+                        } else {
+                            let next = self.operate_esc_level.next();
+                            match next {
+                                EscLevel::NavBar => {
+                                    self.navbar_focused = true;
+                                    self.operate_esc_level = EscLevel::NavBar;
+                                }
+                                EscLevel::TopField => {
+                                    self.operate_focus = OpField::OpRadio;
+                                    self.operate_esc_level = EscLevel::TopField;
+                                }
+                                EscLevel::Content => {
+                                    // Jump to the first content field after OpRadio.
+                                    let list = self.operate_field_list();
+                                    if let Some(pos) =
+                                        list.iter().position(|f| *f == OpField::OpRadio)
+                                    {
+                                        if pos + 1 < list.len() {
+                                            self.operate_focus = list[pos + 1];
+                                        }
+                                    }
+                                    self.operate_esc_level = EscLevel::Content;
+                                }
+                            }
+                        }
+                        return Ok(true);
+                    }
+                    // View tab: 3-way cycle NavBar → OpSelector → content → NavBar.
+                    TabId::View => {
+                        if self.navbar_focused {
+                            // NavBar → OpSelector (top field).
+                            self.navbar_focused = false;
+                            self.view_focus = ViewFocus::OpSelector;
+                            self.view_esc_level = EscLevel::TopField;
+                        } else {
+                            let next = self.view_esc_level.next();
+                            match next {
+                                EscLevel::NavBar => {
+                                    self.navbar_focused = true;
+                                    self.view_esc_level = EscLevel::NavBar;
+                                }
+                                EscLevel::TopField => {
+                                    self.view_focus = ViewFocus::OpSelector;
+                                    self.view_esc_level = EscLevel::TopField;
+                                }
+                                EscLevel::Content => {
+                                    // Jump to the first content stop after OpSelector.
+                                    let stops =
+                                        ViewFocus::stops(self.view_op, self.target_filter.mode);
+                                    if let Some(pos) =
+                                        stops.iter().position(|s| *s == ViewFocus::OpSelector)
+                                    {
+                                        if pos + 1 < stops.len() {
+                                            self.view_focus = stops[pos + 1];
+                                            if self.view_focus == ViewFocus::Result {
+                                                self.snap_result_selection(true);
+                                            }
+                                        }
+                                    }
+                                    self.view_esc_level = EscLevel::Content;
+                                }
+                            }
+                        }
+                        return Ok(true);
+                    }
                 }
                 Ok(false)
             }
@@ -3056,6 +3282,16 @@ impl App {
                 Ok(true)
             }
 
+            // 'e' on a List result row opens the Config edit form for that entry.
+            KeyCode::Char('e')
+                if self.active_tab == TabId::View
+                    && self.view_op == ViewOperationKind::List
+                    && self.view_focus == ViewFocus::Result =>
+            {
+                self.open_edit_from_view_list();
+                Ok(true)
+            }
+
             _ => Ok(false),
         }
     }
@@ -3288,6 +3524,16 @@ impl App {
             let target = self.reopen_name_picker.take().unwrap();
             self.active_tab = TabId::Operate;
             self.open_name_picker(target);
+        }
+        // The edit form was opened from the View tab's List result: once it
+        // closes (commit or cancel), return to View and restore the cursor.
+        if self.reopen_view_edit.is_some() && self.config_tab.entry_form.is_none() {
+            let saved_cursor = self.reopen_view_edit.take().unwrap();
+            self.active_tab = TabId::View;
+            self.view_focus = ViewFocus::Result;
+            self.checkout_viewport.selected = saved_cursor;
+            // Refresh list data since the config may have changed.
+            self.view_dirty = true;
         }
     }
 
