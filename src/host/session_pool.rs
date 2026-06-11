@@ -137,7 +137,10 @@ impl RusshSessionPool {
                     }
                 }
                 Err(e) => {
-                    failed.push((alias, e.to_string()));
+                    // Use the alternate formatter to surface the full anyhow
+                    // cause chain (e.g. host-key rejection behind "Failed to
+                    // connect"), not just the outermost context.
+                    failed.push((alias, format!("{:#}", e)));
                 }
             }
         }
@@ -285,11 +288,11 @@ impl RusshSessionPool {
             set.spawn(async move {
                 let home = crate::host::sftp::remote_home_dir(&handle, shell, timeout).await;
                 match home {
-                    Err(e) => (ssh_host, None, Some(format!("home dir: {}", e))),
+                    Err(e) => (ssh_host, None, Some(format!("home dir: {:#}", e))),
                     Ok(home_dir) => {
                         match crate::host::sftp::sftp_probe(&handle, &home_dir, timeout).await {
                             Ok(()) => (ssh_host, Some(home_dir), None),
-                            Err(e) => (ssh_host, Some(home_dir), Some(e.to_string())),
+                            Err(e) => (ssh_host, Some(home_dir), Some(format!("{:#}", e))),
                         }
                     }
                 }

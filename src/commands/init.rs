@@ -81,13 +81,18 @@ async fn resolve_ssh_host_port(alias: &str) -> Result<(String, u16)> {
 
 /// Run ssh-keyscan for a single host and return the output lines (key entries).
 /// Returns Ok(output) on success, Err on failure or empty output.
+///
+/// Entries are written **unhashed** (no `-H`): russh's `check_known_hosts`
+/// matcher only reliably matches plain `host`/`[host]:port` tokens by string
+/// equality. Hashed (`|1|`) entries written by `ssh-keyscan -H` are not matched
+/// by russh, so a host scanned with `-H` would still be reported as an unknown
+/// host key (notably non-standard-port hosts looked up as `[host]:port`).
 async fn keyscan_host(alias: &str, timeout_secs: u64) -> Result<String> {
     let (hostname, port) = resolve_ssh_host_port(alias).await?;
 
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(timeout_secs),
         tokio::process::Command::new("ssh-keyscan")
-            .arg("-H")
             .arg("-p")
             .arg(port.to_string())
             .arg(&hostname)

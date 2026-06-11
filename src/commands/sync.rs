@@ -955,7 +955,7 @@ pub async fn sync_core(
                 if decisions.is_empty() {
                     let hosts_list: Vec<&str> =
                         scoped_found.iter().map(|f| f.host.as_str()).collect();
-                    tracing::debug!(path, hosts = %hosts_list.join(", "), "all in sync");
+                    tracing::info!(path, hosts = %hosts_list.join(", "), "all in sync");
                     summary.file_in_sync(&hosts_list);
                 } else {
                     all_decisions.extend(decisions);
@@ -973,7 +973,7 @@ pub async fn sync_core(
                         .1
                         .push(d.path.clone());
                 }
-                tracing::debug!(path = %d.path, source = %d.source_host, "[dry-run] would sync");
+                tracing::info!(path = %d.path, source = %d.source_host, "[dry-run] would sync");
             }
         } else {
             for decision in &all_decisions {
@@ -996,7 +996,7 @@ pub async fn sync_core(
                 {
                     Ok((succeeded, failed_uploads)) => {
                         if !succeeded.is_empty() {
-                            tracing::debug!(hosts = %succeeded.join(", "), "synced");
+                            tracing::info!(hosts = %succeeded.join(", "), "synced");
 
                             let now = chrono::Utc::now().timestamp();
                             for target in &succeeded {
@@ -1425,7 +1425,7 @@ async fn sync_path_across(
             println!("  {} (all in sync)", path);
             printer::print_host_line("passed", "ok", &hosts_list.join(", "));
         } else {
-            tracing::debug!(path, hosts = %hosts_list.join(", "), "all in sync");
+            tracing::info!(path, hosts = %hosts_list.join(", "), "all in sync");
         }
         summary.file_in_sync(&hosts_list);
         return Ok(());
@@ -1477,7 +1477,7 @@ async fn sync_path_across(
                     if !quiet {
                         printer::print_host_line("synced", "ok", &succeeded.join(", "));
                     } else {
-                        tracing::debug!(hosts = %succeeded.join(", "), "synced");
+                        tracing::info!(hosts = %succeeded.join(", "), "synced");
                     }
 
                     // Update sync_state in DB
