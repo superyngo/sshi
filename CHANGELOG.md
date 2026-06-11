@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.6.0] - 2026-06-11
+
 ### Fixed
 - **fix(init):** `ssh-keyscan` now writes **unhashed** known_hosts entries (dropped `-H`). russh's `check_known_hosts` only matches plain `host`/`[host]:port` tokens by string equality and does not match hashed (`|1|`) entries, so hosts added with `-H` — especially non-standard-port hosts looked up as `[host]:port` (e.g. a local WSL sshd on `:8022`) — were still rejected as "Unknown host key" even after `init` accepted them
 - **fix(ssh):** connection and SFTP-probe failures now report the full error cause chain (`{:#}`) instead of only the outermost context, so masked causes (e.g. an unknown host key behind "Failed to connect to host:port") are visible in the host error line and summary
