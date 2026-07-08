@@ -33,6 +33,12 @@ pub struct LogBufferHandle {
 
 use std::collections::VecDeque;
 
+impl Default for LogBufferHandle {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LogBufferHandle {
     pub fn new() -> Self {
         Self {

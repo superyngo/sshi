@@ -1,3 +1,5 @@
+//! Collect and store system metrics from remote hosts.
+
 use std::collections::{BTreeSet, HashMap};
 use std::time::Instant;
 
@@ -7,10 +9,14 @@ use crate::config::schema::HostEntry;
 use crate::host::pool::SshPool;
 use crate::metrics::collector;
 use crate::output::printer;
+use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 use crate::state::retention;
 
-use super::report::{CheckHostResult, CheckReport, CommandReport, HostStatus, ProgressSink};
+use super::report::{
+    printer_sink_with_partial, CheckHostResult, CheckReport, CommandReport, HostStatus,
+    ProgressSink,
+};
 use super::Context;
 
 /// Per-host check configuration: (enabled_metrics, check_paths).
@@ -297,7 +303,7 @@ pub async fn run(
         return Ok(());
     }
 
-    let sink = PrinterSink;
+    let sink = printer_sink_with_partial();
     let raw = check_core(ctx, names, Some(&sink)).await?;
     let CommandReport::Check(report) = &raw else {
         unreachable!("check_core always returns CommandReport::Check")
@@ -323,39 +329,15 @@ pub async fn run(
 
     summary.print();
 
-    if let Some(out) = &output.out {
-        let op_report = crate::output::report::to_operation_report(&raw, &ctx.mode);
-        let path = crate::output::report::write_report(
-            &op_report,
-            out,
-            "check",
-            ctx.config.settings.default_output_format.as_deref(),
-        )?;
-        println!("Report written to {}", path);
-    }
+    maybe_write_report(
+        &raw,
+        &ctx.mode,
+        output.out.as_deref(),
+        "check",
+        ctx.config.settings.default_output_format.as_deref(),
+    )?;
 
     Ok(())
-}
-
-/// `ProgressSink` impl that prints to stdout via the existing `output::printer`.
-/// Maintains byte-for-byte compatibility with the pre-refactor CLI output.
-struct PrinterSink;
-
-impl ProgressSink for PrinterSink {
-    fn host_started(&self, _host: &str) {
-        // The pre-refactor CLI did not print a "started" line; leave silent
-        // to keep stdout byte-identical.
-    }
-
-    fn host_completed(&self, host: &str, status: HostStatus, detail: &str, _ms: u64) {
-        let kind = match status {
-            HostStatus::Online => "ok",
-            HostStatus::Partial => "skip",
-            HostStatus::Skipped => "skip",
-            _ => "error",
-        };
-        printer::print_host_line(host, kind, detail);
-    }
 }
 
 /// Build per-host check configuration from the `--name`-selected entries.

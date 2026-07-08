@@ -1,3 +1,5 @@
+//! sh/bash probe commands for system metrics.
+
 /// Return the sh/bash probe command for a given metric.
 pub fn command_for(metric: &str) -> String {
     match metric {

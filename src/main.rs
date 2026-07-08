@@ -1,17 +1,7 @@
-mod cli;
-mod commands;
-mod config;
-mod host;
-mod metrics;
-mod output;
-mod state;
-#[cfg(feature = "tui")]
-mod tui;
-mod util;
-
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
+use sshi::cli::{Cli, Commands};
+use sshi::commands;
 
 /// Enable ANSI escape code support on Windows terminals.
 /// Modern Windows 10+ supports ANSI via Virtual Terminal Processing,
@@ -46,7 +36,7 @@ fn enable_ansi_support() {}
 /// When `silent` is false (CLI mode), only the fmt layer is installed and
 /// the returned handle is `None`.
 #[cfg(feature = "tui")]
-fn init_tracing(verbose: bool, silent: bool) -> Option<crate::tui::log_layer::LogBufferHandle> {
+fn init_tracing(verbose: bool, silent: bool) -> Option<sshi::tui::log_layer::LogBufferHandle> {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter, Layer, Registry};
 
     let filter = if std::env::var("RUST_LOG").is_ok() {
@@ -58,8 +48,8 @@ fn init_tracing(verbose: bool, silent: bool) -> Option<crate::tui::log_layer::Lo
     };
 
     if silent {
-        let log_handle = crate::tui::log_layer::LogBufferHandle::new();
-        let ring_layer = crate::tui::log_layer::RingBufferLayer::new(log_handle.clone())
+        let log_handle = sshi::tui::log_layer::LogBufferHandle::new();
+        let ring_layer = sshi::tui::log_layer::RingBufferLayer::new(log_handle.clone())
             .with_filter(filter.clone());
         let fmt_layer = fmt::layer()
             .with_target(false)
@@ -115,7 +105,7 @@ async fn main() -> Result<()> {
         None => {
             #[cfg(feature = "tui")]
             {
-                return tui::entry::run_or_fallback(cli.verbose, cfg).await;
+                return sshi::tui::entry::run_or_fallback(cli.verbose, cfg).await;
             }
             #[cfg(not(feature = "tui"))]
             {

@@ -33,6 +33,9 @@ use crate::commands::{Context, TargetMode};
 use crate::config::schema::AppConfig;
 use crate::tui::state::persist::ViewOperationKind;
 
+use super::app_state::{
+    AuthPopup, EscLevel, ExportPopup, OperateState, PopupState, ViewFocus, ViewState,
+};
 use super::async_bridge::{EventSender, RunningOp, TuiEvent};
 use super::components::input_field::{InputField, InputMode};
 use super::components::member_picker::{MemberPicker, PickerResult, PickerTarget};
@@ -73,136 +76,8 @@ const MIN_COLS: u16 = 60;
 const MIN_ROWS: u16 = 20;
 const POLL_INTERVAL_MS: u64 = 50;
 
-/// ESC-toggle level for Operate and View tabs (3-way cycling).
-///
-/// Config tab is excluded — it keeps the original 2-way NavBar toggle.
-/// The cycle is: NavBar → TopField → Content → NavBar → …
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EscLevel {
-    /// Focused on the tab-bar (NavBar).
-    NavBar,
-    /// Focused on the top field of the content area (OpRadio / OpSelector).
-    TopField,
-    /// Focused somewhere deeper in the content area.
-    Content,
-}
-
-impl EscLevel {
-    fn next(self) -> EscLevel {
-        match self {
-            EscLevel::NavBar => EscLevel::TopField,
-            EscLevel::TopField => EscLevel::Content,
-            EscLevel::Content => EscLevel::NavBar,
-        }
-    }
-}
-
-/// Focus zone within the View tab.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ViewFocus {
-    OpSelector,
-    /// Inline Common-zone target mode radio (Checkout/List only).
-    TargetMode,
-    /// Inline Common-zone group/host members (Checkout/List, non-All modes).
-    TargetMembers,
-    /// Inline Common-zone skip-host list (Checkout/List only).
-    Skip,
-    /// Combined-view toggle row (Checkout only).
-    CombinedToggle,
-    Specific(usize),
-    Result,
-}
-
-impl ViewFocus {
-    /// Return the ordered focus stops for the given view operation.
-    ///
-    /// Checkout/List expose an inline Common zone (target mode → members →
-    /// skip) in place of the old `f` filter popup; Log has no target.
-    /// Checkout additionally exposes the CombinedToggle row.
-    fn stops(op: ViewOperationKind, mode: TargetFilterMode) -> Vec<ViewFocus> {
-        match op {
-            ViewOperationKind::Checkout => {
-                let mut v = vec![ViewFocus::OpSelector, ViewFocus::TargetMode];
-                if mode != TargetFilterMode::All {
-                    v.push(ViewFocus::TargetMembers);
-                }
-                v.push(ViewFocus::Skip);
-                v.push(ViewFocus::CombinedToggle);
-                v.push(ViewFocus::Result);
-                v
-            }
-            ViewOperationKind::List => {
-                let mut v = vec![ViewFocus::OpSelector, ViewFocus::TargetMode];
-                if mode != TargetFilterMode::All {
-                    v.push(ViewFocus::TargetMembers);
-                }
-                v.push(ViewFocus::Skip);
-                v.push(ViewFocus::Result);
-                v
-            }
-            ViewOperationKind::Log => vec![
-                ViewFocus::OpSelector,
-                ViewFocus::Specific(0),
-                ViewFocus::Specific(1),
-                ViewFocus::Specific(2),
-                ViewFocus::Specific(3),
-                ViewFocus::Specific(4),
-                ViewFocus::Result,
-            ],
-        }
-    }
-}
-
-/// State for the masked SSH auth credential popup.
-struct AuthPopup {
-    prompt: String,
-    input: InputField,
-    responder: Option<tokio::sync::oneshot::Sender<String>>,
-}
-
-impl AuthPopup {
-    fn new(req: SshAuthRequest) -> Self {
-        let mut input = InputField::new("");
-        input.activate();
-        Self {
-            prompt: req.prompt,
-            input,
-            responder: Some(req.responder),
-        }
-    }
-
-    /// Consume the popup, sending the credential. Zeroizes the input buffer.
-    fn submit(&mut self) {
-        let credential = std::mem::take(&mut self.input.value);
-        if let Some(tx) = self.responder.take() {
-            let _ = tx.send(credential);
-        }
-    }
-
-    /// Dismiss without sending (drops sender → auth failure).
-    fn cancel(&mut self) {
-        self.input.value.clear();
-        self.responder = None;
-    }
-}
-
-/// State for the "Export to file" popup in View tab.
-struct ExportPopup {
-    input: InputField,
-    source: ViewOperationKind,
-}
-
-impl ExportPopup {
-    fn new(source: ViewOperationKind) -> Self {
-        let mut input = InputField::new("");
-        input.activate();
-        Self { input, source }
-    }
-}
-
 pub struct App {
     pub active_tab: TabId,
-    export_popup: Option<ExportPopup>,
     navbar_focused: bool,
     pub theme: Theme,
     pub error: Option<String>,
@@ -211,109 +86,27 @@ pub struct App {
     pub info_open: bool,
     pub checkout_viewport: Viewport,
     pub checkout_snapshots: Vec<HostSnapshot>,
-    /// Unfiltered cache for Checkout; `checkout_snapshots` is the filtered view.
     checkout_all_snapshots: Vec<HostSnapshot>,
     pub checkout_columns: DisplayColumns,
     pub config: AppConfig,
     pub config_path: Option<PathBuf>,
-    /// 3-level Config tab browser state (Phase 4).
     config_tab: ConfigTabState,
-    /// Set by `handle_key` when `E` is pressed; drained by `run()` after each event.
     needs_editor_open: bool,
     pub state_file_path: PathBuf,
     pub target_filter: TargetFilterState,
-    operate_focus: OpField,
-    /// Open member picker (groups/hosts/skip/shell), if any. Focus root.
-    member_picker: Option<MemberPicker>,
-    /// When a name picker triggered `a` (add entry), the picker target to reopen
-    /// on the Operate tab once the Config add-entry form closes.
-    reopen_name_picker: Option<PickerTarget>,
-    /// When `e` was pressed on a List result row, the saved cursor position so
-    /// we can restore it when the Config edit form closes.
-    reopen_view_edit: Option<usize>,
-    /// Shared dry-run toggle, shown by the Execute button (`d` toggles).
-    op_dry_run: bool,
-    /// Currently-selected operation on the Operate tab.
-    operate_operation: OperationKind,
-    /// Text input for the `run` command field (NOT persisted per AD-12).
-    run_command: InputField,
-    /// Text input for the `exec` script path field (NOT persisted per AD-12).
-    exec_script: InputField,
-    /// Text inputs for the `cp` local/remote path fields (NOT persisted per AD-12).
-    cp_local: InputField,
-    cp_remote: InputField,
-    /// Text inputs for check/sync config-entry name selection (NOT persisted).
-    check_name: InputField,
-    sync_name: InputField,
-    /// Sudo / keep boolean params (persisted per AD-12).
-    run_sudo: bool,
-    exec_sudo: bool,
-    exec_keep: bool,
-    /// Sync params (sync_dry_run persisted; adhoc_files NOT persisted per AD-12).
-    sync_dry_run: bool,
-    sync_adhoc_files: Vec<String>,
-    sync_adhoc_input: InputField,
-    /// Source host override for sync (NOT persisted per AD-12).
-    sync_source_input: InputField,
-    /// `-o/--out` report path, shared across operations (NOT persisted).
-    out_input: InputField,
-    /// Currently-running operation, if any. Mutually exclusive with starting
-    /// a new one (concurrency guard per Phase 3 step 10).
+    pub operate: OperateState,
+    pub view: ViewState,
+    pub popup: PopupState,
     running_op: Option<RunningOp>,
-    /// Bridge channel sender. Spawned tasks clone this via `EventSender`.
     event_tx: tokio::sync::mpsc::UnboundedSender<TuiEvent>,
-    /// Bridge receiver, drained by the main loop.
     event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<TuiEvent>>,
-    /// Final report from the most recently completed operation, shown in the
-    /// results popup until dismissed.
     completed_report: Option<CommandReport>,
-    /// True when a snapshot DB write happened in this session and the
-    /// Checkout tab needs to reload before its next render (§18.3).
     db_stale: bool,
-    /// View tab: currently selected operation.
-    view_op: super::state::persist::ViewOperationKind,
-    /// View tab: cached list result.
-    view_list: Option<crate::commands::list::ListData>,
-    /// View tab: cached log result rows.
-    view_log: Vec<crate::commands::log::LogRow>,
-    /// View tab: whether combined (per-metric latest) mode is active for Checkout.
-    checkout_combined: bool,
-    /// View tab: stale flag — triggers refresh on next render.
-    view_dirty: bool,
-    /// View tab: loading spinner (unused stub for 11a).
-    view_loading: bool,
-    /// View tab: log_last parameter (0 → 20 default).
-    log_last: usize,
-    /// View tab: log_errors filter flag.
-    log_errors: bool,
-    /// View tab: log action filter.
-    log_action: Option<ActionFilter>,
-    /// View tab: text inputs for log params.
-    log_last_input: InputField,
-    log_since_input: InputField,
-    log_host_input: InputField,
-    /// View tab: which zone currently has focus.
-    view_focus: ViewFocus,
-    /// Tracks the most recent timeout used (filter timeout or default).
     last_timeout_secs: u64,
-    /// ESC-toggle level for the Operate tab (3-way: NavBar / OpRadio / content).
-    operate_esc_level: EscLevel,
-    /// ESC-toggle level for the View tab (3-way: NavBar / OpSelector / content).
-    view_esc_level: EscLevel,
-    /// Log overlay open state (Phase 7, §17.3 item 3).
     log_overlay_open: bool,
-    /// Log overlay viewport for scrolling.
     log_overlay_vp: Viewport,
-    /// Log buffer: in-memory ring of tracing events (§17.2).
     log_buffer: Option<LogBufferHandle>,
-    /// Active SSH auth popup, if any. Takes highest key-routing priority after Ctrl+C.
-    auth_popup: Option<AuthPopup>,
-    /// Sender side of the auth bridge channel; cloned into each execute operation.
     auth_bridge_tx: Option<SshAuthSender>,
-    /// User-controlled scroll offset for the progress popup (None = auto-scroll to bottom).
-    progress_popup_scroll: Option<usize>,
-    /// Scroll offset for the completed-results popup (0 = top).
-    completed_report_scroll: usize,
 }
 
 impl App {
@@ -371,69 +164,25 @@ impl App {
             needs_editor_open: false,
             state_file_path,
             target_filter: persisted.target_filter,
-            operate_focus: OpField::OpRadio,
-            member_picker: None,
-            reopen_name_picker: None,
-            reopen_view_edit: None,
-            op_dry_run: persisted.operate.sync_dry_run,
-            operate_operation: persisted.operate.operation,
-            run_command: InputField::new(&persisted.operate.run_command),
-            exec_script: InputField::new(&persisted.operate.exec_script),
-            cp_local: InputField::new(&persisted.operate.cp_local),
-            cp_remote: InputField::new(&persisted.operate.cp_remote),
-            check_name: InputField::new(""),
-            sync_name: InputField::new(""),
-            run_sudo: persisted.operate.run_sudo,
-            exec_sudo: persisted.operate.exec_sudo,
-            exec_keep: persisted.operate.exec_keep,
-            sync_dry_run: persisted.operate.sync_dry_run,
-            sync_adhoc_files: Vec::new(),
-            sync_adhoc_input: InputField::new(""),
-            sync_source_input: InputField::new(""),
-            out_input: InputField::new(""),
+            operate: OperateState::new(&persisted.operate),
+            view: ViewState::new(&persisted.operate),
+            popup: PopupState::new(),
             running_op: None,
             event_tx,
             event_rx: Some(event_rx),
             completed_report: None,
             db_stale: false,
-            view_op: persisted.operate.view_operation,
-            view_list: None,
-            view_log: Vec::new(),
-            checkout_combined: persisted.operate.checkout_combined,
-            view_dirty: true,
-            view_loading: false,
-            log_last: if persisted.operate.log_last == 0 {
-                20
-            } else {
-                persisted.operate.log_last
-            },
-            log_errors: persisted.operate.log_errors,
-            log_action: None,
-            log_last_input: InputField::new(&if persisted.operate.log_last == 0 {
-                "20".to_string()
-            } else {
-                persisted.operate.log_last.to_string()
-            }),
-            log_since_input: InputField::new(""),
-            log_host_input: InputField::new(""),
-            view_focus: ViewFocus::OpSelector,
-            operate_esc_level: EscLevel::NavBar,
-            view_esc_level: EscLevel::NavBar,
             last_timeout_secs: timeout,
             log_overlay_open: false,
             log_overlay_vp: Viewport::new(),
             log_buffer,
-            auth_popup: None,
-            export_popup: None,
             auth_bridge_tx: None,
-            progress_popup_scroll: None,
-            completed_report_scroll: 0,
         }
     }
 
     /// Ordered list of focusable Operate fields for the current op/mode.
     fn operate_field_list(&self) -> Vec<OpField> {
-        operate_tab::operate_fields(self.operate_operation, self.target_filter.mode)
+        operate_tab::operate_fields(self.operate.operation, self.target_filter.mode)
     }
 
     /// Descend from NavBar into the content area, respecting ESC levels.
@@ -446,9 +195,9 @@ impl App {
         match self.active_tab {
             TabId::Config => {}
             TabId::Operate => {
-                self.operate_focus = match self.operate_esc_level {
+                self.operate.focus = match self.operate.esc_level {
                     EscLevel::NavBar | EscLevel::TopField => {
-                        self.operate_esc_level = EscLevel::TopField;
+                        self.operate.esc_level = EscLevel::TopField;
                         OpField::OpRadio
                     }
                     EscLevel::Content => {
@@ -463,13 +212,13 @@ impl App {
                 };
             }
             TabId::View => {
-                self.view_focus = match self.view_esc_level {
+                self.view.focus = match self.view.esc_level {
                     EscLevel::NavBar | EscLevel::TopField => {
-                        self.view_esc_level = EscLevel::TopField;
+                        self.view.esc_level = EscLevel::TopField;
                         ViewFocus::OpSelector
                     }
                     EscLevel::Content => {
-                        let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
+                        let stops = ViewFocus::stops(self.view.op, self.target_filter.mode);
                         if stops.len() > 1 {
                             let f = stops[1];
                             if f == ViewFocus::Result {
@@ -492,15 +241,15 @@ impl App {
         let list = self.operate_field_list();
         let pos = list
             .iter()
-            .position(|f| *f == self.operate_focus)
+            .position(|f| *f == self.operate.focus)
             .unwrap_or(0) as i32;
         let next = pos + delta;
         if next < 0 {
             self.navbar_focused = true;
-            self.operate_esc_level = EscLevel::NavBar;
+            self.operate.esc_level = EscLevel::NavBar;
         } else if (next as usize) < list.len() {
-            self.operate_focus = list[next as usize];
-            self.operate_esc_level = if self.operate_focus == OpField::OpRadio {
+            self.operate.focus = list[next as usize];
+            self.operate.esc_level = if self.operate.focus == OpField::OpRadio {
                 EscLevel::TopField
             } else {
                 EscLevel::Content
@@ -511,7 +260,7 @@ impl App {
     /// Cycle the Operate operation radio (run/exec/sync/cp/check). Shared by ←→
     /// and Tab/BackTab while the operation radio holds focus.
     fn operate_cycle_operation(&mut self, forward: bool) {
-        self.operate_operation = cycle_operation(self.operate_operation, forward);
+        self.operate.operation = cycle_operation(self.operate.operation, forward);
         self.save_state();
     }
 
@@ -524,26 +273,26 @@ impl App {
         // The Members row only exists for non-All modes; if we just switched to
         // All while focused there, keep focus on the Target row.
         if self.target_filter.mode == TargetFilterMode::All {
-            self.operate_focus = OpField::TargetMode;
+            self.operate.focus = OpField::TargetMode;
         }
         self.save_state();
         self.apply_checkout_filter();
-        self.view_dirty = true;
+        self.view.dirty = true;
     }
 
     /// Run the currently-selected operation. Shared by Enter-on-Execute and the
     /// `e` hotkey. Returns whether the frame should redraw.
     fn trigger_execute(&mut self) -> bool {
         // Feed the shared dry-run toggle into the sync path.
-        self.sync_dry_run = self.op_dry_run;
+        self.operate.sync_dry_run = self.operate.dry_run;
         // Ensure the per-host timeout reflects the Timeout field.
         self.last_timeout_secs = self.target_filter.timeout;
         // sync_core honours dry-run internally; check/run/exec cores do not, so
         // preview them synthetically without contacting any host.
-        if self.op_dry_run && !matches!(self.operate_operation, OperationKind::Sync) {
+        if self.operate.dry_run && !matches!(self.operate.operation, OperationKind::Sync) {
             return self.dry_run_preview();
         }
-        match self.operate_operation {
+        match self.operate.operation {
             OperationKind::Check => self.execute_check(),
             OperationKind::Run => self.execute_run(),
             OperationKind::Exec => self.execute_exec(),
@@ -559,7 +308,7 @@ impl App {
         // Radios cycle their value on Tab (matching ←→): the operation radio is
         // alone in its layer, and the target row cycles its mode in place while
         // ↑↓ still steps to the other Common fields.
-        match self.operate_focus {
+        match self.operate.focus {
             OpField::OpRadio => {
                 self.operate_cycle_operation(forward);
                 return;
@@ -570,7 +319,7 @@ impl App {
             }
             _ => {}
         }
-        let layer = operate_tab::layer_of(self.operate_focus);
+        let layer = operate_tab::layer_of(self.operate.focus);
         let peers: Vec<OpField> = self
             .operate_field_list()
             .into_iter()
@@ -581,14 +330,14 @@ impl App {
         }
         let pos = peers
             .iter()
-            .position(|f| *f == self.operate_focus)
+            .position(|f| *f == self.operate.focus)
             .unwrap_or(0);
         let next = if forward {
             (pos + 1) % peers.len()
         } else {
             (pos + peers.len() - 1) % peers.len()
         };
-        self.operate_focus = peers[next];
+        self.operate.focus = peers[next];
     }
 
     /// All group names referenced anywhere in the config (hosts, check and
@@ -617,21 +366,21 @@ impl App {
     /// Cycle the View op (Checkout → List → Log) and refresh. Shared by ←→ and
     /// Tab/BackTab while the Op selector holds focus.
     fn cycle_view_op(&mut self, forward: bool) {
-        self.view_op = if forward {
-            match self.view_op {
+        self.view.op = if forward {
+            match self.view.op {
                 ViewOperationKind::Checkout => ViewOperationKind::List,
                 ViewOperationKind::List => ViewOperationKind::Log,
                 ViewOperationKind::Log => ViewOperationKind::Checkout,
             }
         } else {
-            match self.view_op {
+            match self.view.op {
                 ViewOperationKind::Checkout => ViewOperationKind::Log,
                 ViewOperationKind::List => ViewOperationKind::Checkout,
                 ViewOperationKind::Log => ViewOperationKind::List,
             }
         };
-        self.view_focus = ViewFocus::OpSelector;
-        self.view_dirty = true;
+        self.view.focus = ViewFocus::OpSelector;
+        self.view.dirty = true;
     }
 
     /// Cycle the View target mode through All → Groups → Hosts → Shell
@@ -654,13 +403,13 @@ impl App {
         };
         self.target_filter.mode = order[next];
         if self.target_filter.mode == TargetFilterMode::All
-            && self.view_focus == ViewFocus::TargetMembers
+            && self.view.focus == ViewFocus::TargetMembers
         {
-            self.view_focus = ViewFocus::TargetMode;
+            self.view.focus = ViewFocus::TargetMode;
         }
         self.save_state();
         self.apply_checkout_filter();
-        self.view_dirty = true;
+        self.view.dirty = true;
     }
 
     /// Accent colour of the currently-active tab (drives borders, focus, and
@@ -705,7 +454,7 @@ impl App {
             // All mode has no TargetMembers field; nothing to open.
             TargetFilterMode::All => return,
         };
-        self.member_picker = Some(picker);
+        self.popup.member_picker = Some(picker);
     }
 
     /// Names of all `[[check]]` / `[[sync]]` entries, in config order.
@@ -776,12 +525,12 @@ impl App {
     /// pre-checking whatever the field's comma value already holds.
     fn open_name_picker(&mut self, target: PickerTarget) {
         let current = match target {
-            PickerTarget::CheckNames => comma_names(&self.check_name.value),
-            PickerTarget::SyncNames => comma_names(&self.sync_name.value),
+            PickerTarget::CheckNames => comma_names(&self.operate.check_name.value),
+            PickerTarget::SyncNames => comma_names(&self.operate.sync_name.value),
             _ => return,
         };
         let accent = self.tab_accent();
-        self.member_picker = Some(
+        self.popup.member_picker = Some(
             MemberPicker::new(target, self.config_entry_names(target), &current, accent)
                 .with_descriptions(self.config_entry_descriptions(target)),
         );
@@ -791,7 +540,7 @@ impl App {
     /// Mirrors the Space-to-cycle behaviour of the Target Shell value.
     fn cycle_sync_source(&mut self) {
         let hosts = self.available_hosts();
-        let cur = self.sync_source_input.value.trim().to_string();
+        let cur = self.operate.sync_source_input.value.trim().to_string();
         // Slot 0 = "(none)"; slots 1.. map to hosts.
         let pos = if cur.is_empty() {
             0
@@ -799,7 +548,7 @@ impl App {
             hosts.iter().position(|h| h == &cur).map_or(0, |i| i + 1)
         };
         let next = (pos + 1) % (hosts.len() + 1);
-        self.sync_source_input.value = if next == 0 {
+        self.operate.sync_source_input.value = if next == 0 {
             String::new()
         } else {
             hosts[next - 1].clone()
@@ -811,14 +560,14 @@ impl App {
     fn open_source_picker(&mut self) {
         let mut options = vec!["(none)".to_string()];
         options.extend(self.available_hosts());
-        let cur = self.sync_source_input.value.trim();
+        let cur = self.operate.sync_source_input.value.trim();
         let current = if cur.is_empty() {
             vec!["(none)".to_string()]
         } else {
             vec![cur.to_string()]
         };
         let accent = self.tab_accent();
-        self.member_picker = Some(MemberPicker::new(
+        self.popup.member_picker = Some(MemberPicker::new(
             PickerTarget::SyncSource,
             options,
             &current,
@@ -836,7 +585,7 @@ impl App {
             PickerTarget::SyncNames => EntryFormKind::Sync,
             _ => return,
         };
-        self.reopen_name_picker = Some(target);
+        self.popup.reopen_name_picker = Some(target);
         self.active_tab = TabId::Config;
         self.navbar_focused = false;
         self.config_tab.start_add_entry(kind);
@@ -849,7 +598,7 @@ impl App {
         use super::tabs::config_tab::EntryFormKind;
         use super::tabs::view_tab::ListEditTarget;
 
-        let list_data = match self.view_list.as_ref() {
+        let list_data = match self.view.list.as_ref() {
             Some(d) => d,
             None => return,
         };
@@ -869,7 +618,7 @@ impl App {
         // picks it up.
         self.config_tab.navigate_to_entry(kind, index, &self.config);
 
-        self.reopen_view_edit = Some(selected);
+        self.popup.reopen_view_edit = Some(selected);
         self.active_tab = TabId::Config;
         self.navbar_focused = false;
         self.config_tab.start_edit_entry(&self.config);
@@ -882,19 +631,19 @@ impl App {
             },
             target_filter: self.target_filter.clone(),
             operate: super::state::persist::OperateState {
-                operation: self.operate_operation,
-                run_sudo: self.run_sudo,
-                exec_sudo: self.exec_sudo,
-                exec_keep: self.exec_keep,
-                sync_dry_run: self.sync_dry_run,
-                view_operation: self.view_op,
-                checkout_combined: self.checkout_combined,
-                log_last: self.log_last,
-                log_errors: self.log_errors,
-                run_command: self.run_command.value.clone(),
-                exec_script: self.exec_script.value.clone(),
-                cp_local: self.cp_local.value.clone(),
-                cp_remote: self.cp_remote.value.clone(),
+                operation: self.operate.operation,
+                run_sudo: self.operate.run_sudo,
+                exec_sudo: self.operate.exec_sudo,
+                exec_keep: self.operate.exec_keep,
+                sync_dry_run: self.operate.sync_dry_run,
+                view_operation: self.view.op,
+                checkout_combined: self.view.checkout_combined,
+                log_last: self.view.log_last,
+                log_errors: self.view.log_errors,
+                run_command: self.operate.run_command.value.clone(),
+                exec_script: self.operate.exec_script.value.clone(),
+                cp_local: self.operate.cp_local.value.clone(),
+                cp_remote: self.operate.cp_remote.value.clone(),
                 ..Default::default()
             },
         };
@@ -1043,9 +792,9 @@ impl App {
                 self.running_op = None;
                 self.db_stale = true;
                 // View tab data is now stale — force a refresh on next render.
-                self.view_dirty = true;
+                self.view.dirty = true;
                 self.completed_report = Some(report);
-                self.completed_report_scroll = 0;
+                self.popup.completed_report_scroll = 0;
                 true
             }
             TuiEvent::OperationCancelled => {
@@ -1060,7 +809,7 @@ impl App {
                 true
             }
             TuiEvent::SshAuthRequired(req) => {
-                self.auth_popup = Some(AuthPopup::new(req));
+                self.popup.auth = Some(AuthPopup::new(req));
                 true
             }
         }
@@ -1068,7 +817,7 @@ impl App {
 
     /// Trimmed `-o/--out` report path, or None when the field is empty.
     fn out_path(&self) -> Option<String> {
-        let v = self.out_input.value.trim().to_string();
+        let v = self.operate.out_input.value.trim().to_string();
         if v.is_empty() {
             None
         } else {
@@ -1080,7 +829,7 @@ impl App {
         let target_mode = build_target_mode(&self.target_filter, &self.config);
         let executed_at = chrono::Local::now().to_rfc3339();
 
-        let (op_report, command) = match self.view_op {
+        let (op_report, command) = match self.view.op {
             ViewOperationKind::Checkout => {
                 use crate::output::report::{
                     FilterInfo, HostResult, OperationReport, ReportSummary,
@@ -1146,7 +895,8 @@ impl App {
                 };
 
                 let entries: Vec<LogHostResult> = self
-                    .view_log
+                    .view
+                    .log
                     .iter()
                     .map(|r| {
                         let status = match r.status.as_str() {
@@ -1169,7 +919,7 @@ impl App {
                     })
                     .collect();
 
-                let action_filter_str = self.log_action.as_ref().map(|a| match a {
+                let action_filter_str = self.view.log_action.as_ref().map(|a| match a {
                     ActionFilter::Sync => "sync".to_string(),
                     ActionFilter::Run => "run".to_string(),
                     ActionFilter::Exec => "exec".to_string(),
@@ -1180,9 +930,9 @@ impl App {
                 let report = CommandReport::Log(LogReport {
                     executed_at: executed_at.clone(),
                     query_params: LogQueryParams {
-                        last: self.log_last,
+                        last: self.view.log_last,
                         since: {
-                            let val = self.log_since_input.value.trim().to_string();
+                            let val = self.view.log_since_input.value.trim().to_string();
                             if val.is_empty() {
                                 None
                             } else {
@@ -1190,7 +940,7 @@ impl App {
                             }
                         },
                         host: {
-                            let val = self.log_host_input.value.trim().to_string();
+                            let val = self.view.log_host_input.value.trim().to_string();
                             if val.is_empty() {
                                 None
                             } else {
@@ -1198,7 +948,7 @@ impl App {
                             }
                         },
                         action: action_filter_str,
-                        errors: self.log_errors,
+                        errors: self.view.log_errors,
                     },
                     entries,
                 });
@@ -1210,7 +960,8 @@ impl App {
                 use crate::commands::report::{CommandReport, ListHostResult, ListReport};
 
                 let list_data = self
-                    .view_list
+                    .view
+                    .list
                     .as_ref()
                     .ok_or_else(|| anyhow::anyhow!("No list data loaded"))?;
 
@@ -1274,7 +1025,7 @@ impl App {
 
         let executed_at = chrono::Utc::now().to_rfc3339();
         let detail = "would execute (dry-run)".to_string();
-        let report = match self.operate_operation {
+        let report = match self.operate.operation {
             OperationKind::Check => CommandReport::Check(CheckReport {
                 executed_at,
                 enabled_metrics: Vec::new(),
@@ -1295,7 +1046,7 @@ impl App {
                     .collect(),
             }),
             OperationKind::Run => {
-                let command = self.run_command.value.trim().to_string();
+                let command = self.operate.run_command.value.trim().to_string();
                 if command.is_empty() {
                     self.error = Some("Command field is empty.".to_string());
                     return true;
@@ -1318,7 +1069,7 @@ impl App {
                 })
             }
             OperationKind::Exec => {
-                let script = self.exec_script.value.trim().to_string();
+                let script = self.operate.exec_script.value.trim().to_string();
                 if script.is_empty() {
                     self.error = Some("Script path field is empty.".to_string());
                     return true;
@@ -1342,13 +1093,13 @@ impl App {
             }
             OperationKind::Sync => unreachable!("sync dry-run is handled by sync_core"),
             OperationKind::Cp => {
-                let local = self.cp_local.value.trim().to_string();
+                let local = self.operate.cp_local.value.trim().to_string();
                 if local.is_empty() {
                     self.error = Some("Local path field is empty.".to_string());
                     return true;
                 }
                 let remote = {
-                    let r = self.cp_remote.value.trim();
+                    let r = self.operate.cp_remote.value.trim();
                     if r.is_empty() {
                         "~".to_string()
                     } else {
@@ -1378,9 +1129,9 @@ impl App {
         };
 
         let n = targets.len();
-        self.progress_popup_scroll = None;
+        self.popup.progress_scroll = None;
         self.completed_report = Some(report);
-        self.completed_report_scroll = 0;
+        self.popup.completed_report_scroll = 0;
         self.error = Some(format!(
             "Dry-run preview — {n} target(s), no hosts contacted"
         ));
@@ -1414,7 +1165,7 @@ impl App {
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
         let verbose = false;
-        let names = comma_names(&self.check_name.value);
+        let names = comma_names(&self.operate.check_name.value);
         let cfg = self.config.clone();
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
@@ -1477,7 +1228,7 @@ impl App {
                 });
             });
 
-        self.progress_popup_scroll = None;
+        self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
             cancel,
             started_at: std::time::Instant::now(),
@@ -1495,7 +1246,7 @@ impl App {
             self.error = Some("Operation already running".to_string());
             return true;
         }
-        let command = self.run_command.value.trim().to_string();
+        let command = self.operate.run_command.value.trim().to_string();
         if command.is_empty() {
             self.error = Some("Command field is empty.".to_string());
             return true;
@@ -1524,7 +1275,7 @@ impl App {
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
-        let sudo = self.run_sudo;
+        let sudo = self.operate.run_sudo;
 
         let _ = std::thread::Builder::new()
             .name("sshi-op".to_string())
@@ -1568,7 +1319,7 @@ impl App {
                 });
             });
 
-        self.progress_popup_scroll = None;
+        self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
             cancel,
             started_at: std::time::Instant::now(),
@@ -1586,7 +1337,7 @@ impl App {
             self.error = Some("Operation already running".to_string());
             return true;
         }
-        let script = self.exec_script.value.trim().to_string();
+        let script = self.operate.exec_script.value.trim().to_string();
         if script.is_empty() {
             self.error = Some("Script path field is empty.".to_string());
             return true;
@@ -1615,8 +1366,8 @@ impl App {
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
-        let sudo = self.exec_sudo;
-        let keep = self.exec_keep;
+        let sudo = self.operate.exec_sudo;
+        let keep = self.operate.exec_keep;
 
         let _ = std::thread::Builder::new()
             .name("sshi-op".to_string())
@@ -1660,7 +1411,7 @@ impl App {
                 });
             });
 
-        self.progress_popup_scroll = None;
+        self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
             cancel,
             started_at: std::time::Instant::now(),
@@ -1679,12 +1430,12 @@ impl App {
             self.error = Some("Operation already running".to_string());
             return true;
         }
-        let local = self.cp_local.value.trim().to_string();
+        let local = self.operate.cp_local.value.trim().to_string();
         if local.is_empty() {
             self.error = Some("Local path field is empty.".to_string());
             return true;
         }
-        let remote_raw = self.cp_remote.value.trim().to_string();
+        let remote_raw = self.operate.cp_remote.value.trim().to_string();
         let remote: Option<String> = if remote_raw.is_empty() {
             None
         } else {
@@ -1757,7 +1508,7 @@ impl App {
                 });
             });
 
-        self.progress_popup_scroll = None;
+        self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
             cancel,
             started_at: std::time::Instant::now(),
@@ -1800,13 +1551,13 @@ impl App {
         let _auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
-        let dry_run = self.sync_dry_run;
+        let dry_run = self.operate.sync_dry_run;
         // Config-entry names and ad-hoc paths are passed together; the sync core
         // merges both (plus the optional source override).
-        let adhoc_files = self.sync_adhoc_files.clone();
-        let names = comma_names(&self.sync_name.value);
+        let adhoc_files = self.operate.sync_adhoc_files.clone();
+        let names = comma_names(&self.operate.sync_name.value);
         let source_override: Option<String> = {
-            let v = self.sync_source_input.value.trim().to_string();
+            let v = self.operate.sync_source_input.value.trim().to_string();
             if v.is_empty() {
                 None
             } else {
@@ -1856,7 +1607,7 @@ impl App {
                 });
             });
 
-        self.progress_popup_scroll = None;
+        self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
             cancel,
             started_at: std::time::Instant::now(),
@@ -1926,8 +1677,9 @@ impl App {
     /// Per-line selectable flags for the List result, or None when every row is
     /// selectable (Checkout/Log). Lets the result cursor skip decorative lines.
     fn list_selectable(&self) -> Option<Vec<bool>> {
-        if self.view_op == ViewOperationKind::List {
-            self.view_list
+        if self.view.op == ViewOperationKind::List {
+            self.view
+                .list
                 .as_ref()
                 .map(super::tabs::view_tab::list_selectable_lines)
         } else {
@@ -2030,7 +1782,7 @@ impl App {
     /// between OpSelector and Result), and Result (cycles data rows). Arrow keys
     /// cross layers via view_focus_up/down; Tab never leaves the layer.
     fn view_tab_cycle(&mut self, forward: bool) {
-        match self.view_focus {
+        match self.view.focus {
             ViewFocus::Result => self.result_cursor_cycle(forward),
             ViewFocus::OpSelector => self.cycle_view_op(forward),
             // The target row cycles its mode in place (matching ←→); ↑↓ still
@@ -2041,7 +1793,7 @@ impl App {
             _ => {
                 // Settings layer: cycle the stops excluding OpSelector/Result.
                 let settings: Vec<ViewFocus> =
-                    ViewFocus::stops(self.view_op, self.target_filter.mode)
+                    ViewFocus::stops(self.view.op, self.target_filter.mode)
                         .into_iter()
                         .filter(|s| !matches!(s, ViewFocus::OpSelector | ViewFocus::Result))
                         .collect();
@@ -2050,14 +1802,14 @@ impl App {
                 }
                 let pos = settings
                     .iter()
-                    .position(|s| *s == self.view_focus)
+                    .position(|s| *s == self.view.focus)
                     .unwrap_or(0);
                 let next = if forward {
                     (pos + 1) % settings.len()
                 } else {
                     (pos + settings.len() - 1) % settings.len()
                 };
-                self.view_focus = settings[next];
+                self.view.focus = settings[next];
             }
         }
     }
@@ -2078,36 +1830,36 @@ impl App {
     }
 
     fn view_focus_up(&mut self) {
-        if self.view_focus == ViewFocus::Result {
+        if self.view.focus == ViewFocus::Result {
             if self.result_at_top() {
                 // At top of result — move focus to previous stop.
-                let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
+                let stops = ViewFocus::stops(self.view.op, self.target_filter.mode);
                 let idx = stops
                     .iter()
-                    .position(|s| *s == self.view_focus)
+                    .position(|s| *s == self.view.focus)
                     .unwrap_or(0);
                 if idx > 0 {
-                    self.view_focus = stops[idx - 1];
+                    self.view.focus = stops[idx - 1];
                 }
             } else {
                 self.result_move(false);
             }
         } else {
-            let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
+            let stops = ViewFocus::stops(self.view.op, self.target_filter.mode);
             let idx = stops
                 .iter()
-                .position(|s| *s == self.view_focus)
+                .position(|s| *s == self.view.focus)
                 .unwrap_or(0);
             if idx > 0 {
-                self.view_focus = stops[idx - 1];
+                self.view.focus = stops[idx - 1];
             } else {
                 // At first stop (OpSelector) — escape to navbar.
                 self.navbar_focused = true;
-                self.view_esc_level = EscLevel::NavBar;
+                self.view.esc_level = EscLevel::NavBar;
             }
         }
         if !self.navbar_focused {
-            self.view_esc_level = if self.view_focus == ViewFocus::OpSelector {
+            self.view.esc_level = if self.view.focus == ViewFocus::OpSelector {
                 EscLevel::TopField
             } else {
                 EscLevel::Content
@@ -2116,23 +1868,23 @@ impl App {
     }
 
     fn view_focus_down(&mut self) {
-        if self.view_focus == ViewFocus::Result {
+        if self.view.focus == ViewFocus::Result {
             self.result_move(true);
         } else {
-            let stops = ViewFocus::stops(self.view_op, self.target_filter.mode);
+            let stops = ViewFocus::stops(self.view.op, self.target_filter.mode);
             let idx = stops
                 .iter()
-                .position(|s| *s == self.view_focus)
+                .position(|s| *s == self.view.focus)
                 .unwrap_or(0);
             if idx + 1 < stops.len() {
-                self.view_focus = stops[idx + 1];
+                self.view.focus = stops[idx + 1];
                 // Entering the Result zone: land the cursor on a real data row.
-                if self.view_focus == ViewFocus::Result {
+                if self.view.focus == ViewFocus::Result {
                     self.snap_result_selection(true);
                 }
             }
         }
-        self.view_esc_level = if self.view_focus == ViewFocus::OpSelector {
+        self.view.esc_level = if self.view.focus == ViewFocus::OpSelector {
             EscLevel::TopField
         } else {
             EscLevel::Content
@@ -2143,13 +1895,13 @@ impl App {
     fn refresh_view(&mut self) {
         // Clear the dirty flag only on a successful read; a failed db::open
         // leaves it set so the next render retries instead of showing stale/empty.
-        match self.view_op {
+        match self.view.op {
             super::state::persist::ViewOperationKind::Checkout => {
                 self.maybe_reload_checkout();
                 self.apply_checkout_filter();
                 // If combined mode is on, re-derive snapshots using per-metric
                 // best-available lookback instead of the single latest snapshot.
-                if self.checkout_combined {
+                if self.view.checkout_combined {
                     if let Ok(conn) =
                         crate::state::db::open(self.config.settings.state_dir.as_deref())
                     {
@@ -2178,7 +1930,7 @@ impl App {
                         }
                     }
                 }
-                self.view_dirty = false;
+                self.view.dirty = false;
             }
             super::state::persist::ViewOperationKind::List => {
                 if let Ok(conn) = crate::state::db::open(self.config.settings.state_dir.as_deref())
@@ -2194,9 +1946,9 @@ impl App {
                         skip: self.target_filter.skip.clone(),
                         verbose: false,
                     };
-                    self.view_list =
+                    self.view.list =
                         Some(crate::commands::list::list_core(&ctx).unwrap_or_default());
-                    self.view_dirty = false;
+                    self.view.dirty = false;
                 }
             }
             super::state::persist::ViewOperationKind::Log => {
@@ -2213,7 +1965,7 @@ impl App {
                         verbose: false,
                     };
                     let since = {
-                        let v = self.log_since_input.value.trim().to_string();
+                        let v = self.view.log_since_input.value.trim().to_string();
                         if v.is_empty() {
                             None
                         } else {
@@ -2221,23 +1973,23 @@ impl App {
                         }
                     };
                     let host = {
-                        let v = self.log_host_input.value.trim().to_string();
+                        let v = self.view.log_host_input.value.trim().to_string();
                         if v.is_empty() {
                             None
                         } else {
                             Some(v)
                         }
                     };
-                    self.view_log = crate::commands::log::log_core(
+                    self.view.log = crate::commands::log::log_core(
                         &ctx,
-                        self.log_last,
+                        self.view.log_last,
                         since,
                         host,
-                        self.log_action.clone(),
-                        self.log_errors,
+                        self.view.log_action.clone(),
+                        self.view.log_errors,
                     )
                     .unwrap_or_default();
-                    self.view_dirty = false;
+                    self.view.dirty = false;
                 }
             }
         }
@@ -2260,15 +2012,15 @@ impl App {
         }
 
         // Auth popup takes highest priority after Ctrl+C.
-        if let Some(popup) = self.auth_popup.as_mut() {
+        if let Some(popup) = self.popup.auth.as_mut() {
             match key.code {
                 KeyCode::Enter => {
                     popup.submit();
-                    self.auth_popup = None;
+                    self.popup.auth = None;
                 }
                 KeyCode::Esc => {
                     popup.cancel();
-                    self.auth_popup = None;
+                    self.popup.auth = None;
                 }
                 _ => {
                     popup.input.handle_key(key);
@@ -2278,19 +2030,19 @@ impl App {
         }
 
         // Export popup routing.
-        if let Some(popup) = self.export_popup.as_mut() {
+        if let Some(popup) = self.popup.export.as_mut() {
             match key.code {
                 KeyCode::Enter => {
                     popup.input.confirm();
                     let path = popup.input.value.clone();
-                    self.export_popup = None;
+                    self.popup.export = None;
                     if let Err(e) = self.execute_view_export(&path) {
                         self.error = Some(format!("Export failed: {}", e));
                     }
                 }
                 KeyCode::Esc => {
                     popup.input.cancel();
-                    self.export_popup = None;
+                    self.popup.export = None;
                 }
                 _ => {
                     popup.input.handle_key(key);
@@ -2301,45 +2053,47 @@ impl App {
 
         // §14.3: while an input field is active, suspend ALL other routing.
         if self.active_tab == TabId::Operate {
-            let active_field: Option<&mut InputField> = match self.operate_focus {
-                OpField::Command if self.run_command.mode == InputMode::Active => {
-                    Some(&mut self.run_command)
+            let active_field: Option<&mut InputField> = match self.operate.focus {
+                OpField::Command if self.operate.run_command.mode == InputMode::Active => {
+                    Some(&mut self.operate.run_command)
                 }
-                OpField::Script if self.exec_script.mode == InputMode::Active => {
-                    Some(&mut self.exec_script)
+                OpField::Script if self.operate.exec_script.mode == InputMode::Active => {
+                    Some(&mut self.operate.exec_script)
                 }
-                OpField::SyncAdhocInput if self.sync_adhoc_input.mode == InputMode::Active => {
-                    Some(&mut self.sync_adhoc_input)
+                OpField::SyncAdhocInput
+                    if self.operate.sync_adhoc_input.mode == InputMode::Active =>
+                {
+                    Some(&mut self.operate.sync_adhoc_input)
                 }
-                OpField::SyncSource if self.sync_source_input.mode == InputMode::Active => {
-                    Some(&mut self.sync_source_input)
+                OpField::SyncSource if self.operate.sync_source_input.mode == InputMode::Active => {
+                    Some(&mut self.operate.sync_source_input)
                 }
-                OpField::CpLocal if self.cp_local.mode == InputMode::Active => {
-                    Some(&mut self.cp_local)
+                OpField::CpLocal if self.operate.cp_local.mode == InputMode::Active => {
+                    Some(&mut self.operate.cp_local)
                 }
-                OpField::CpRemote if self.cp_remote.mode == InputMode::Active => {
-                    Some(&mut self.cp_remote)
+                OpField::CpRemote if self.operate.cp_remote.mode == InputMode::Active => {
+                    Some(&mut self.operate.cp_remote)
                 }
-                OpField::CheckName if self.check_name.mode == InputMode::Active => {
-                    Some(&mut self.check_name)
+                OpField::CheckName if self.operate.check_name.mode == InputMode::Active => {
+                    Some(&mut self.operate.check_name)
                 }
-                OpField::SyncName if self.sync_name.mode == InputMode::Active => {
-                    Some(&mut self.sync_name)
+                OpField::SyncName if self.operate.sync_name.mode == InputMode::Active => {
+                    Some(&mut self.operate.sync_name)
                 }
-                OpField::Out if self.out_input.mode == InputMode::Active => {
-                    Some(&mut self.out_input)
+                OpField::Out if self.operate.out_input.mode == InputMode::Active => {
+                    Some(&mut self.operate.out_input)
                 }
                 _ => None,
             };
             if let Some(field) = active_field {
                 let changed = field.handle_key(key);
                 // If sync adhoc input just committed (Enter → mode Normal), add path to list.
-                if self.operate_operation == OperationKind::Sync
-                    && self.sync_adhoc_input.mode == InputMode::Normal
-                    && !self.sync_adhoc_input.value.is_empty()
+                if self.operate.operation == OperationKind::Sync
+                    && self.operate.sync_adhoc_input.mode == InputMode::Normal
+                    && !self.operate.sync_adhoc_input.value.is_empty()
                 {
-                    let path = std::mem::take(&mut self.sync_adhoc_input.value);
-                    self.sync_adhoc_files.push(path);
+                    let path = std::mem::take(&mut self.operate.sync_adhoc_input.value);
+                    self.operate.sync_adhoc_files.push(path);
                 }
                 // Persist text fields when Enter commits them (mode just flipped to Normal).
                 if key.code == KeyCode::Enter {
@@ -2350,16 +2104,16 @@ impl App {
         }
 
         // §14.3: while a View text input is active, suspend ALL other routing.
-        if self.active_tab == TabId::View && self.view_op == ViewOperationKind::Log {
-            let active_view_field: Option<&mut InputField> = match self.view_focus {
-                ViewFocus::Specific(0) if self.log_last_input.mode == InputMode::Active => {
-                    Some(&mut self.log_last_input)
+        if self.active_tab == TabId::View && self.view.op == ViewOperationKind::Log {
+            let active_view_field: Option<&mut InputField> = match self.view.focus {
+                ViewFocus::Specific(0) if self.view.log_last_input.mode == InputMode::Active => {
+                    Some(&mut self.view.log_last_input)
                 }
-                ViewFocus::Specific(3) if self.log_since_input.mode == InputMode::Active => {
-                    Some(&mut self.log_since_input)
+                ViewFocus::Specific(3) if self.view.log_since_input.mode == InputMode::Active => {
+                    Some(&mut self.view.log_since_input)
                 }
-                ViewFocus::Specific(4) if self.log_host_input.mode == InputMode::Active => {
-                    Some(&mut self.log_host_input)
+                ViewFocus::Specific(4) if self.view.log_host_input.mode == InputMode::Active => {
+                    Some(&mut self.view.log_host_input)
                 }
                 _ => None,
             };
@@ -2375,21 +2129,23 @@ impl App {
                 // Only Enter commits; Esc cancels (value already restored) and
                 // must not trigger a redundant refresh.
                 if committed && key.code == KeyCode::Enter {
-                    if matches!(self.view_focus, ViewFocus::Specific(0)) {
-                        let trimmed = self.log_last_input.value.trim();
+                    if matches!(self.view.focus, ViewFocus::Specific(0)) {
+                        let trimmed = self.view.log_last_input.value.trim();
                         if trimmed.is_empty() {
                             // Empty input means "no limit" → 0 (all entries).
-                            self.log_last = 0;
-                            self.log_last_input.value = "0".to_string();
+                            self.view.log_last = 0;
+                            self.view.log_last_input.value = "0".to_string();
                         } else {
                             match trimmed.parse::<usize>() {
-                                Ok(v) => self.log_last = v,
+                                Ok(v) => self.view.log_last = v,
                                 // Non-numeric input — revert to the active value.
-                                Err(_) => self.log_last_input.value = self.log_last.to_string(),
+                                Err(_) => {
+                                    self.view.log_last_input.value = self.view.log_last.to_string()
+                                }
                             }
                         }
                     }
-                    self.view_dirty = true;
+                    self.view.dirty = true;
                 }
                 return Ok(true);
             }
@@ -2397,22 +2153,22 @@ impl App {
 
         // Member picker (Operate target groups/hosts/skip/shell) is a focus
         // root: while open it consumes all keys until applied or cancelled.
-        if let Some(picker) = self.member_picker.as_mut() {
+        if let Some(picker) = self.popup.member_picker.as_mut() {
             match picker.handle_key(key) {
                 PickerResult::Continue => return Ok(true),
                 PickerResult::Cancelled => {
-                    self.member_picker = None;
+                    self.popup.member_picker = None;
                     return Ok(true);
                 }
                 PickerResult::Add => {
                     // Name picker → jump to the Config add-entry form; remember
                     // to reopen this picker once the entry is committed.
-                    let target = self.member_picker.take().unwrap().target;
+                    let target = self.popup.member_picker.take().unwrap().target;
                     self.open_add_entry_from_picker(target);
                     return Ok(true);
                 }
                 PickerResult::Applied => {
-                    let picker = self.member_picker.take().unwrap();
+                    let picker = self.popup.member_picker.take().unwrap();
                     let chosen = picker.chosen();
                     match picker.target {
                         PickerTarget::Groups => self.target_filter.groups = chosen,
@@ -2431,16 +2187,16 @@ impl App {
                         // the field the executor already reads; no target-filter
                         // post-processing applies.
                         PickerTarget::CheckNames => {
-                            self.check_name.value = chosen.join(", ");
+                            self.operate.check_name.value = chosen.join(", ");
                             return Ok(true);
                         }
                         PickerTarget::SyncNames => {
-                            self.sync_name.value = chosen.join(", ");
+                            self.operate.sync_name.value = chosen.join(", ");
                             return Ok(true);
                         }
                         // Single source host; "(none)" or nothing clears it.
                         PickerTarget::SyncSource => {
-                            self.sync_source_input.value = match chosen.first() {
+                            self.operate.sync_source_input.value = match chosen.first() {
                                 Some(h) if h != "(none)" => h.clone(),
                                 _ => String::new(),
                             };
@@ -2452,7 +2208,7 @@ impl App {
                     // offers valid options, so there is nothing to sanitise.
                     self.save_state();
                     self.apply_checkout_filter();
-                    self.view_dirty = true;
+                    self.view.dirty = true;
                     return Ok(true);
                 }
             }
@@ -2490,32 +2246,36 @@ impl App {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => {
                     self.completed_report = None;
-                    self.completed_report_scroll = 0;
+                    self.popup.completed_report_scroll = 0;
                     return Ok(true);
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
-                    self.completed_report_scroll = self.completed_report_scroll.saturating_sub(1);
+                    self.popup.completed_report_scroll =
+                        self.popup.completed_report_scroll.saturating_sub(1);
                     return Ok(true);
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
-                    self.completed_report_scroll = self.completed_report_scroll.saturating_add(1);
+                    self.popup.completed_report_scroll =
+                        self.popup.completed_report_scroll.saturating_add(1);
                     return Ok(true);
                 }
                 KeyCode::PageUp => {
-                    self.completed_report_scroll = self.completed_report_scroll.saturating_sub(10);
+                    self.popup.completed_report_scroll =
+                        self.popup.completed_report_scroll.saturating_sub(10);
                     return Ok(true);
                 }
                 KeyCode::PageDown => {
-                    self.completed_report_scroll = self.completed_report_scroll.saturating_add(10);
+                    self.popup.completed_report_scroll =
+                        self.popup.completed_report_scroll.saturating_add(10);
                     return Ok(true);
                 }
                 KeyCode::Home => {
-                    self.completed_report_scroll = 0;
+                    self.popup.completed_report_scroll = 0;
                     return Ok(true);
                 }
                 KeyCode::End => {
                     // Jump far enough down; render will clamp to actual content.
-                    self.completed_report_scroll = usize::MAX / 2;
+                    self.popup.completed_report_scroll = usize::MAX / 2;
                     return Ok(true);
                 }
                 _ => return Ok(false),
@@ -2560,9 +2320,10 @@ impl App {
                         .as_ref()
                         .map_or(0, |o| o.host_outcomes.len());
                     let current = self
-                        .progress_popup_scroll
+                        .popup
+                        .progress_scroll
                         .unwrap_or(outcomes_len.saturating_sub(12));
-                    self.progress_popup_scroll = Some(current.saturating_sub(1));
+                    self.popup.progress_scroll = Some(current.saturating_sub(1));
                     return Ok(true);
                 }
                 KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::Operate => {
@@ -2571,15 +2332,16 @@ impl App {
                         .as_ref()
                         .map_or(0, |o| o.host_outcomes.len());
                     let current = self
-                        .progress_popup_scroll
+                        .popup
+                        .progress_scroll
                         .unwrap_or(outcomes_len.saturating_sub(12));
                     let max_start = outcomes_len.saturating_sub(12);
                     let next = (current + 1).min(max_start);
                     // If scrolled to the auto-scroll position, clear manual scroll.
                     if next >= max_start {
-                        self.progress_popup_scroll = None;
+                        self.popup.progress_scroll = None;
                     } else {
-                        self.progress_popup_scroll = Some(next);
+                        self.popup.progress_scroll = Some(next);
                     }
                     return Ok(true);
                 }
@@ -2592,22 +2354,22 @@ impl App {
                         .as_ref()
                         .map_or(0, |o| o.host_outcomes.len());
                     let max_start = outcomes_len.saturating_sub(12);
-                    let current = self.progress_popup_scroll.unwrap_or(max_start);
+                    let current = self.popup.progress_scroll.unwrap_or(max_start);
                     match key.code {
                         KeyCode::PageUp => {
-                            self.progress_popup_scroll = Some(current.saturating_sub(12));
+                            self.popup.progress_scroll = Some(current.saturating_sub(12));
                         }
                         KeyCode::PageDown => {
                             let next = (current + 12).min(max_start);
                             if next >= max_start {
-                                self.progress_popup_scroll = None;
+                                self.popup.progress_scroll = None;
                             } else {
-                                self.progress_popup_scroll = Some(next);
+                                self.popup.progress_scroll = Some(next);
                             }
                         }
-                        KeyCode::Home => self.progress_popup_scroll = Some(0),
+                        KeyCode::Home => self.popup.progress_scroll = Some(0),
                         // End resumes auto-scroll to the latest output.
-                        KeyCode::End => self.progress_popup_scroll = None,
+                        KeyCode::End => self.popup.progress_scroll = None,
                         _ => {}
                     }
                     return Ok(true);
@@ -2654,13 +2416,13 @@ impl App {
                         }
                         TabId::Operate => {
                             self.navbar_focused = false;
-                            self.operate_focus = OpField::OpRadio;
-                            self.operate_esc_level = EscLevel::TopField;
+                            self.operate.focus = OpField::OpRadio;
+                            self.operate.esc_level = EscLevel::TopField;
                         }
                         TabId::View => {
                             self.navbar_focused = false;
-                            self.view_focus = ViewFocus::OpSelector;
-                            self.view_esc_level = EscLevel::TopField;
+                            self.view.focus = ViewFocus::OpSelector;
+                            self.view.esc_level = EscLevel::TopField;
                         }
                     }
                     return Ok(true);
@@ -2732,18 +2494,18 @@ impl App {
                         if self.navbar_focused {
                             // NavBar → OpRadio (top field).
                             self.navbar_focused = false;
-                            self.operate_focus = OpField::OpRadio;
-                            self.operate_esc_level = EscLevel::TopField;
+                            self.operate.focus = OpField::OpRadio;
+                            self.operate.esc_level = EscLevel::TopField;
                         } else {
-                            let next = self.operate_esc_level.next();
+                            let next = self.operate.esc_level.next();
                             match next {
                                 EscLevel::NavBar => {
                                     self.navbar_focused = true;
-                                    self.operate_esc_level = EscLevel::NavBar;
+                                    self.operate.esc_level = EscLevel::NavBar;
                                 }
                                 EscLevel::TopField => {
-                                    self.operate_focus = OpField::OpRadio;
-                                    self.operate_esc_level = EscLevel::TopField;
+                                    self.operate.focus = OpField::OpRadio;
+                                    self.operate.esc_level = EscLevel::TopField;
                                 }
                                 EscLevel::Content => {
                                     // Jump to the first content field after OpRadio.
@@ -2752,10 +2514,10 @@ impl App {
                                         list.iter().position(|f| *f == OpField::OpRadio)
                                     {
                                         if pos + 1 < list.len() {
-                                            self.operate_focus = list[pos + 1];
+                                            self.operate.focus = list[pos + 1];
                                         }
                                     }
-                                    self.operate_esc_level = EscLevel::Content;
+                                    self.operate.esc_level = EscLevel::Content;
                                 }
                             }
                         }
@@ -2766,34 +2528,34 @@ impl App {
                         if self.navbar_focused {
                             // NavBar → OpSelector (top field).
                             self.navbar_focused = false;
-                            self.view_focus = ViewFocus::OpSelector;
-                            self.view_esc_level = EscLevel::TopField;
+                            self.view.focus = ViewFocus::OpSelector;
+                            self.view.esc_level = EscLevel::TopField;
                         } else {
-                            let next = self.view_esc_level.next();
+                            let next = self.view.esc_level.next();
                             match next {
                                 EscLevel::NavBar => {
                                     self.navbar_focused = true;
-                                    self.view_esc_level = EscLevel::NavBar;
+                                    self.view.esc_level = EscLevel::NavBar;
                                 }
                                 EscLevel::TopField => {
-                                    self.view_focus = ViewFocus::OpSelector;
-                                    self.view_esc_level = EscLevel::TopField;
+                                    self.view.focus = ViewFocus::OpSelector;
+                                    self.view.esc_level = EscLevel::TopField;
                                 }
                                 EscLevel::Content => {
                                     // Jump to the first content stop after OpSelector.
                                     let stops =
-                                        ViewFocus::stops(self.view_op, self.target_filter.mode);
+                                        ViewFocus::stops(self.view.op, self.target_filter.mode);
                                     if let Some(pos) =
                                         stops.iter().position(|s| *s == ViewFocus::OpSelector)
                                     {
                                         if pos + 1 < stops.len() {
-                                            self.view_focus = stops[pos + 1];
-                                            if self.view_focus == ViewFocus::Result {
+                                            self.view.focus = stops[pos + 1];
+                                            if self.view.focus == ViewFocus::Result {
                                                 self.snap_result_selection(true);
                                             }
                                         }
                                     }
-                                    self.view_esc_level = EscLevel::Content;
+                                    self.view.esc_level = EscLevel::Content;
                                 }
                             }
                         }
@@ -2983,7 +2745,7 @@ impl App {
             // ←→ change the value of the focused field.
             KeyCode::Left | KeyCode::Right if self.active_tab == TabId::Operate => {
                 let right = key.code == KeyCode::Right;
-                match self.operate_focus {
+                match self.operate.focus {
                     OpField::OpRadio => self.operate_cycle_operation(right),
                     // The mode row and its value row are linked: ←→ cycles the
                     // target mode from either.
@@ -3008,28 +2770,28 @@ impl App {
             }
             // Enter activates / opens the focused field.
             KeyCode::Enter if self.active_tab == TabId::Operate => {
-                match self.operate_focus {
+                match self.operate.focus {
                     // Enter on the mode row or the value row opens the picker.
                     OpField::TargetMode | OpField::TargetMembers => self.open_member_picker(),
                     OpField::Skip => {
                         let hosts = self.available_hosts();
                         let accent = self.tab_accent();
-                        self.member_picker = Some(MemberPicker::new(
+                        self.popup.member_picker = Some(MemberPicker::new(
                             PickerTarget::Skip,
                             hosts,
                             &self.target_filter.skip,
                             accent,
                         ));
                     }
-                    OpField::Command => self.run_command.activate(),
-                    OpField::Script => self.exec_script.activate(),
-                    OpField::SyncAdhocInput => self.sync_adhoc_input.activate(),
+                    OpField::Command => self.operate.run_command.activate(),
+                    OpField::Script => self.operate.exec_script.activate(),
+                    OpField::SyncAdhocInput => self.operate.sync_adhoc_input.activate(),
                     OpField::SyncSource => self.open_source_picker(),
-                    OpField::CpLocal => self.cp_local.activate(),
-                    OpField::CpRemote => self.cp_remote.activate(),
+                    OpField::CpLocal => self.operate.cp_local.activate(),
+                    OpField::CpRemote => self.operate.cp_remote.activate(),
                     OpField::CheckName => self.open_name_picker(PickerTarget::CheckNames),
                     OpField::SyncName => self.open_name_picker(PickerTarget::SyncNames),
-                    OpField::Out => self.out_input.activate(),
+                    OpField::Out => self.operate.out_input.activate(),
                     OpField::Execute => return Ok(self.trigger_execute()),
                     _ => {}
                 }
@@ -3037,25 +2799,25 @@ impl App {
             }
             // Space toggles the focused boolean.
             KeyCode::Char(' ') if self.active_tab == TabId::Operate => {
-                match self.operate_focus {
+                match self.operate.focus {
                     OpField::Serial => {
                         self.target_filter.serial = !self.target_filter.serial;
                         self.save_state();
                     }
                     OpField::Sudo => {
-                        match self.operate_operation {
-                            OperationKind::Run => self.run_sudo = !self.run_sudo,
-                            OperationKind::Exec => self.exec_sudo = !self.exec_sudo,
+                        match self.operate.operation {
+                            OperationKind::Run => self.operate.run_sudo = !self.operate.run_sudo,
+                            OperationKind::Exec => self.operate.exec_sudo = !self.operate.exec_sudo,
                             _ => {}
                         }
                         self.save_state();
                     }
                     OpField::Keep => {
-                        self.exec_keep = !self.exec_keep;
+                        self.operate.exec_keep = !self.operate.exec_keep;
                         self.save_state();
                     }
                     OpField::DryRun => {
-                        self.op_dry_run = !self.op_dry_run;
+                        self.operate.dry_run = !self.operate.dry_run;
                     }
                     // In Shell mode the members field is a single fixed choice,
                     // so Space cycles it inline (from either the mode or value row).
@@ -3082,7 +2844,7 @@ impl App {
             KeyCode::Char('e') if self.active_tab == TabId::Operate => Ok(self.trigger_execute()),
             // 'd' toggles the shared dry-run flag (shown by the Execute button).
             KeyCode::Char('d') if self.active_tab == TabId::Operate => {
-                self.op_dry_run = !self.op_dry_run;
+                self.operate.dry_run = !self.operate.dry_run;
                 Ok(true)
             }
             // 's' toggles serial execution from anywhere in the Operate tab.
@@ -3096,7 +2858,7 @@ impl App {
             // Script, CpLocal) are intentionally absent so Del can't blank them.
             // For the ad-hoc list Del removes the last path (incremental).
             KeyCode::Delete if self.active_tab == TabId::Operate => {
-                match self.operate_focus {
+                match self.operate.focus {
                     OpField::TargetMembers | OpField::TargetMode => {
                         match self.target_filter.mode {
                             TargetFilterMode::Groups => self.target_filter.groups.clear(),
@@ -3106,36 +2868,36 @@ impl App {
                         }
                         self.save_state();
                         self.apply_checkout_filter();
-                        self.view_dirty = true;
+                        self.view.dirty = true;
                     }
                     OpField::Skip => {
                         self.target_filter.skip.clear();
                         self.save_state();
                         self.apply_checkout_filter();
-                        self.view_dirty = true;
+                        self.view.dirty = true;
                     }
-                    OpField::CheckName => self.check_name.value.clear(),
-                    OpField::SyncName => self.sync_name.value.clear(),
-                    OpField::SyncSource => self.sync_source_input.value.clear(),
+                    OpField::CheckName => self.operate.check_name.value.clear(),
+                    OpField::SyncName => self.operate.sync_name.value.clear(),
+                    OpField::SyncSource => self.operate.sync_source_input.value.clear(),
                     OpField::Command => {
-                        self.run_command.value.clear();
+                        self.operate.run_command.value.clear();
                         self.save_state();
                     }
                     OpField::Script => {
-                        self.exec_script.value.clear();
+                        self.operate.exec_script.value.clear();
                         self.save_state();
                     }
                     OpField::CpLocal => {
-                        self.cp_local.value.clear();
+                        self.operate.cp_local.value.clear();
                         self.save_state();
                     }
                     OpField::CpRemote => {
-                        self.cp_remote.value.clear();
+                        self.operate.cp_remote.value.clear();
                         self.save_state();
                     }
-                    OpField::Out => self.out_input.value.clear(),
+                    OpField::Out => self.operate.out_input.value.clear(),
                     OpField::SyncAdhocInput => {
-                        self.sync_adhoc_files.pop();
+                        self.operate.sync_adhoc_files.pop();
                     }
                     _ => {}
                 }
@@ -3144,10 +2906,10 @@ impl App {
 
             // ── View tab ───────────────────────────────────────────────
             KeyCode::Left if self.active_tab == TabId::View => {
-                if self.view_focus == ViewFocus::OpSelector {
+                if self.view.focus == ViewFocus::OpSelector {
                     self.cycle_view_op(false);
                 } else if matches!(
-                    self.view_focus,
+                    self.view.focus,
                     ViewFocus::TargetMode | ViewFocus::TargetMembers
                 ) {
                     self.view_cycle_target_mode(false);
@@ -3155,10 +2917,10 @@ impl App {
                 Ok(true)
             }
             KeyCode::Right if self.active_tab == TabId::View => {
-                if self.view_focus == ViewFocus::OpSelector {
+                if self.view.focus == ViewFocus::OpSelector {
                     self.cycle_view_op(true);
                 } else if matches!(
-                    self.view_focus,
+                    self.view.focus,
                     ViewFocus::TargetMode | ViewFocus::TargetMembers
                 ) {
                     self.view_cycle_target_mode(true);
@@ -3167,13 +2929,13 @@ impl App {
             }
             // Enter activates inputs / opens the inline target pickers.
             KeyCode::Enter if self.active_tab == TabId::View => {
-                match self.view_focus {
+                match self.view.focus {
                     // Enter on the mode row or the value row opens the picker.
                     ViewFocus::TargetMode | ViewFocus::TargetMembers => self.open_member_picker(),
                     ViewFocus::Skip => {
                         let hosts = self.available_hosts();
                         let accent = self.tab_accent();
-                        self.member_picker = Some(MemberPicker::new(
+                        self.popup.member_picker = Some(MemberPicker::new(
                             PickerTarget::Skip,
                             hosts,
                             &self.target_filter.skip,
@@ -3181,13 +2943,13 @@ impl App {
                         ));
                     }
                     ViewFocus::Specific(0) => {
-                        self.log_last_input.activate();
+                        self.view.log_last_input.activate();
                     }
                     ViewFocus::Specific(3) => {
-                        self.log_since_input.activate();
+                        self.view.log_since_input.activate();
                     }
                     ViewFocus::Specific(4) => {
-                        self.log_host_input.activate();
+                        self.view.log_host_input.activate();
                     }
                     _ => {}
                 }
@@ -3196,12 +2958,12 @@ impl App {
             // Space toggles the Log errors checkbox, cycles the action filter,
             // or cycles the shell value.
             KeyCode::Char(' ') if self.active_tab == TabId::View => {
-                if self.view_focus == ViewFocus::Specific(1) {
-                    self.log_errors = !self.log_errors;
-                    self.view_dirty = true;
-                } else if self.view_focus == ViewFocus::Specific(2) {
+                if self.view.focus == ViewFocus::Specific(1) {
+                    self.view.log_errors = !self.view.log_errors;
+                    self.view.dirty = true;
+                } else if self.view.focus == ViewFocus::Specific(2) {
                     // action enum: cycle forward (None → check → run → exec → cp → sync → None)
-                    self.log_action = match self.log_action {
+                    self.view.log_action = match self.view.log_action {
                         None => Some(ActionFilter::Check),
                         Some(ActionFilter::Check) => Some(ActionFilter::Run),
                         Some(ActionFilter::Run) => Some(ActionFilter::Exec),
@@ -3209,15 +2971,15 @@ impl App {
                         Some(ActionFilter::Cp) => Some(ActionFilter::Sync),
                         Some(ActionFilter::Sync) => None,
                     };
-                    self.view_dirty = true;
-                } else if self.view_focus == ViewFocus::CombinedToggle
-                    && self.view_op == ViewOperationKind::Checkout
+                    self.view.dirty = true;
+                } else if self.view.focus == ViewFocus::CombinedToggle
+                    && self.view.op == ViewOperationKind::Checkout
                 {
-                    self.checkout_combined = !self.checkout_combined;
+                    self.view.checkout_combined = !self.view.checkout_combined;
                     self.save_state();
-                    self.view_dirty = true;
+                    self.view.dirty = true;
                 } else if matches!(
-                    self.view_focus,
+                    self.view.focus,
                     ViewFocus::TargetMode | ViewFocus::TargetMembers
                 ) && self.target_filter.mode == TargetFilterMode::Shell
                 {
@@ -3229,18 +2991,18 @@ impl App {
                     };
                     self.save_state();
                     self.apply_checkout_filter();
-                    self.view_dirty = true;
+                    self.view.dirty = true;
                 }
                 Ok(true)
             }
             // `c` as a shortcut for toggling combined view from anywhere in Checkout.
             KeyCode::Char('c')
                 if self.active_tab == TabId::View
-                    && self.view_op == ViewOperationKind::Checkout =>
+                    && self.view.op == ViewOperationKind::Checkout =>
             {
-                self.checkout_combined = !self.checkout_combined;
+                self.view.checkout_combined = !self.view.checkout_combined;
                 self.save_state();
-                self.view_dirty = true;
+                self.view.dirty = true;
                 Ok(true)
             }
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::View => {
@@ -3269,13 +3031,13 @@ impl App {
             }
 
             KeyCode::Char('o') if self.active_tab == TabId::View => {
-                let has_data = match self.view_op {
+                let has_data = match self.view.op {
                     ViewOperationKind::Checkout => !self.checkout_snapshots.is_empty(),
-                    ViewOperationKind::Log => !self.view_log.is_empty(),
-                    ViewOperationKind::List => self.view_list.is_some(),
+                    ViewOperationKind::Log => !self.view.log.is_empty(),
+                    ViewOperationKind::List => self.view.list.is_some(),
                 };
                 if has_data {
-                    self.export_popup = Some(ExportPopup::new(self.view_op));
+                    self.popup.export = Some(ExportPopup::new(self.view.op));
                 } else {
                     self.error = Some("No data to export".to_string());
                 }
@@ -3285,8 +3047,8 @@ impl App {
             // 'e' on a List result row opens the Config edit form for that entry.
             KeyCode::Char('e')
                 if self.active_tab == TabId::View
-                    && self.view_op == ViewOperationKind::List
-                    && self.view_focus == ViewFocus::Result =>
+                    && self.view.op == ViewOperationKind::List
+                    && self.view.focus == ViewFocus::Result =>
             {
                 self.open_edit_from_view_list();
                 Ok(true)
@@ -3324,7 +3086,7 @@ impl App {
             TabId::Config => self.render_config(chunks[1], frame),
             TabId::Operate => self.render_operate(chunks[1], frame),
             TabId::View => {
-                if self.view_dirty {
+                if self.view.dirty {
                     self.refresh_view();
                 }
                 // Chrome rows: " View " block border (2) + op selector (2) +
@@ -3341,49 +3103,50 @@ impl App {
                 // + common_zone (target/skip) + per-op extras.
                 // Checkout adds 1 for the combined toggle row + 1 for table header.
                 // List adds nothing extra. Log uses a fixed 12.
-                let chrome = match self.view_op {
+                let chrome = match self.view.op {
                     ViewOperationKind::Checkout => 6 + common_zone + 1 + 1, // +toggle +header
                     ViewOperationKind::List => 6 + common_zone,
                     ViewOperationKind::Log => 12, // 6 base + 1 summary + 5 specific
                 };
                 let view_h = chunks[1].height.saturating_sub(chrome as u16) as usize;
-                let row_count = match self.view_op {
+                let row_count = match self.view.op {
                     ViewOperationKind::Checkout => self.checkout_snapshots.len(),
                     ViewOperationKind::List => self
-                        .view_list
+                        .view
+                        .list
                         .as_ref()
                         .map(super::tabs::view_tab::list_line_count)
                         .unwrap_or(0),
-                    ViewOperationKind::Log => self.view_log.len(),
+                    ViewOperationKind::Log => self.view.log.len(),
                 };
                 self.checkout_viewport.set_dims(row_count, view_h);
-                let checkout = if matches!(self.view_op, ViewOperationKind::Checkout) {
+                let checkout = if matches!(self.view.op, ViewOperationKind::Checkout) {
                     Some((&*self.checkout_snapshots, &self.checkout_columns))
                 } else {
                     None
                 };
-                let list = if matches!(self.view_op, ViewOperationKind::List) {
-                    self.view_list.as_ref()
+                let list = if matches!(self.view.op, ViewOperationKind::List) {
+                    self.view.list.as_ref()
                 } else {
                     None
                 };
-                let log = if matches!(self.view_op, ViewOperationKind::Log) {
-                    Some(&*self.view_log)
+                let log = if matches!(self.view.op, ViewOperationKind::Log) {
+                    Some(&*self.view.log)
                 } else {
                     None
                 };
-                let specific_focused = match self.view_focus {
-                    ViewFocus::Specific(i) if self.view_op == ViewOperationKind::Log => Some(i),
+                let specific_focused = match self.view.focus {
+                    ViewFocus::Specific(i) if self.view.op == ViewOperationKind::Log => Some(i),
                     _ => None,
                 };
                 let active = !self.navbar_focused;
-                let op_selector_focused = active && self.view_focus == ViewFocus::OpSelector;
-                let result_focused = active && self.view_focus == ViewFocus::Result;
-                let target_mode_focused = active && self.view_focus == ViewFocus::TargetMode;
-                let target_members_focused = active && self.view_focus == ViewFocus::TargetMembers;
-                let skip_focused = active && self.view_focus == ViewFocus::Skip;
+                let op_selector_focused = active && self.view.focus == ViewFocus::OpSelector;
+                let result_focused = active && self.view.focus == ViewFocus::Result;
+                let target_mode_focused = active && self.view.focus == ViewFocus::TargetMode;
+                let target_members_focused = active && self.view.focus == ViewFocus::TargetMembers;
+                let skip_focused = active && self.view.focus == ViewFocus::Skip;
                 let combined_toggle_focused =
-                    active && self.view_focus == ViewFocus::CombinedToggle;
+                    active && self.view.focus == ViewFocus::CombinedToggle;
                 let view_target_count = resolve_target_names(
                     &build_target_mode(&self.target_filter, &self.config),
                     &self.config,
@@ -3392,7 +3155,7 @@ impl App {
                 .map(|t| t.len())
                 .unwrap_or(0);
                 let data = super::tabs::view_tab::ViewRenderData {
-                    view_op: self.view_op,
+                    view_op: self.view.op,
                     theme: &self.theme,
                     navbar_focused: self.navbar_focused,
                     op_selector_focused,
@@ -3403,18 +3166,18 @@ impl App {
                     target_members_focused,
                     skip_focused,
                     combined_toggle_focused,
-                    checkout_combined: self.checkout_combined,
-                    loading: self.view_loading,
+                    checkout_combined: self.view.checkout_combined,
+                    loading: self.view.loading,
                     checkout,
                     list,
                     log,
                     result_scroll: self.checkout_viewport.scroll_y,
                     checkout_selected: self.checkout_viewport.selected,
-                    log_last_input: &self.log_last_input,
-                    log_since_input: &self.log_since_input,
-                    log_host_input: &self.log_host_input,
-                    log_errors: self.log_errors,
-                    log_action: operate_schema::action_str(self.log_action.as_ref()),
+                    log_last_input: &self.view.log_last_input,
+                    log_since_input: &self.view.log_since_input,
+                    log_host_input: &self.view.log_host_input,
+                    log_errors: self.view.log_errors,
+                    log_action: operate_schema::action_str(self.view.log_action.as_ref()),
                     specific_focused,
                 };
                 super::tabs::view_tab::render_view(&data, chunks[1], frame);
@@ -3428,7 +3191,7 @@ impl App {
         if self.info_open {
             self.render_info_popup(area, frame);
         }
-        if let Some(picker) = &mut self.member_picker {
+        if let Some(picker) = &mut self.popup.member_picker {
             let theme = self.theme;
             picker.render(area, &theme, frame);
         }
@@ -3436,15 +3199,15 @@ impl App {
             self.render_progress_popup(area, frame);
         }
         if let Some(report) = self.completed_report.clone() {
-            self.render_results_popup(area, frame, &report, self.completed_report_scroll);
+            self.render_results_popup(area, frame, &report, self.popup.completed_report_scroll);
         }
         if self.log_overlay_open {
             self.render_log_overlay(area, frame);
         }
-        if self.auth_popup.is_some() {
+        if self.popup.auth.is_some() {
             self.render_auth_popup(area, frame);
         }
-        if self.export_popup.is_some() {
+        if self.popup.export.is_some() {
             self.render_export_popup(area, frame);
         }
     }
@@ -3520,20 +3283,20 @@ impl App {
         // The add-entry form was opened from an Operate name picker: once it
         // closes (commit or cancel), return to Operate and reopen the picker
         // with the (possibly new) entry available.
-        if self.reopen_name_picker.is_some() && self.config_tab.entry_form.is_none() {
-            let target = self.reopen_name_picker.take().unwrap();
+        if self.popup.reopen_name_picker.is_some() && self.config_tab.entry_form.is_none() {
+            let target = self.popup.reopen_name_picker.take().unwrap();
             self.active_tab = TabId::Operate;
             self.open_name_picker(target);
         }
         // The edit form was opened from the View tab's List result: once it
         // closes (commit or cancel), return to View and restore the cursor.
-        if self.reopen_view_edit.is_some() && self.config_tab.entry_form.is_none() {
-            let saved_cursor = self.reopen_view_edit.take().unwrap();
+        if self.popup.reopen_view_edit.is_some() && self.config_tab.entry_form.is_none() {
+            let saved_cursor = self.popup.reopen_view_edit.take().unwrap();
             self.active_tab = TabId::View;
-            self.view_focus = ViewFocus::Result;
+            self.view.focus = ViewFocus::Result;
             self.checkout_viewport.selected = saved_cursor;
             // Refresh list data since the config may have changed.
-            self.view_dirty = true;
+            self.view.dirty = true;
         }
     }
 
@@ -3721,7 +3484,7 @@ impl App {
         let popup_area = centered_rect(60, 30, area);
         frame.render_widget(Clear, popup_area);
 
-        let popup = match &self.auth_popup {
+        let popup = match &self.popup.auth {
             Some(p) => p,
             None => return,
         };
@@ -3764,7 +3527,7 @@ impl App {
         let popup_area = centered_rect(60, 25, area);
         frame.render_widget(Clear, popup_area);
 
-        let popup = match &self.export_popup {
+        let popup = match &self.popup.export {
             Some(p) => p,
             None => return,
         };
@@ -3898,22 +3661,22 @@ impl App {
             Err(_) => 0,
         };
         let data = OperateRenderData {
-            focus: self.operate_focus,
-            operation: self.operate_operation,
-            dry_run: self.op_dry_run,
-            sync_adhoc_files: &self.sync_adhoc_files,
-            sync_adhoc_input: &self.sync_adhoc_input,
-            sync_source_input: &self.sync_source_input,
-            run_command: &self.run_command,
-            exec_script: &self.exec_script,
-            cp_local_input: &self.cp_local,
-            cp_remote_input: &self.cp_remote,
-            check_name_input: &self.check_name,
-            sync_name_input: &self.sync_name,
-            out_input: &self.out_input,
-            run_sudo: self.run_sudo,
-            exec_sudo: self.exec_sudo,
-            exec_keep: self.exec_keep,
+            focus: self.operate.focus,
+            operation: self.operate.operation,
+            dry_run: self.operate.dry_run,
+            sync_adhoc_files: &self.operate.sync_adhoc_files,
+            sync_adhoc_input: &self.operate.sync_adhoc_input,
+            sync_source_input: &self.operate.sync_source_input,
+            run_command: &self.operate.run_command,
+            exec_script: &self.operate.exec_script,
+            cp_local_input: &self.operate.cp_local,
+            cp_remote_input: &self.operate.cp_remote,
+            check_name_input: &self.operate.check_name,
+            sync_name_input: &self.operate.sync_name,
+            out_input: &self.operate.out_input,
+            run_sudo: self.operate.run_sudo,
+            exec_sudo: self.operate.exec_sudo,
+            exec_keep: self.operate.exec_keep,
             theme: &self.theme,
             is_running: self.running_op.is_some(),
             target_filter: &self.target_filter,
@@ -3927,7 +3690,7 @@ impl App {
         let Some(op) = &self.running_op else {
             return;
         };
-        let op_name = match self.operate_operation {
+        let op_name = match self.operate.operation {
             OperationKind::Check => "check",
             OperationKind::Run => "run",
             OperationKind::Exec => "exec",
@@ -3941,7 +3704,7 @@ impl App {
             &op.targets,
             op.started_at.elapsed().as_secs(),
             op.completed_count(),
-            self.progress_popup_scroll,
+            self.popup.progress_scroll,
             area,
             frame,
         );
@@ -4218,7 +3981,7 @@ impl App {
         let max_scroll = lines.len().saturating_sub(1);
         let clamped_scroll = scroll.min(max_scroll);
         // Store back so End key settles at real bottom on next frame.
-        self.completed_report_scroll = clamped_scroll;
+        self.popup.completed_report_scroll = clamped_scroll;
 
         let p = Paragraph::new(lines)
             .scroll((clamped_scroll as u16, 0))

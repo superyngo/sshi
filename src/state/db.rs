@@ -1,3 +1,5 @@
+//! Database initialization, migration, and connection management.
+
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -18,12 +20,6 @@ pub fn state_dir() -> Result<PathBuf> {
         home.join(".local").join("state")
     };
     Ok(base.join("sshi"))
-}
-
-/// Returns the path to sshi.db.
-#[allow(dead_code)]
-pub fn db_path() -> Result<PathBuf> {
-    Ok(state_dir()?.join("sshi.db"))
 }
 
 /// Resolve the effective state directory (AD-16): honors the

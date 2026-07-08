@@ -1,3 +1,5 @@
+//! SSH authentication chain: public key + password fallback with passphrase caching.
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -5,12 +7,33 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use russh::client::Handle;
 use russh_keys::key::KeyPair;
+use zeroize::Zeroize;
 
 use super::session_pool::SshHandler;
 
+/// A string that zeroizes its contents on drop.
+#[derive(Clone, Debug)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(s: String) -> Self {
+        Self(s)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for SecretString {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 /// Per-process passphrase cache: key_path → passphrase.
 /// Avoids re-prompting for the same key file within a single run.
-pub type PassphraseCache = HashMap<PathBuf, String>;
+pub type PassphraseCache = HashMap<PathBuf, SecretString>;
 
 /// A request sent from the SSH auth layer to the TUI to prompt the user for a
 /// credential (passphrase or password). The responder is a oneshot channel; the
@@ -52,11 +75,12 @@ pub async fn authenticate(
                 let prompt = format!("Enter passphrase for {}: ", path.display());
                 let pp =
                     rpassword::prompt_password(&prompt).context("Failed to read passphrase")?;
-                cache.insert(path.clone(), pp.clone());
-                pp
+                let secret = SecretString::new(pp.clone());
+                cache.insert(path.clone(), secret);
+                SecretString::new(pp)
             }
         };
-        if try_pubkey(handle, user, path, Some(&passphrase)).await? {
+        if try_pubkey(handle, user, path, Some(passphrase.as_str())).await? {
             return Ok(());
         }
     }
@@ -65,8 +89,9 @@ pub async fn authenticate(
     if !identities_only {
         let prompt = format!("{}@<host> password: ", user);
         let password = rpassword::prompt_password(&prompt).context("Failed to read password")?;
+        let password = SecretString::new(password);
         if handle
-            .authenticate_password(user, &password)
+            .authenticate_password(user, password.as_str())
             .await
             .context("Password authentication failed")?
         {
@@ -102,4 +127,69 @@ async fn try_pubkey(
         .await
         .context("Public key authentication error")?;
     Ok(authed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_secret_string_new_and_as_str() {
+        let s = SecretString::new("hello".to_string());
+        assert_eq!(s.as_str(), "hello");
+    }
+
+    #[test]
+    fn test_secret_string_clone_shares_value() {
+        let s = SecretString::new("secret".to_string());
+        let c = s.clone();
+        assert_eq!(c.as_str(), "secret");
+    }
+
+    #[test]
+    fn test_secret_string_debug() {
+        let s = SecretString::new("hidden".to_string());
+        let debug_str = format!("{:?}", s);
+        assert!(debug_str.contains("hidden"));
+    }
+
+    #[test]
+    fn test_passphrase_cache_set_and_get() {
+        let mut cache: PassphraseCache = HashMap::new();
+        let key = PathBuf::from("/home/user/.ssh/id_rsa");
+        let secret = SecretString::new("mypassphrase".to_string());
+        cache.insert(key.clone(), secret);
+
+        assert!(cache.contains_key(&key));
+        let retrieved = cache.get(&key).unwrap();
+        assert_eq!(retrieved.as_str(), "mypassphrase");
+    }
+
+    #[test]
+    fn test_passphrase_cache_different_keys_independent() {
+        let mut cache: PassphraseCache = HashMap::new();
+        let key_a = PathBuf::from("/home/user/.ssh/id_rsa");
+        let key_b = PathBuf::from("/home/user/.ssh/id_ed25519");
+        cache.insert(key_a.clone(), SecretString::new("pass_a".to_string()));
+        cache.insert(key_b.clone(), SecretString::new("pass_b".to_string()));
+
+        assert_eq!(cache.get(&key_a).unwrap().as_str(), "pass_a");
+        assert_eq!(cache.get(&key_b).unwrap().as_str(), "pass_b");
+    }
+
+    #[test]
+    fn test_passphrase_cache_missing_key_returns_none() {
+        let cache: PassphraseCache = HashMap::new();
+        let key = PathBuf::from("/nonexistent/key");
+        assert!(!cache.contains_key(&key));
+    }
+
+    #[test]
+    fn test_passphrase_cache_empty_path_as_key() {
+        let mut cache: PassphraseCache = HashMap::new();
+        let empty_key = PathBuf::new();
+        cache.insert(empty_key.clone(), SecretString::new("val".to_string()));
+        assert_eq!(cache.get(&empty_key).unwrap().as_str(), "val");
+    }
 }

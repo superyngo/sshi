@@ -1,3 +1,5 @@
+//! Structured JSON/JSONL report generation for command results.
+
 use anyhow::{bail, Result};
 use serde::Serialize;
 
@@ -375,6 +377,24 @@ pub fn write_report(
     }
 
     Ok(path)
+}
+
+/// Convenience wrapper: convert a `CommandReport` to `OperationReport`, write it,
+/// and print the result path. Returns `Ok(())` when `out` is `None`.
+pub fn maybe_write_report(
+    report: &CommandReport,
+    mode: &TargetMode,
+    out: Option<&str>,
+    command_label: &str,
+    default_format: Option<&str>,
+) -> Result<()> {
+    let Some(out) = out else {
+        return Ok(());
+    };
+    let op = to_operation_report(report, mode);
+    let path = write_report(&op, out, command_label, default_format)?;
+    println!("Report written to {}", path);
+    Ok(())
 }
 
 fn render_html_report(report: &OperationReport) -> String {

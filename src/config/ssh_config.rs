@@ -1,3 +1,5 @@
+//! Parser for ~/.ssh/config that resolves host aliases and connection parameters.
+
 use anyhow::{Context, Result};
 
 /// A parsed SSH host entry from ~/.ssh/config.

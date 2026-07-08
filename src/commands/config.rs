@@ -1,3 +1,5 @@
+//! Open or print the path to the sshi configuration file.
+
 use std::path::Path;
 use std::process::Command;
 

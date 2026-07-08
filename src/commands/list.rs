@@ -1,3 +1,5 @@
+//! List configured hosts, groups, and check/sync entries.
+
 use anyhow::Result;
 
 use crate::config::schema::{CheckEntry, HostEntry, SyncEntry};
@@ -105,14 +107,13 @@ pub async fn run(ctx: &Context, output: &crate::cli::OutputArgs) -> Result<()> {
             syncs: syncs.clone(),
         });
 
-        let op_report = crate::output::report::to_operation_report(&report, &ctx.mode);
-        let path = crate::output::report::write_report(
-            &op_report,
-            out,
+        crate::output::report::maybe_write_report(
+            &report,
+            &ctx.mode,
+            Some(out),
             "list",
             ctx.config.settings.default_output_format.as_deref(),
         )?;
-        println!("Report written to {}", path);
     }
 
     Ok(())

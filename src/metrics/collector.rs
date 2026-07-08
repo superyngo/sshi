@@ -1,3 +1,5 @@
+//! Orchestrate metric collection on remote hosts via shell probes.
+
 use anyhow::Result;
 use serde_json::Value;
 

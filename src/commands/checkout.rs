@@ -1,13 +1,15 @@
+//! View cached host metrics from the database (checkout / dashboard).
+
+use std::collections::HashSet;
+
 use anyhow::Result;
-use rusqlite::params;
 
 use super::Context;
 use crate::output::report::{FilterInfo, HostResult, OperationReport, ReportSummary};
 
 /// Snapshot row from the database.
-#[allow(dead_code)]
 #[derive(Clone)]
-pub(crate) struct HostSnapshot {
+pub struct HostSnapshot {
     pub(crate) host: String,
     pub(crate) collected_at: i64,
     pub(crate) online: bool,
@@ -17,18 +19,17 @@ pub(crate) struct HostSnapshot {
 }
 
 /// Columns to display, derived from enabled metrics in applicable check entries.
-pub(crate) struct DisplayColumns {
+pub struct DisplayColumns {
     pub(crate) metrics: Vec<String>,
 }
 
 impl DisplayColumns {
     pub(crate) fn from_context(ctx: &Context) -> Self {
-        // Viewer: show columns for every configured metric, not just one
-        // selected entry (target mode no longer scopes entries).
         let mut metrics: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
         for entry in &ctx.config.check {
             for m in &entry.enabled {
-                if !metrics.contains(m) && m != "online" {
+                if seen.insert(m.clone()) && m != "online" {
                     metrics.push(m.clone());
                 }
             }
@@ -122,46 +123,79 @@ pub async fn run(
     Ok(())
 }
 
-/// Fetch the latest snapshot for each host.
+/// Fetch the latest snapshot for each host using batch queries.
 pub(crate) fn fetch_latest_snapshots(
     ctx: &Context,
     host_names: &[&str],
 ) -> Result<Vec<HostSnapshot>> {
+    if host_names.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let placeholders: String = host_names
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let snapshot_sql = format!(
+        "SELECT host, collected_at, online, raw_json \
+         FROM check_snapshots WHERE host IN ({}) \
+         ORDER BY host, collected_at DESC",
+        placeholders
+    );
+    let last_seen_sql = format!(
+        "SELECT host, last_online FROM host_last_seen WHERE host IN ({})",
+        placeholders
+    );
+
+    let params: Vec<&dyn rusqlite::types::ToSql> = host_names
+        .iter()
+        .map(|h| h as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let mut last_online_map: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = ctx.db.prepare(&last_seen_sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let host: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+            last_online_map.insert(host, ts);
+        }
+    }
+
+    let mut snapshot_rows: std::collections::HashMap<String, (i64, bool, String)> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = ctx.db.prepare(&snapshot_sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let host: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+            let online: bool = row.get(2)?;
+            let json_str: String = row.get(3)?;
+            snapshot_rows.entry(host).or_insert((ts, online, json_str));
+        }
+    }
+
     let mut snapshots = Vec::new();
     for host in host_names {
-        let mut stmt = ctx.db.prepare(
-            "SELECT collected_at, online, raw_json FROM check_snapshots \
-             WHERE host = ?1 ORDER BY collected_at DESC LIMIT 1",
-        )?;
-        let entry = stmt.query_row(params![host], |row| {
-            let ts: i64 = row.get(0)?;
-            let online: bool = row.get(1)?;
-            let json_str: String = row.get(2)?;
-            Ok((ts, online, json_str))
-        });
-
-        // Query host_last_seen for the actual last_online timestamp.
-        let last_online: i64 = ctx
-            .db
-            .query_row(
-                "SELECT last_online FROM host_last_seen WHERE host = ?1",
-                params![host],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        match entry {
-            Ok((ts, online, json_str)) => {
-                let data = serde_json::from_str(&json_str).unwrap_or(serde_json::Value::Null);
+        let last_online = last_online_map.get(*host).copied().unwrap_or(0);
+        match snapshot_rows.get(*host) {
+            Some((ts, online, json_str)) => {
+                let data = serde_json::from_str(json_str).unwrap_or(serde_json::Value::Null);
                 snapshots.push(HostSnapshot {
                     host: host.to_string(),
-                    collected_at: ts,
-                    online,
+                    collected_at: *ts,
+                    online: *online,
                     data,
                     last_online,
                 });
             }
-            Err(_) => {
+            None => {
                 snapshots.push(HostSnapshot {
                     host: host.to_string(),
                     collected_at: 0,
@@ -187,57 +221,86 @@ pub(crate) fn fetch_combined_snapshots(
     metrics: &[String],
 ) -> Result<Vec<HostSnapshot>> {
     const LOOKBACK: i64 = 50;
-    let mut snapshots = Vec::new();
+    if host_names.is_empty() {
+        return Ok(Vec::new());
+    }
 
-    for host in host_names {
-        // Fetch the most recent LOOKBACK snapshots for this host.
-        let mut stmt = ctx.db.prepare(
-            "SELECT collected_at, online, raw_json FROM check_snapshots \
-             WHERE host = ?1 ORDER BY collected_at DESC LIMIT ?2",
-        )?;
-        let history: Vec<(i64, bool, serde_json::Value)> = stmt
-            .query_map(params![host, LOOKBACK], |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    row.get::<_, bool>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?
-            .filter_map(|r| r.ok())
-            .filter_map(|(ts, online, json_str)| {
-                serde_json::from_str::<serde_json::Value>(&json_str)
-                    .ok()
-                    .map(|v| (ts, online, v))
-            })
-            .collect();
+    let placeholders: String = host_names
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("?{}", i + 1))
+        .collect::<Vec<_>>()
+        .join(",");
 
-        let last_online: i64 = ctx
-            .db
-            .query_row(
-                "SELECT last_online FROM host_last_seen WHERE host = ?1",
-                params![host],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+    let snapshot_sql = format!(
+        "SELECT host, collected_at, online, raw_json \
+         FROM check_snapshots WHERE host IN ({}) \
+         ORDER BY host, collected_at DESC LIMIT ?{}",
+        placeholders,
+        host_names.len() + 1
+    );
+    let last_seen_sql = format!(
+        "SELECT host, last_online FROM host_last_seen WHERE host IN ({})",
+        placeholders
+    );
 
-        if history.is_empty() {
-            snapshots.push(HostSnapshot {
-                host: host.to_string(),
-                collected_at: 0,
-                online: false,
-                data: serde_json::Value::Null,
-                last_online,
-            });
-            continue;
+    let params: Vec<&dyn rusqlite::types::ToSql> = host_names
+        .iter()
+        .map(|h| h as &dyn rusqlite::types::ToSql)
+        .collect();
+
+    let mut last_online_map: std::collections::HashMap<String, i64> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = ctx.db.prepare(&last_seen_sql)?;
+        let mut rows = stmt.query(params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let host: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+            last_online_map.insert(host, ts);
         }
+    }
+
+    let mut per_host: std::collections::HashMap<String, Vec<(i64, bool, serde_json::Value)>> =
+        std::collections::HashMap::new();
+    {
+        let mut stmt = ctx.db.prepare(&snapshot_sql)?;
+        let mut all_params: Vec<&dyn rusqlite::types::ToSql> = params.clone();
+        all_params.push(&LOOKBACK);
+        let mut rows = stmt.query(all_params.as_slice())?;
+        while let Some(row) = rows.next()? {
+            let host: String = row.get(0)?;
+            let ts: i64 = row.get(1)?;
+            let online: bool = row.get(2)?;
+            let json_str: String = row.get(3)?;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                per_host.entry(host).or_default().push((ts, online, v));
+            }
+        }
+    }
+
+    let mut snapshots = Vec::new();
+    for host in host_names {
+        let last_online = last_online_map.get(*host).copied().unwrap_or(0);
+        let history = match per_host.get(*host) {
+            Some(h) => h,
+            None => {
+                snapshots.push(HostSnapshot {
+                    host: host.to_string(),
+                    collected_at: 0,
+                    online: false,
+                    data: serde_json::Value::Null,
+                    last_online,
+                });
+                continue;
+            }
+        };
 
         let (latest_ts, latest_online, _) = &history[0];
 
-        // Build the combined data map: for each metric take the value from the
-        // most recent snapshot that actually contains it (non-null).
         let mut combined = serde_json::Map::new();
         for metric in metrics {
-            for (_, _, data) in &history {
+            for (_, _, data) in history {
                 if let Some(val) = data.get(metric) {
                     if !val.is_null() {
                         combined.insert(metric.clone(), val.clone());

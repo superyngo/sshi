@@ -1,3 +1,5 @@
+//! Semaphore-based concurrency control for parallel host operations.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -100,11 +102,41 @@ mod tests {
         {
             let _p = limiter.acquire("a").await;
         }
-        // permit dropped — should be acquirable again
         let result = tokio::time::timeout(Duration::from_millis(50), limiter.acquire("a")).await;
         assert!(
             result.is_ok(),
             "Should acquire after previous permit dropped"
         );
+    }
+
+    #[tokio::test]
+    async fn test_global_semaphore_accessor() {
+        let hosts = vec!["x".into()];
+        let limiter = ConcurrencyLimiter::new(5, 10, &hosts);
+        let sem = limiter.global_semaphore();
+        let permits = sem.available_permits();
+        assert_eq!(permits, 5);
+    }
+
+    #[tokio::test]
+    async fn test_per_host_semaphore_accessor() {
+        let hosts = vec!["h1".into(), "h2".into()];
+        let limiter = ConcurrencyLimiter::new(10, 3, &hosts);
+        let sem = limiter.per_host_semaphore("h1").unwrap();
+        assert_eq!(sem.available_permits(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_per_host_semaphore_unknown_host() {
+        let hosts = vec!["h1".into()];
+        let limiter = ConcurrencyLimiter::new(10, 3, &hosts);
+        assert!(limiter.per_host_semaphore("unknown").is_none());
+    }
+
+    #[tokio::test]
+    async fn test_concurrency_limiter_no_hosts() {
+        let limiter = ConcurrencyLimiter::new(2, 5, &[]);
+        let sem = limiter.global_semaphore();
+        assert_eq!(sem.available_permits(), 2);
     }
 }

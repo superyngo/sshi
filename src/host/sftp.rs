@@ -1,3 +1,5 @@
+//! SFTP operations: upload, download, home directory detection, and connectivity probes.
+
 use std::path::Path;
 use std::time::Duration;
 

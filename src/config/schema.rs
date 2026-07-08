@@ -1,3 +1,5 @@
+//! Serializable configuration types: hosts, groups, check, and sync entries.
+
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -147,6 +149,20 @@ pub struct HostEntry {
     /// Optional first-hop ProxyJump alias. None = direct connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy_jump: Option<String>,
+}
+
+impl HostEntry {
+    /// Create a placeholder entry with default shell, no groups, no proxy.
+    /// Used during init when the real shell type hasn't been detected yet.
+    pub fn placeholder(name: impl Into<String>, ssh_host: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ssh_host: ssh_host.into(),
+            shell: ShellType::Sh,
+            groups: Vec::new(),
+            proxy_jump: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]

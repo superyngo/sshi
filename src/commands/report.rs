@@ -16,7 +16,6 @@ use serde::Serialize;
 /// for `check`, `run`, `exec`, and `sync`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-#[allow(dead_code)]
 pub enum HostStatus {
     /// All probes succeeded / command exited 0.
     Online,
@@ -42,6 +41,58 @@ pub enum HostStatus {
 pub trait ProgressSink: Send + Sync {
     fn host_started(&self, host: &str);
     fn host_completed(&self, host: &str, status: HostStatus, detail: &str, ms: u64);
+}
+
+/// `ProgressSink` impl that prints per-host lines via `output::printer`.
+///
+/// Construct with one of the public helper functions whose name describes the
+/// status→kind mapping:
+/// - `printer_sink_simple()`        — Online→"ok", else→"error"
+/// - `printer_sink_with_partial()`   — Online→"ok", Partial/Skipped→"skip", else→"error"
+/// - `printer_sink_with_skip()`      — Online→"ok", Skipped→"skip", else→"error"
+pub struct PrinterSink {
+    status_kind: fn(HostStatus) -> &'static str,
+}
+
+impl PrinterSink {
+    fn new(status_kind: fn(HostStatus) -> &'static str) -> Self {
+        Self { status_kind }
+    }
+}
+
+impl ProgressSink for PrinterSink {
+    fn host_started(&self, _host: &str) {}
+
+    fn host_completed(&self, host: &str, status: HostStatus, detail: &str, _ms: u64) {
+        let kind = (self.status_kind)(status);
+        crate::output::printer::print_host_line(host, kind, detail);
+    }
+}
+
+/// Online → "ok", everything else → "error"  (used by `run`).
+pub fn printer_sink_simple() -> PrinterSink {
+    PrinterSink::new(|s| match s {
+        HostStatus::Online => "ok",
+        _ => "error",
+    })
+}
+
+/// Online → "ok", Partial/Skipped → "skip", else → "error"  (used by `check`, `cp`).
+pub fn printer_sink_with_partial() -> PrinterSink {
+    PrinterSink::new(|s| match s {
+        HostStatus::Online => "ok",
+        HostStatus::Partial | HostStatus::Skipped => "skip",
+        _ => "error",
+    })
+}
+
+/// Online → "ok", Skipped → "skip", else → "error"  (used by `exec`).
+pub fn printer_sink_with_skip() -> PrinterSink {
+    PrinterSink::new(|s| match s {
+        HostStatus::Online => "ok",
+        HostStatus::Skipped => "skip",
+        _ => "error",
+    })
 }
 
 /// Per-host typed result of a `check_core` run.

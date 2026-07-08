@@ -1,3 +1,5 @@
+//! Legacy SSH subprocess pool (shells out to system ssh/scp).
+
 use std::sync::Arc;
 
 use anyhow::Result;

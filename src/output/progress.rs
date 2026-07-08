@@ -1,3 +1,5 @@
+//! Multi-host progress bars using indicatif.
+
 use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -18,6 +20,12 @@ pub struct SyncProgress {
     is_tty: bool,
     multi: MultiProgress,
     host_bar: Option<ProgressBar>,
+}
+
+impl Default for SyncProgress {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SyncProgress {
@@ -43,7 +51,6 @@ impl SyncProgress {
         self.host_bar = Some(bar);
     }
 
-    #[allow(dead_code)]
     pub fn host_checked(&self, connected: usize, failed: usize) {
         if let Some(bar) = &self.host_bar {
             bar.inc(1);

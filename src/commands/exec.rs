@@ -1,3 +1,5 @@
+//! Execute scripts or commands on remote hosts with shell wrapping.
+
 use std::path::Path;
 use std::time::Instant;
 
@@ -7,9 +9,12 @@ use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
 use crate::host::shell;
 use crate::output::printer;
+use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
-use super::report::{CommandReport, ExecHostResult, ExecReport, HostStatus, ProgressSink};
+use super::report::{
+    printer_sink_with_skip, CommandReport, ExecHostResult, ExecReport, HostStatus, ProgressSink,
+};
 use super::Context;
 
 /// Pure command core: uploads and executes a script on each host, writes to
@@ -222,7 +227,7 @@ pub async fn run(
         return Ok(());
     }
 
-    let sink = PrinterSink;
+    let sink = printer_sink_with_skip();
     let raw = exec_core(ctx, script, sudo, keep, Some(&sink)).await?;
     let CommandReport::Exec(report) = &raw else {
         unreachable!("exec_core always returns CommandReport::Exec")
@@ -242,34 +247,15 @@ pub async fn run(
 
     summary.print();
 
-    if let Some(out) = &output.out {
-        let rep = crate::output::report::to_operation_report(&raw, &ctx.mode);
-        let path = crate::output::report::write_report(
-            &rep,
-            out,
-            "exec",
-            ctx.config.settings.default_output_format.as_deref(),
-        )?;
-        println!("Report written to {}", path);
-    }
+    maybe_write_report(
+        &raw,
+        &ctx.mode,
+        output.out.as_deref(),
+        "exec",
+        ctx.config.settings.default_output_format.as_deref(),
+    )?;
 
     Ok(())
-}
-
-/// `ProgressSink` impl that prints to stdout via the existing `output::printer`.
-struct PrinterSink;
-
-impl ProgressSink for PrinterSink {
-    fn host_started(&self, _host: &str) {}
-
-    fn host_completed(&self, host: &str, status: HostStatus, detail: &str, _ms: u64) {
-        let kind = match status {
-            HostStatus::Online => "ok",
-            HostStatus::Skipped => "skip",
-            _ => "error",
-        };
-        printer::print_host_line(host, kind, detail);
-    }
 }
 
 async fn exec_on_host_pooled(

@@ -1,3 +1,5 @@
+//! Execution summary tables and sync conflict/skip reporting.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Reason for skipping a file during sync.
@@ -40,7 +42,6 @@ impl Summary {
         });
     }
 
-    #[allow(dead_code)]
     pub fn add_failure_with_path(&mut self, host: &str, message: &str, path: &str) {
         self.failed += 1;
         self.errors.push(ErrorEntry {
@@ -54,7 +55,6 @@ impl Summary {
         self.skipped += 1;
     }
 
-    #[allow(dead_code)]
     pub fn add_skip_with_reason(&mut self, path: &str, host: &str, reason: &str) {
         self.skipped += 1;
         self.skip_reasons.push(SkipReason {

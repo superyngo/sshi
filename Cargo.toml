@@ -4,6 +4,10 @@ version = "1.6.0"
 edition = "2021"
 description = "SSH-config-based cross-platform remote management tool"
 
+[lib]
+name = "sshi"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sshi"
 path = "src/main.rs"
@@ -37,7 +41,6 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Error handling
 anyhow = "1"
-thiserror = "2"
 
 # SSH (russh migration)
 russh = "0.44"

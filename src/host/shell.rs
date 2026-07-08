@@ -1,3 +1,5 @@
+//! Remote shell type detection (sh, PowerShell, cmd).
+
 use crate::config::schema::ShellType;
 
 /// Detect shell type using an established russh session pool.
@@ -6,8 +8,6 @@ pub async fn detect_russh(
     sessions: &super::session_pool::RusshSessionPool,
     timeout: u64,
 ) -> anyhow::Result<crate::config::schema::ShellType> {
-    use crate::config::schema::ShellType;
-
     let mut any_exec_ok = false;
 
     // Try PowerShell
@@ -68,5 +68,61 @@ pub fn sudo_wrap(shell: ShellType, command: &str) -> String {
             )
         }
         ShellType::Cmd => format!("runas /user:Administrator \"{}\"", command),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::ShellType;
+
+    #[test]
+    fn test_temp_dir_sh() {
+        assert_eq!(temp_dir(ShellType::Sh), "/tmp");
+    }
+
+    #[test]
+    fn test_temp_dir_powershell() {
+        assert_eq!(temp_dir(ShellType::PowerShell), "$env:TEMP");
+    }
+
+    #[test]
+    fn test_temp_dir_cmd() {
+        assert_eq!(temp_dir(ShellType::Cmd), "%TEMP%");
+    }
+
+    #[test]
+    fn test_sudo_wrap_sh() {
+        let wrapped = sudo_wrap(ShellType::Sh, "apt update");
+        assert_eq!(wrapped, "sudo apt update");
+    }
+
+    #[test]
+    fn test_sudo_wrap_powershell() {
+        let wrapped = sudo_wrap(ShellType::PowerShell, "Install-Module Foo");
+        assert!(wrapped.contains("Start-Process powershell"));
+        assert!(wrapped.contains("Install-Module Foo"));
+        assert!(wrapped.contains("-Verb RunAs"));
+    }
+
+    #[test]
+    fn test_sudo_wrap_cmd() {
+        let wrapped = sudo_wrap(ShellType::Cmd, "net stop thing");
+        assert!(wrapped.contains("runas /user:Administrator"));
+        assert!(wrapped.contains("net stop thing"));
+    }
+
+    #[test]
+    fn test_sudo_wrap_sh_empty_command() {
+        let wrapped = sudo_wrap(ShellType::Sh, "");
+        assert_eq!(wrapped, "sudo ");
+    }
+
+    #[test]
+    fn test_sudo_wrap_all_variants_return_string() {
+        for shell in [ShellType::Sh, ShellType::PowerShell, ShellType::Cmd] {
+            let s = sudo_wrap(shell, "echo hi");
+            assert!(!s.is_empty());
+        }
     }
 }

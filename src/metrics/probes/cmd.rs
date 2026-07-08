@@ -1,3 +1,5 @@
+//! CMD probe commands for system metrics (minimal support).
+
 /// Return the CMD probe command for a given metric.
 /// CMD support is minimal / nice-to-have.
 pub fn command_for(metric: &str) -> String {

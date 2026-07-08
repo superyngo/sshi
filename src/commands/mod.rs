@@ -1,3 +1,5 @@
+//! Subcommand implementations and shared command context.
+
 pub mod check;
 pub mod checkout;
 pub mod config;
@@ -40,7 +42,6 @@ pub struct Context {
     pub mode: TargetMode,
     pub serial: bool,
     pub skip: Vec<String>,
-    #[allow(dead_code)]
     pub verbose: bool,
 }
 

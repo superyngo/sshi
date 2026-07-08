@@ -1,3 +1,5 @@
+//! TOML config file I/O with structured editing via toml_edit.
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

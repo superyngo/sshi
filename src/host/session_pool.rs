@@ -1,3 +1,5 @@
+//! Russh-based session pool with concurrent connect, auth, and SFTP support.
+
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
@@ -570,6 +572,98 @@ mod tests {
         };
         assert!(!out.success);
         assert_eq!(out.exit_code, Some(127));
+    }
+
+    #[test]
+    fn test_remote_output_no_exit_code() {
+        let out = RemoteOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: None,
+            success: false,
+        };
+        assert!(!out.success);
+        assert!(out.exit_code.is_none());
+    }
+
+    #[test]
+    fn test_remote_output_debug_clone() {
+        let out = RemoteOutput {
+            stdout: "data".to_string(),
+            stderr: "err".to_string(),
+            exit_code: Some(1),
+            success: false,
+        };
+        let cloned = out.clone();
+        assert_eq!(cloned.stdout, "data");
+        assert_eq!(cloned.stderr, "err");
+        let debug_str = format!("{:?}", out);
+        assert!(debug_str.contains("data"));
+    }
+
+    #[test]
+    fn test_ssh_handler_fields() {
+        let handler = SshHandler {
+            hostname: "example.com".to_string(),
+            port: 2222,
+        };
+        assert_eq!(handler.hostname, "example.com");
+        assert_eq!(handler.port, 2222);
+    }
+
+    #[test]
+    fn test_ssh_handler_with_default_port() {
+        let handler = SshHandler {
+            hostname: "myhost".to_string(),
+            port: 22,
+        };
+        assert_eq!(handler.port, 22);
+    }
+
+    #[test]
+    fn test_sftp_capable_excludes_failed_from_all_sessions() {
+        let session_keys: Vec<String> = vec!["alpha".into(), "beta".into(), "gamma".into()];
+        let sftp_failed: Vec<(String, String)> =
+            vec![("beta".into(), "sftp subsystem not found".into())];
+        let failed_set: std::collections::HashSet<&str> =
+            sftp_failed.iter().map(|(n, _)| n.as_str()).collect();
+        let capable: Vec<String> = session_keys
+            .iter()
+            .filter(|n| !failed_set.contains(n.as_str()))
+            .cloned()
+            .collect();
+        assert_eq!(capable.len(), 2);
+        assert!(capable.contains(&String::from("alpha")));
+        assert!(capable.contains(&String::from("gamma")));
+        assert!(!capable.contains(&String::from("beta")));
+    }
+
+    #[test]
+    fn test_sftp_capable_empty_failed_list() {
+        let session_keys: Vec<String> = vec!["x".into(), "y".into()];
+        let sftp_failed: Vec<(String, String)> = Vec::new();
+        let failed_set: std::collections::HashSet<&str> =
+            sftp_failed.iter().map(|(n, _)| n.as_str()).collect();
+        let capable: Vec<String> = session_keys
+            .iter()
+            .filter(|n| !failed_set.contains(n.as_str()))
+            .cloned()
+            .collect();
+        assert_eq!(capable.len(), 2);
+    }
+
+    #[test]
+    fn test_sftp_capable_all_failed() {
+        let session_keys: Vec<String> = vec!["only-one".into()];
+        let sftp_failed: Vec<(String, String)> = vec![("only-one".into(), "error".into())];
+        let failed_set: std::collections::HashSet<&str> =
+            sftp_failed.iter().map(|(n, _)| n.as_str()).collect();
+        let capable: Vec<String> = session_keys
+            .iter()
+            .filter(|n| !failed_set.contains(n.as_str()))
+            .cloned()
+            .collect();
+        assert!(capable.is_empty());
     }
 
     #[test]

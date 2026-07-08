@@ -1,3 +1,5 @@
+//! Initialize sshi: generate config, test connectivity, populate known_hosts.
+
 use anyhow::{Context as _, Result};
 
 use crate::config::schema::HostEntry;
@@ -65,7 +67,7 @@ fn run_interactive(program: &str, args: &[&str]) -> bool {
     match std::process::Command::new(program).args(args).status() {
         Ok(status) => status.success(),
         Err(e) => {
-            eprintln!("Failed to run {program}: {e}");
+            tracing::warn!("Failed to run {program}: {e}");
             false
         }
     }
@@ -195,11 +197,11 @@ async fn batch_keyscan_and_accept(
         {
             Ok(mut f) => {
                 if let Err(e) = f.write_all(content.as_bytes()) {
-                    eprintln!("Warning: failed to write known_hosts: {}", e);
+                    tracing::warn!("Failed to write known_hosts: {}", e);
                 }
             }
             Err(e) => {
-                eprintln!("Warning: failed to open known_hosts: {}", e);
+                tracing::warn!("Failed to open known_hosts: {}", e);
             }
         }
     }
@@ -304,13 +306,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
         // Build temp HostEntry list for session pool setup
         let temp_entries: Vec<HostEntry> = detect_hosts
             .iter()
-            .map(|name| HostEntry {
-                name: name.clone(),
-                ssh_host: name.clone(),
-                shell: crate::config::schema::ShellType::Sh,
-                groups: Vec::new(),
-                proxy_jump: None,
-            })
+            .map(|name| HostEntry::placeholder(name, name))
             .collect();
         let entry_refs: Vec<&HostEntry> = temp_entries.iter().collect();
 
@@ -373,13 +369,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
                     if !accepted.is_empty() {
                         let retry_entries: Vec<HostEntry> = accepted
                             .iter()
-                            .map(|name| HostEntry {
-                                name: name.clone(),
-                                ssh_host: name.clone(),
-                                shell: crate::config::schema::ShellType::Sh,
-                                groups: Vec::new(),
-                                proxy_jump: None,
-                            })
+                            .map(|name| HostEntry::placeholder(name, name))
                             .collect();
                         let retry_refs: Vec<&HostEntry> = retry_entries.iter().collect();
 
@@ -470,13 +460,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
                 if !copied.is_empty() {
                     let retry_entries: Vec<HostEntry> = copied
                         .iter()
-                        .map(|name| HostEntry {
-                            name: name.clone(),
-                            ssh_host: name.clone(),
-                            shell: crate::config::schema::ShellType::Sh,
-                            groups: Vec::new(),
-                            proxy_jump: None,
-                        })
+                        .map(|name| HostEntry::placeholder(name, name))
                         .collect();
                     let retry_refs: Vec<&HostEntry> = retry_entries.iter().collect();
 
@@ -509,13 +493,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
 
         let mut new_hosts: Vec<HostEntry> = Vec::new();
         for host_name in &reachable {
-            let host_entry = HostEntry {
-                name: host_name.clone(),
-                ssh_host: host_name.clone(),
-                shell: crate::config::schema::ShellType::Sh,
-                groups: Vec::new(),
-                proxy_jump: None,
-            };
+            let host_entry = HostEntry::placeholder(host_name, host_name);
             let pool_ref = if session_pool.reachable_hosts().contains(host_name) {
                 &session_pool
             } else if retry_pool
@@ -531,13 +509,9 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
             match shell::detect_russh(&host_entry, pool_ref, ctx.timeout).await {
                 Ok(shell_type) => {
                     printer::print_host_line(host_name, "ok", &format!("detected: {}", shell_type));
-                    new_hosts.push(HostEntry {
-                        name: host_name.clone(),
-                        ssh_host: host_name.clone(),
-                        shell: shell_type,
-                        groups: Vec::new(),
-                        proxy_jump: None,
-                    });
+                    let mut entry = HostEntry::placeholder(host_name, host_name);
+                    entry.shell = shell_type;
+                    new_hosts.push(entry);
                     summary.add_success();
                 }
                 Err(e) => {

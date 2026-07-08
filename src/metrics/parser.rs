@@ -1,3 +1,5 @@
+//! Parse raw metric output into structured JSON values per shell type.
+
 use std::collections::HashMap;
 
 use crate::config::schema::ShellType;

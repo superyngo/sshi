@@ -1,3 +1,5 @@
+//! Shell-specific probe command registry (sh, PowerShell, cmd).
+
 pub mod cmd;
 pub mod powershell;
 pub mod sh;

@@ -132,4 +132,60 @@ mod tests {
         let result = filter_hosts(&hosts, &[], &[], false, &[]);
         assert_eq!(result.len(), 3);
     }
+
+    #[test]
+    fn test_filter_empty_hosts() {
+        let hosts: Vec<HostEntry> = Vec::new();
+        let result = filter_hosts(&hosts, &["web".into()], &[], false, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_empty_hosts_all_flag() {
+        let hosts: Vec<HostEntry> = Vec::new();
+        let result = filter_hosts(&hosts, &[], &[], true, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_group_no_match() {
+        let hosts = make_hosts();
+        let result = filter_hosts(&hosts, &["nonexistent".into()], &[], false, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_host_name_no_match() {
+        let hosts = make_hosts();
+        let result = filter_hosts(&hosts, &[], &["nonexistent".into()], false, &[]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_conflicting_group_and_host() {
+        let hosts = make_hosts();
+        let result = filter_hosts(
+            &hosts,
+            &["web".into()],
+            &["b".into()],
+            false,
+            &[],
+        );
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_by_shell_no_match() {
+        let hosts = make_hosts();
+        let result = filter_hosts(&hosts, &[], &[], false, &[ShellType::Cmd]);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_filter_preserves_order() {
+        let hosts = make_hosts();
+        let result = filter_hosts(&hosts, &["web".into()], &[], false, &[]);
+        assert_eq!(result[0].name, "a");
+        assert_eq!(result[1].name, "c");
+    }
 }

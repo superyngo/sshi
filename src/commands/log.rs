@@ -1,3 +1,5 @@
+//! Display and filter the operation log from the local database.
+
 use anyhow::Result;
 
 use crate::cli::ActionFilter;
@@ -182,14 +184,13 @@ pub async fn run(
             entries,
         });
 
-        let op_report = crate::output::report::to_operation_report(&report, &ctx.mode);
-        let path = crate::output::report::write_report(
-            &op_report,
-            out,
+        crate::output::report::maybe_write_report(
+            &report,
+            &ctx.mode,
+            Some(out.as_str()),
             "log",
             ctx.config.settings.default_output_format.as_deref(),
         )?;
-        println!("Report written to {}", path);
     }
 
     Ok(())

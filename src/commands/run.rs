@@ -1,3 +1,5 @@
+//! Run a shell command on remote hosts.
+
 use std::time::Instant;
 
 use anyhow::Result;
@@ -6,9 +8,12 @@ use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
 use crate::host::shell;
 use crate::output::printer;
+use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
-use super::report::{CommandReport, HostStatus, ProgressSink, RunHostResult, RunReport};
+use super::report::{
+    printer_sink_simple, CommandReport, HostStatus, ProgressSink, RunHostResult, RunReport,
+};
 use super::Context;
 
 /// Pure command core: resolves targets, spawns per-host `run` tasks, writes
@@ -187,7 +192,7 @@ pub async fn run(
         return Ok(());
     }
 
-    let sink = PrinterSink;
+    let sink = printer_sink_simple();
     let raw = run_core(ctx, command, sudo, Some(&sink)).await?;
     let CommandReport::Run(report) = &raw else {
         unreachable!("run_core always returns CommandReport::Run")
@@ -206,31 +211,13 @@ pub async fn run(
 
     summary.print();
 
-    if let Some(out) = &output.out {
-        let rep = crate::output::report::to_operation_report(&raw, &ctx.mode);
-        let path = crate::output::report::write_report(
-            &rep,
-            out,
-            "run",
-            ctx.config.settings.default_output_format.as_deref(),
-        )?;
-        println!("Report written to {}", path);
-    }
+    maybe_write_report(
+        &raw,
+        &ctx.mode,
+        output.out.as_deref(),
+        "run",
+        ctx.config.settings.default_output_format.as_deref(),
+    )?;
 
     Ok(())
-}
-
-/// `ProgressSink` impl that prints to stdout via the existing `output::printer`.
-struct PrinterSink;
-
-impl ProgressSink for PrinterSink {
-    fn host_started(&self, _host: &str) {}
-
-    fn host_completed(&self, host: &str, status: HostStatus, detail: &str, _ms: u64) {
-        let kind = match status {
-            HostStatus::Online => "ok",
-            _ => "error",
-        };
-        printer::print_host_line(host, kind, detail);
-    }
 }

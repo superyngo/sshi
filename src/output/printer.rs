@@ -1,3 +1,5 @@
+//! Host-prefixed colored line printer for CLI output.
+
 /// Print a host-prefixed line with color.
 pub fn print_host_line(host: &str, status: &str, detail: &str) {
     let max_name_len = 12;

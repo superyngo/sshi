@@ -1,3 +1,5 @@
+//! Time-based retention cleanup for snapshots and operation logs.
+
 use anyhow::Result;
 use rusqlite::Connection;
 
