@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.6.1] - 2026-07-08
+
+### Changed
+- **refactor:** extracted `src/lib.rs` with `[lib]` config; module declarations moved from `main.rs`, imports now use `sshi::` prefix
+- **refactor:** split monolithic `sync.rs` (2,700+ lines) into `sync/` module with `collect`, `decide`, `distribute`, `report`, `tests`, `types` submodules
+- **refactor:** extracted `tui/app_state.rs` from `tui/app.rs` for clearer state separation
+- **refactor:** replaced N+1 checkout DB queries with batch parameterized queries
+- **refactor:** `HostEntry::placeholder()` constructor for init-time use before shell detection
+- Removed unused `thiserror` dependency and stale `#[allow(dead_code)]` annotations
+
 ## [v1.6.0] - 2026-06-11
 
 ### Fixed
