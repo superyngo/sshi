@@ -118,12 +118,13 @@ pub(crate) async fn collect_file_metadata(
             let cmd = match host.shell {
                 ShellType::PowerShell => {
                     let ps_path = if let Some(stripped) = file_path.strip_prefix("~/") {
-                        format!("$HOME\\{}", stripped.replace('/', "\\"))
+                        let rest = stripped.replace('/', "\\").replace('\'', "''");
+                        format!("\"$HOME\" + '\\{}'", rest)
                     } else {
-                        file_path.clone()
+                        format!("'{}'", file_path.replace('\'', "''"))
                     };
                     format!(
-                        "$f=\"{p}\"; \
+                        "$f={p}; \
                          $i=Get-Item $f -ErrorAction SilentlyContinue; \
                          if ($i) {{ \
                            [int64](($i.LastWriteTimeUtc-[datetime]\"1970-01-01\").TotalSeconds), $i.Length -join \" \"; \
@@ -323,9 +324,10 @@ pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> St
                 .iter()
                 .map(|p| {
                     if let Some(stripped) = p.strip_prefix("~/") {
-                        format!("\"$HOME\\{}\"", stripped.replace('/', "\\"))
+                        let rest = stripped.replace('/', "\\").replace('\'', "''");
+                        format!("(\"$HOME\" + '\\{}')", rest)
                     } else {
-                        format!("\"{}\"", p)
+                        format!("'{}'", p.replace('\'', "''"))
                     }
                 })
                 .collect();
@@ -654,6 +656,21 @@ mod tests {
             elapsed.as_secs() < 1,
             "10k-file expansion took {:?}, expected <1s",
             elapsed,
+        );
+    }
+
+    #[test]
+    fn test_powershell_path_injection_is_neutralized() {
+        let paths = vec!["$(echo PWNED)".to_string()];
+        let cmd = build_batch_metadata_cmd(&paths, ShellType::PowerShell);
+
+        assert!(
+            cmd.contains("'$(echo PWNED)'"),
+            "expected `$(echo PWNED)` to be single-quoted in cmd: {cmd}"
+        );
+        assert!(
+            !cmd.contains("\"$(echo PWNED)\""),
+            "found double-quoted malicious token in cmd: {cmd}"
         );
     }
 }
