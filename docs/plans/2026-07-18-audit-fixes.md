@@ -374,3 +374,52 @@ Pause after each phase for review. Each phase = one PR (or one batch of PRs).
 - [ ] Verification block (per task) shows expected result.
 - [ ] CHANGELOG `Unreleased` entry appended.
 - [ ] Commit message follows conventional style (e.g. `fix(sync): replace Vec::contains with HashSet for path dedup`).
+
+---
+
+## Phase A execution notes (landed 2026-07-19)
+
+Phase A shipped as 10 commits (`583064f`..`feb3032`). 257 tests pass (+4 new
+regression tests across A5/A6/A7/A8). Four trade-offs / deferrals surfaced
+during execution — recorded here so later phases know what was *not* done
+and why:
+
+1. **A9 — visibility regression on TUI shutdown.** `flush_config_if_dirty`
+   errors (config save on quit) now go to `tracing::error!`. Because the
+   tracing fmt writer is swapped to a sink at process start
+   (`src/main.rs:50-57`), these errors land in the ring buffer but are
+   **no longer printed to stderr** after alt-screen teardown.
+   *Fix options for a later phase:* (a) flush the ring buffer to stderr on
+   app drop; (b) un-swap the fmt writer during shutdown; (c) move
+   `flush_config_if_dirty` itself out of `src/tui/` into `src/main.rs`.
+   Pick one during Phase B or H.
+
+2. **A5 — incomplete PowerShell hardening scope.** Only the two sites
+   cited by the audit (`collect.rs:118-159`, `collect.rs:317-383`) were
+   migrated to single-quote interpolation. The same double-quote pattern
+   exists at `collect.rs:468-498` (`build_dir_expand_cmd`) and is the
+   same vulnerability class. Audit did not flag it; Phase A did not touch
+   it. Phase F or a dedicated security pass should close it for
+   consistency.
+
+3. **A8 — kept the global semaphore.** Chose Option 1 (acquire per-host
+   permit first, then global) over Option 2 (drop the global sem
+   entirely). Option 2 would have broken `test_global_limit_respected`
+   and `test_global_semaphore_accessor` and required rethinking the
+   contract. If a later phase wants the simpler single-level limiter,
+   those tests need to be rethought first.
+
+4. **A10 — dropped the `thiserror` mandate instead of adopting.** Audit
+   §2.1 HIGH specifically calls out that library modules deserve typed
+   error enums. A10 was a docs-only task; adopting `thiserror` properly
+   is a multi-day refactor. The mandate was removed from AGENTS.md to
+   stop contradicting reality, but **no code was migrated**. Phase B
+   (DB layer) or a dedicated phase should pick this up — the DB layer is
+   the most natural first consumer of a typed error enum.
+
+Other minor notes:
+- A6 passes `ResolvedHostConfig::alias` (the sshi config name like
+  `web-prod-1`) to the password prompt, not `ResolvedHostConfig::hostname`
+  (which can be a raw IP). Matches the ssh-with-Host-alias convention.
+- A10 rewrote `host/pool.rs:1` doc-comment from 1 line to 4 lines for
+  accuracy (the prior comment was inverted).
