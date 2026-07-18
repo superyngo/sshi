@@ -44,8 +44,12 @@ pub fn open(override_dir: Option<&std::path::Path>) -> Result<Connection> {
     let conn = Connection::open(&path)
         .with_context(|| format!("Failed to open database {}", path.display()))?;
 
-    // Enable WAL mode for better concurrent reads
-    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+    // Enable WAL mode for better concurrent reads; raise the busy timeout so
+    // concurrent CLI + TUI access waits instead of returning SQLITE_BUSY, and
+    // drop synchronous from FULL to NORMAL (documented fast/safe combo under WAL).
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL;\nPRAGMA busy_timeout=5000;\nPRAGMA synchronous=NORMAL;",
+    )?;
 
     migrate(&conn)?;
     Ok(conn)
@@ -95,5 +99,19 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(version, CURRENT_VERSION);
+    }
+
+    #[test]
+    fn test_pragmas_set_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = open(Some(dir.path())).unwrap();
+        let busy: i64 = conn
+            .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+            .unwrap();
+        assert_eq!(busy, 5000);
+        let synchronous: i64 = conn
+            .pragma_query_value(None, "synchronous", |r| r.get(0))
+            .unwrap();
+        assert_eq!(synchronous, 1);
     }
 }
