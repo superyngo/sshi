@@ -269,12 +269,14 @@ pub(crate) fn union_dir_expansions(
     host_results: Vec<HashMap<String, DirExpandResult>>,
 ) -> HashMap<String, Vec<String>> {
     let mut dirs: HashMap<String, Vec<String>> = HashMap::new();
+    let mut seen_per_dir: HashMap<String, HashSet<String>> = HashMap::new();
     for expansions in host_results {
         for (path, result) in expansions {
             if let DirExpandResult::Directory(files) = result {
-                let entry = dirs.entry(path).or_default();
+                let entry = dirs.entry(path.clone()).or_default();
+                let seen = seen_per_dir.entry(path).or_default();
                 for f in files {
-                    if !entry.contains(&f) {
+                    if seen.insert(f.clone()) {
                         entry.push(f);
                     }
                 }
@@ -614,4 +616,44 @@ fn to_tilde_path(path: &str) -> String {
         }
     }
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_union_dir_expansions_10k_files_under_1s() {
+        let start = std::time::Instant::now();
+        const N: usize = 10_000;
+
+        let files_a: Vec<String> = (0..N).map(|i| format!("/srv/file_{i}.bin")).collect();
+        let files_b: Vec<String> = (0..N).map(|i| format!("/srv/file_{}.bin", N + i)).collect();
+        let dup: Vec<String> = files_a[..100].to_vec();
+
+        let mut host_a: HashMap<String, DirExpandResult> = HashMap::new();
+        host_a.insert(
+            "/srv".to_string(),
+            DirExpandResult::Directory(files_a.clone()),
+        );
+
+        let mut host_b: HashMap<String, DirExpandResult> = HashMap::new();
+        host_b.insert("/srv".to_string(), DirExpandResult::Directory(files_b));
+
+        let mut host_c: HashMap<String, DirExpandResult> = HashMap::new();
+        host_c.insert("/srv".to_string(), DirExpandResult::Directory(dup));
+
+        let merged = union_dir_expansions(vec![host_a, host_b, host_c]);
+
+        let entry = merged.get("/srv").expect("merged /srv entry");
+        assert_eq!(entry.len(), 2 * N);
+        assert!(entry.iter().all(|f| !f.is_empty()));
+
+        let elapsed = start.elapsed();
+        assert!(
+            elapsed.as_secs() < 1,
+            "10k-file expansion took {:?}, expected <1s",
+            elapsed,
+        );
+    }
 }

@@ -6,7 +6,7 @@ mod types;
 
 pub(crate) use types::SyncOutputStyle;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -298,11 +298,12 @@ async fn sync_inner(
 
             if !dirs_expanded.is_empty() || !dirs_missing.is_empty() {
                 let mut new_paths = Vec::new();
+                let mut new_paths_seen: HashSet<String> = HashSet::new();
                 for path in &all_paths {
                     if let Some(expanded_files) = dirs_expanded.get(path) {
                         let src = path_source_map.get(path.as_str()).copied().flatten();
                         for file_path in expanded_files {
-                            if !new_paths.contains(file_path) {
+                            if new_paths_seen.insert(file_path.clone()) {
                                 new_paths.push(file_path.clone());
                                 path_source_map.entry(file_path.clone()).or_insert(src);
                             }
@@ -366,10 +367,11 @@ async fn sync_inner(
 
             if !dirs_expanded.is_empty() {
                 let mut new_paths = Vec::new();
+                let mut new_paths_seen: HashSet<String> = HashSet::new();
                 for path in &all_paths {
                     if let Some(expanded_files) = dirs_expanded.get(path) {
                         for file_path in expanded_files {
-                            if !new_paths.contains(file_path) {
+                            if new_paths_seen.insert(file_path.clone()) {
                                 new_paths.push(file_path.clone());
                                 path_source_map.entry(file_path.clone()).or_insert(None);
                             }
