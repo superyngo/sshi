@@ -133,6 +133,13 @@ pub async fn check_core(
         }));
     }
 
+    // Pending per-host DB writes collected as handles resolve. Executing
+    // them inside a single transaction at the end turns N auto-commit
+    // fsyncs into one (audit §3.5 MED).
+    #[allow(clippy::type_complexity)]
+    let mut pending_writes: Vec<(String, i64, i64, String, bool, String, i64, Option<String>)> =
+        Vec::new();
+
     for handle in handles {
         let (host, result, elapsed) = handle.await?;
         let now = chrono::Utc::now().timestamp();
@@ -185,60 +192,26 @@ pub async fn check_core(
                     )
                 };
 
-                ctx.db.execute(
-                    "INSERT INTO check_snapshots (host, collected_at, online, raw_json) VALUES (?1, ?2, ?3, ?4)",
-                    vec![
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(online_int),
-                        crate::state::db::boxed_param(json_str),
-                    ],
-                )
-                .await?;
-                if online_int == 1 {
-                    ctx.db.execute(
-                        "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, ?2) \
-                         ON CONFLICT(host) DO UPDATE SET last_seen = ?2, last_online = ?2",
-                        vec![
-                            crate::state::db::boxed_param(host.name.clone()),
-                            crate::state::db::boxed_param(now),
-                        ],
-                    )
-                    .await?;
-                } else {
-                    ctx.db.execute(
-                        "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
-                         ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
-                        vec![
-                            crate::state::db::boxed_param(host.name.clone()),
-                            crate::state::db::boxed_param(now),
-                        ],
-                    )
-                    .await?;
-                }
-
-                if let Some(p) = progress {
-                    p.host_completed(&host.name, status, &detail, ms);
-                }
-
                 let status_str = if matches!(status, HostStatus::Online | HostStatus::Partial) {
                     "ok"
                 } else {
                     "error"
                 };
-                if let Err(e) = ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
-                     VALUES (?1, 'check', ?2, 'metrics_batch', ?3, ?4)",
-                    vec![
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(status_str),
-                        crate::state::db::boxed_param(ms as i64),
-                    ],
-                )
-                .await {
-                    tracing::warn!(error = %e, "failed to record operation_log entry");
+
+                if let Some(p) = progress {
+                    p.host_completed(&host.name, status, &detail, ms);
                 }
+
+                pending_writes.push((
+                    host.name.clone(),
+                    now,
+                    online_int,
+                    json_str,
+                    online_int == 1,
+                    status_str.to_string(),
+                    ms as i64,
+                    None,
+                ));
 
                 results.push(CheckHostResult {
                     host: host.name.clone(),
@@ -253,40 +226,22 @@ pub async fn check_core(
                 });
             }
             Err(e) => {
-                ctx.db.execute(
-                    "INSERT INTO check_snapshots (host, collected_at, online, raw_json) VALUES (?1, ?2, 0, '{}')",
-                    vec![
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(now),
-                    ],
-                )
-                .await?;
-                ctx.db.execute(
-                    "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
-                     ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
-                    vec![
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(now),
-                    ],
-                )
-                .await?;
                 let detail = e.to_string();
                 if let Some(p) = progress {
                     p.host_completed(&host.name, HostStatus::Error, &detail, ms);
                 }
-                if let Err(e) = ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
-                     VALUES (?1, 'check', ?2, 'metrics_batch', 'error', ?3, ?4)",
-                    vec![
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(ms as i64),
-                        crate::state::db::boxed_param(detail.clone()),
-                    ],
-                )
-                .await {
-                    tracing::warn!(error = %e, "failed to record operation_log entry");
-                }
+
+                pending_writes.push((
+                    host.name.clone(),
+                    now,
+                    0,
+                    "{}".to_string(),
+                    false,
+                    "error".to_string(),
+                    ms as i64,
+                    Some(detail.clone()),
+                ));
+
                 results.push(CheckHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Error,
@@ -301,6 +256,44 @@ pub async fn check_core(
             }
         }
     }
+
+    ctx.db
+        .transaction(move |tx| -> Result<()> {
+            for (host, now, online_int, json_str, online_set_to_now, status_str, ms, note) in
+                &pending_writes
+            {
+                tx.execute(
+                    "INSERT INTO check_snapshots (host, collected_at, online, raw_json) \
+                     VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![host, now, online_int, json_str],
+                )?;
+                if *online_set_to_now {
+                    tx.execute(
+                        "INSERT INTO host_last_seen (host, last_seen, last_online) \
+                         VALUES (?1, ?2, ?2) \
+                         ON CONFLICT(host) DO UPDATE SET last_seen = ?2, last_online = ?2",
+                        rusqlite::params![host, now],
+                    )?;
+                } else {
+                    tx.execute(
+                        "INSERT INTO host_last_seen (host, last_seen, last_online) \
+                         VALUES (?1, ?2, 0) \
+                         ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
+                        rusqlite::params![host, now],
+                    )?;
+                }
+                if let Err(e) = tx.execute(
+                    "INSERT INTO operation_log \
+                     (timestamp, command, host, action, status, duration_ms, note) \
+                     VALUES (?1, 'check', ?2, 'metrics_batch', ?3, ?4, ?5)",
+                    rusqlite::params![now, host, status_str, ms, note],
+                ) {
+                    tracing::warn!(error = %e, "failed to record operation_log entry");
+                }
+            }
+            Ok(())
+        })
+        .await?;
 
     pool.shutdown().await;
     retention::cleanup(&ctx.db, ctx.config.settings.data_retention_days).await?;

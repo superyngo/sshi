@@ -514,6 +514,13 @@ async fn sync_inner(
                 println!("  [dry-run] No changes applied.");
             }
         } else {
+            // Collect per-decision DB writes as decisions resolve. Executing
+            // them inside one transaction at the end turns N auto-commit
+            // fsyncs into one (audit §3.5 MED).
+            #[allow(clippy::type_complexity)]
+            let mut pending_sync_state: Vec<(String, String, String, i64)> = Vec::new();
+            let mut pending_op_log: Vec<(i64, String, String)> = Vec::new();
+
             for decision in &all_decisions {
                 if verbose {
                     let mut all_targets: Vec<&str> =
@@ -558,37 +565,18 @@ async fn sync_inner(
 
                             let now = chrono::Utc::now().timestamp();
                             for target in &succeeded {
-                                if let Err(e) = ctx.db.execute(
-                                    "INSERT INTO sync_state (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
-                                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                                     ON CONFLICT(sync_group, host, path) DO UPDATE SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
-                                    vec![
-                                        crate::state::db::boxed_param(label.clone()),
-                                        crate::state::db::boxed_param(target.clone()),
-                                        crate::state::db::boxed_param(decision.path.clone()),
-                                        crate::state::db::boxed_param(0i64),
-                                        crate::state::db::boxed_param(0i64),
-                                        crate::state::db::boxed_param(""),
-                                        crate::state::db::boxed_param(now),
-                                    ],
-                                )
-                                .await {
-                                    tracing::warn!(error = %e, "failed to record operation_log entry");
-                                }
+                                pending_sync_state.push((
+                                    label.clone(),
+                                    target.clone(),
+                                    decision.path.clone(),
+                                    now,
+                                ));
                             }
-
-                            if let Err(e) = ctx.db.execute(
-                                "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
-                                 VALUES (?1, 'sync', ?2, ?3, 'ok', 0)",
-                                vec![
-                                    crate::state::db::boxed_param(now),
-                                    crate::state::db::boxed_param(decision.source_host.clone()),
-                                    crate::state::db::boxed_param(format!("sync {}", decision.path)),
-                                ],
-                            )
-                            .await {
-                                tracing::warn!(error = %e, "failed to record operation_log entry");
-                            }
+                            pending_op_log.push((
+                                now,
+                                decision.source_host.clone(),
+                                format!("sync {}", decision.path),
+                            ));
                         }
 
                         if !failed_uploads.is_empty() {
@@ -649,6 +637,34 @@ async fn sync_inner(
                     }
                 }
             }
+
+            ctx.db
+                .transaction(move |tx| -> Result<()> {
+                    for (group, target, path, now) in &pending_sync_state {
+                        if let Err(e) = tx.execute(
+                            "INSERT INTO sync_state \
+                             (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+                             ON CONFLICT(sync_group, host, path) DO UPDATE \
+                             SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
+                            rusqlite::params![group, target, path, 0i64, 0i64, "", now],
+                        ) {
+                            tracing::warn!(error = %e, "failed to record operation_log entry");
+                        }
+                    }
+                    for (now, source_host, action) in &pending_op_log {
+                        if let Err(e) = tx.execute(
+                            "INSERT INTO operation_log \
+                             (timestamp, command, host, action, status, duration_ms) \
+                             VALUES (?1, 'sync', ?2, ?3, 'ok', 0)",
+                            rusqlite::params![now, source_host, action],
+                        ) {
+                            tracing::warn!(error = %e, "failed to record operation_log entry");
+                        }
+                    }
+                    Ok(())
+                })
+                .await?;
         }
     }
 
