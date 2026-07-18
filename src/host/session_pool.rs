@@ -405,6 +405,7 @@ async fn connect_direct(
     authenticate(
         &mut handle,
         &config.user,
+        &config.alias,
         &config.identity_files,
         config.identities_only,
         cache,
@@ -481,6 +482,7 @@ async fn connect_via_proxy(
     authenticate(
         &mut target_handle,
         &target.user,
+        &target.alias,
         &target.identity_files,
         target.identities_only,
         cache,

@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **chore(build):** added `[profile.release]` overrides (`lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`) for ~50% smaller release binaries
 
 ### Fixed
+- **fix(auth):** `host::auth::authenticate` now wraps the rpassword passphrase in `SecretString` immediately on receipt (no plaintext `String::clone`, no plaintext outliving the wrapper) and accepts a `host_name` parameter so the password fallback prompt shows the resolved host (`alice@web-prod-1 password:`) instead of the literal `alice@<host> password:` placeholder. New `test_password_prompt_contains_real_hostname` regression test
 - **fix(sync):** PowerShell path interpolation in `collect.rs` now uses single-quoted literals with `''` escaping for both `collect_file_metadata` and `build_batch_metadata_cmd` — config-controlled paths like `$(echo PWNED)` can no longer execute as PowerShell subexpressions on the remote host. New `test_powershell_path_injection_is_neutralized` regression test
 - **fix(state):** SQLite connections now set `PRAGMA busy_timeout=5000` and `PRAGMA synchronous=NORMAL` so concurrent CLI + TUI access waits instead of failing with `SQLITE_BUSY`, and small writes skip the FULL fsync cost
 - **fix(sync,check,cp):** DB write errors at the 7 sites that silently dropped `operation_log`/`sync_state` insert results now surface as `tracing::warn!` instead of being swallowed by `let _ =`

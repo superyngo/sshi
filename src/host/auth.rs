@@ -47,7 +47,7 @@ pub struct SshAuthRequest {
 /// Channel sender used to forward `SshAuthRequest` values to the TUI.
 pub type SshAuthSender = tokio::sync::mpsc::UnboundedSender<SshAuthRequest>;
 
-/// Attempt to authenticate `handle` as `user`.
+/// Attempt to authenticate `handle` as `user` against `host_name`.
 ///
 /// Auth chain:
 /// 1. For each identity file: try without passphrase (unencrypted keys)
@@ -56,6 +56,7 @@ pub type SshAuthSender = tokio::sync::mpsc::UnboundedSender<SshAuthRequest>;
 pub async fn authenticate(
     handle: &mut Handle<SshHandler>,
     user: &str,
+    host_name: &str,
     identity_files: &[PathBuf],
     identities_only: bool,
     cache: &mut PassphraseCache,
@@ -75,9 +76,10 @@ pub async fn authenticate(
                 let prompt = format!("Enter passphrase for {}: ", path.display());
                 let pp =
                     rpassword::prompt_password(&prompt).context("Failed to read passphrase")?;
-                let secret = SecretString::new(pp.clone());
-                cache.insert(path.clone(), secret);
-                SecretString::new(pp)
+                let secret = SecretString::new(pp);
+                let for_cache = secret.clone();
+                cache.insert(path.clone(), for_cache);
+                secret
             }
         };
         if try_pubkey(handle, user, path, Some(passphrase.as_str())).await? {
@@ -87,7 +89,7 @@ pub async fn authenticate(
 
     // Step 3: password fallback (only if IdentitiesOnly is not set)
     if !identities_only {
-        let prompt = format!("{}@<host> password: ", user);
+        let prompt = password_prompt(user, host_name);
         let password = rpassword::prompt_password(&prompt).context("Failed to read password")?;
         let password = SecretString::new(password);
         if handle
@@ -100,6 +102,10 @@ pub async fn authenticate(
     }
 
     anyhow::bail!("All authentication methods exhausted for user '{}'", user)
+}
+
+fn password_prompt(user: &str, host_name: &str) -> String {
+    format!("{}@{} password: ", user, host_name)
 }
 
 /// Try public-key auth with an optional passphrase. Returns true if auth succeeded.
@@ -191,5 +197,22 @@ mod tests {
         let empty_key = PathBuf::new();
         cache.insert(empty_key.clone(), SecretString::new("val".to_string()));
         assert_eq!(cache.get(&empty_key).unwrap().as_str(), "val");
+    }
+
+    #[test]
+    fn test_password_prompt_contains_real_hostname() {
+        let prompt = password_prompt("alice", "web-prod-1");
+        assert!(
+            prompt.contains("alice"),
+            "prompt should contain user: {prompt}"
+        );
+        assert!(
+            prompt.contains("web-prod-1"),
+            "prompt should contain resolved hostname: {prompt}",
+        );
+        assert!(
+            !prompt.contains("<host>"),
+            "prompt should not contain the literal placeholder: {prompt}",
+        );
     }
 }
