@@ -77,3 +77,8 @@ unicode-width = "0.1"
 [features]
 default = ["tui"]
 tui = ["ratatui", "crossterm", "tokio-util"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
