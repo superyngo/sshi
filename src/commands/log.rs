@@ -63,7 +63,7 @@ pub fn log_core(
     query.push_str(&format!(" LIMIT {}", limit));
 
     let rows: Vec<LogRow> = ctx.db.with_conn(|conn| -> Result<_> {
-        let mut stmt = conn.prepare(&query)?;
+        let mut stmt = conn.prepare_cached(&query)?;
         let params_refs: Vec<&dyn rusqlite::types::ToSql> =
             bind_values.iter().map(|b| b.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), |row| {

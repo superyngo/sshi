@@ -157,7 +157,7 @@ pub(crate) fn fetch_latest_snapshots(
 
     let last_online_map: std::collections::HashMap<String, i64> =
         ctx.db.with_conn(|conn| -> Result<_> {
-            let mut stmt = conn.prepare(&last_seen_sql)?;
+            let mut stmt = conn.prepare_cached(&last_seen_sql)?;
             let mut rows = stmt.query(params.as_slice())?;
             let mut map = std::collections::HashMap::new();
             while let Some(row) = rows.next()? {
@@ -170,7 +170,7 @@ pub(crate) fn fetch_latest_snapshots(
 
     let snapshot_rows: std::collections::HashMap<String, (i64, bool, String)> =
         ctx.db.with_conn(|conn| -> Result<_> {
-            let mut stmt = conn.prepare(&snapshot_sql)?;
+            let mut stmt = conn.prepare_cached(&snapshot_sql)?;
             let mut rows = stmt.query(params.as_slice())?;
             let mut map = std::collections::HashMap::new();
             while let Some(row) = rows.next()? {
@@ -253,7 +253,7 @@ pub(crate) fn fetch_combined_snapshots(
 
     let last_online_map: std::collections::HashMap<String, i64> =
         ctx.db.with_conn(|conn| -> Result<_> {
-            let mut stmt = conn.prepare(&last_seen_sql)?;
+            let mut stmt = conn.prepare_cached(&last_seen_sql)?;
             let mut rows = stmt.query(params.as_slice())?;
             let mut map = std::collections::HashMap::new();
             while let Some(row) = rows.next()? {
@@ -266,7 +266,7 @@ pub(crate) fn fetch_combined_snapshots(
 
     let per_host: std::collections::HashMap<String, Vec<(i64, bool, serde_json::Value)>> =
         ctx.db.with_conn(|conn| -> Result<_> {
-            let mut stmt = conn.prepare(&snapshot_sql)?;
+            let mut stmt = conn.prepare_cached(&snapshot_sql)?;
             let mut all_params: Vec<&dyn rusqlite::types::ToSql> = params.clone();
             all_params.push(&LOOKBACK);
             let mut rows = stmt.query(all_params.as_slice())?;
