@@ -136,6 +136,8 @@ pub struct OperateState {
     /// (config entries and ad-hoc paths are now used together). Retained so
     /// older state files still deserialize; no longer read.
     pub sync_mode: SyncMode,
+    /// Operate tab: shared dry-run toggle (applies to Check/Run/Exec/Sync).
+    pub dry_run: bool,
     /// Sync tab: whether to do a dry run (no files transferred).
     pub sync_dry_run: bool,
     /// Check tab: whether to do a dry run.
@@ -452,6 +454,25 @@ active_tab = "Config"
         assert!(back.run_dry_run);
         assert!(back.exec_dry_run);
         assert_eq!(back.view_operation, ViewOperationKind::Log);
+    }
+
+    #[test]
+    fn shared_dry_run_round_trips_independently_of_sync_dry_run() {
+        let s = OperateState {
+            dry_run: true,
+            sync_dry_run: false,
+            ..Default::default()
+        };
+        let ser = toml::to_string(&s).unwrap();
+        let back: OperateState = toml::from_str(&ser).unwrap();
+        assert!(
+            back.dry_run,
+            "shared dry_run should round-trip as true, got false",
+        );
+        assert!(
+            !back.sync_dry_run,
+            "sync_dry_run should remain false when set independently",
+        );
     }
 
     #[test]

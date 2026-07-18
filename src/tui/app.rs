@@ -635,6 +635,7 @@ impl App {
                 run_sudo: self.operate.run_sudo,
                 exec_sudo: self.operate.exec_sudo,
                 exec_keep: self.operate.exec_keep,
+                dry_run: self.operate.dry_run,
                 sync_dry_run: self.operate.sync_dry_run,
                 view_operation: self.view.op,
                 checkout_combined: self.view.checkout_combined,

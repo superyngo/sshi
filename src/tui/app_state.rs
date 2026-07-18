@@ -149,7 +149,7 @@ impl OperateState {
         Self {
             operation: persisted.operation,
             focus: OpField::OpRadio,
-            dry_run: persisted.sync_dry_run,
+            dry_run: persisted.dry_run,
             run_command: InputField::new(&persisted.run_command),
             exec_script: InputField::new(&persisted.exec_script),
             cp_local: InputField::new(&persisted.cp_local),
