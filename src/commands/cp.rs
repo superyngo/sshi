@@ -148,7 +148,7 @@ pub async fn cp_core(
         };
 
         let status_str = if failed == 0 { "ok" } else { "error" };
-        let _ = ctx.db.execute(
+        if let Err(e) = ctx.db.execute(
             "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
              VALUES (?1, 'cp', ?2, ?3, ?4, ?5)",
             rusqlite::params![
@@ -158,7 +158,9 @@ pub async fn cp_core(
                 status_str,
                 ms as i64
             ],
-        );
+        ) {
+            tracing::warn!(error = %e, "failed to record operation_log entry");
+        }
 
         if let Some(p) = progress {
             p.host_completed(&host.name, status, &detail, ms);

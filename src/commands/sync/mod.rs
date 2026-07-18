@@ -556,7 +556,7 @@ async fn sync_inner(
 
                             let now = chrono::Utc::now().timestamp();
                             for target in &succeeded {
-                                let _ = ctx.db.execute(
+                                if let Err(e) = ctx.db.execute(
                                     "INSERT INTO sync_state (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
                                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                                      ON CONFLICT(sync_group, host, path) DO UPDATE SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
@@ -564,10 +564,12 @@ async fn sync_inner(
                                         label, target, decision.path,
                                         0i64, 0i64, "", now
                                     ],
-                                );
+                                ) {
+                                    tracing::warn!(error = %e, "failed to record operation_log entry");
+                                }
                             }
 
-                            let _ = ctx.db.execute(
+                            if let Err(e) = ctx.db.execute(
                                 "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
                                  VALUES (?1, 'sync', ?2, ?3, 'ok', 0)",
                                 rusqlite::params![
@@ -575,7 +577,9 @@ async fn sync_inner(
                                     decision.source_host,
                                     format!("sync {}", decision.path)
                                 ],
-                            );
+                            ) {
+                                tracing::warn!(error = %e, "failed to record operation_log entry");
+                            }
                         }
 
                         if !failed_uploads.is_empty() {
@@ -895,7 +899,7 @@ async fn sync_path_across(
 
                     let now = chrono::Utc::now().timestamp();
                     for target in &succeeded {
-                        let _ = ctx.db.execute(
+                        if let Err(e) = ctx.db.execute(
                             "INSERT INTO sync_state (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                              ON CONFLICT(sync_group, host, path) DO UPDATE SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
@@ -903,14 +907,18 @@ async fn sync_path_across(
                                 group_name, target, decision.path,
                                 0i64, 0i64, "", now
                             ],
-                        );
+                        ) {
+                            tracing::warn!(error = %e, "failed to record operation_log entry");
+                        }
                     }
 
-                    let _ = ctx.db.execute(
+                    if let Err(e) = ctx.db.execute(
                         "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
                          VALUES (?1, 'sync', ?2, ?3, 'ok', 0)",
                         rusqlite::params![now, decision.source_host, format!("sync {}", decision.path)],
-                    );
+                    ) {
+                        tracing::warn!(error = %e, "failed to record operation_log entry");
+                    }
                 }
 
                 if !failed_uploads.is_empty() {

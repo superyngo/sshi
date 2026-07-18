@@ -203,11 +203,13 @@ pub async fn check_core(
                 } else {
                     "error"
                 };
-                let _ = ctx.db.execute(
+                if let Err(e) = ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
                      VALUES (?1, 'check', ?2, 'metrics_batch', ?3, ?4)",
                     rusqlite::params![now, host.name, status_str, ms as i64],
-                );
+                ) {
+                    tracing::warn!(error = %e, "failed to record operation_log entry");
+                }
 
                 results.push(CheckHostResult {
                     host: host.name.clone(),
@@ -235,11 +237,13 @@ pub async fn check_core(
                 if let Some(p) = progress {
                     p.host_completed(&host.name, HostStatus::Error, &detail, ms);
                 }
-                let _ = ctx.db.execute(
+                if let Err(e) = ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
                      VALUES (?1, 'check', ?2, 'metrics_batch', 'error', ?3, ?4)",
                     rusqlite::params![now, host.name, ms as i64, &detail],
-                );
+                ) {
+                    tracing::warn!(error = %e, "failed to record operation_log entry");
+                }
                 results.push(CheckHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Error,

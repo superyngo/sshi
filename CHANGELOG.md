@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **fix(state):** SQLite connections now set `PRAGMA busy_timeout=5000` and `PRAGMA synchronous=NORMAL` so concurrent CLI + TUI access waits instead of failing with `SQLITE_BUSY`, and small writes skip the FULL fsync cost
+- **fix(sync,check,cp):** DB write errors at the 7 sites that silently dropped `operation_log`/`sync_state` insert results now surface as `tracing::warn!` instead of being swallowed by `let _ =`
 
 ## [v1.6.1] - 2026-07-08
 
