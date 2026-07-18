@@ -26,16 +26,20 @@ impl ConcurrencyLimiter {
         }
     }
 
-    /// Acquire both global and per-host permits.
-    /// Order: global first, then per-host (deterministic to prevent deadlock).
+    /// Acquire both per-host and global permits.
+    /// Order: per-host first, then global. Per-host-first avoids head-of-line
+    /// blocking — a task waiting on a saturated host does not hold a global
+    /// permit, so an independent host can still acquire its per-host slot and
+    /// the global slot in parallel. Order is consistent across all callers,
+    /// so there is no deadlock risk.
     /// Returns a guard that releases both permits on drop.
     pub async fn acquire(&self, host: &str) -> ConcurrencyPermit {
-        let global_permit = self.global.clone().acquire_owned().await.unwrap();
         let per_host_sem = self
             .per_host
             .get(host)
             .expect("host not registered in limiter");
         let per_host_permit = per_host_sem.clone().acquire_owned().await.unwrap();
+        let global_permit = self.global.clone().acquire_owned().await.unwrap();
         ConcurrencyPermit {
             _global: global_permit,
             _per_host: per_host_permit,
@@ -138,5 +142,42 @@ mod tests {
         let limiter = ConcurrencyLimiter::new(2, 5, &[]);
         let sem = limiter.global_semaphore();
         assert_eq!(sem.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_independent_host_not_blocked_by_separate_host_queue() {
+        // Head-of-line regression: 10 long-running tasks targeting host A
+        // (per-host limit 1, so 9 queue on A's semaphore) plus 1 task
+        // targeting host B must start B within 1s. With global-first acquire
+        // the 9 queued A tasks would each hold a global permit, starving B.
+        let hosts = vec!["a".into(), "b".into()];
+        let limiter = Arc::new(ConcurrencyLimiter::new(10, 1, &hosts));
+
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let l = limiter.clone();
+            handles.push(tokio::spawn(async move {
+                let _p = l.acquire("a").await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
+            }));
+        }
+
+        // Let the A tasks grab their permits and queue on host A's semaphore.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let l = limiter.clone();
+        let b_result = tokio::time::timeout(Duration::from_secs(1), async move {
+            let _p = l.acquire("b").await;
+        })
+        .await;
+
+        for h in handles {
+            h.abort();
+        }
+
+        assert!(
+            b_result.is_ok(),
+            "host B's task should start within 1s of spawn; head-of-line blocking detected",
+        );
     }
 }
