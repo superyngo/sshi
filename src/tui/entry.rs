@@ -7,9 +7,7 @@ use std::path::Path;
 use std::process;
 
 use anyhow::Result;
-use clap::CommandFactory;
 
-use crate::cli::Cli;
 use crate::commands::Context;
 
 use super::app::App;
@@ -23,9 +21,7 @@ use super::terminal::{install_panic_hook, TerminalGuard};
 ///   2 — non-TTY environment, help printed
 pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Result<()> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        let mut cmd = Cli::command();
-        let _ = cmd.print_help();
-        println!();
+        crate::cli::print_help_with_newline();
         process::exit(2);
     }
 
@@ -34,10 +30,9 @@ pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Resul
         let term = std::env::var("TERM").ok();
         let term_unsuitable = matches!(term.as_deref(), None | Some("") | Some("dumb"));
         if term_unsuitable {
-            eprintln!("Terminal does not support TUI (TERM=dumb or unset).");
-            let mut cmd = Cli::command();
-            let _ = cmd.print_help();
-            println!();
+            crate::cli::print_tui_unavailable_help(
+                "Terminal does not support TUI (TERM=dumb or unset).",
+            );
             process::exit(2);
         }
     }

@@ -56,8 +56,8 @@ use crate::host::auth::{SshAuthRequest, SshAuthSender};
 use operate_tab::truncate;
 
 /// Persist `config` to `path` if `dirty` is set; clear `dirty` on success.
-/// On failure prints to stderr — the caller is presumed to be the shutdown
-/// path where no UI is available to display errors.
+/// On failure emits a `tracing::error!` — the caller is presumed to be the
+/// shutdown path where no UI is available to display errors.
 fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std::path::Path>) {
     if !*dirty {
         return;
@@ -67,7 +67,7 @@ fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std
             *dirty = false;
         }
         Err(e) => {
-            eprintln!("sshi: failed to save config on quit: {e}");
+            tracing::error!(error = %e, "failed to save config on quit");
         }
     }
 }

@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(
@@ -379,4 +379,24 @@ pub enum ActionFilter {
     Exec,
     Check,
     Cp,
+}
+
+/// Print clap help to stdout followed by a trailing newline.
+///
+/// clap's `Command::print_help` omits the final newline; the `--help`
+/// convention is to end with a blank line. Lives outside `src/tui/` to
+/// keep the TUI module free of direct stdio writes (AGENTS.md §"TUI
+/// contributor rules"). Used by the TUI's pre-launch fallback paths.
+pub fn print_help_with_newline() {
+    let mut cmd = Cli::command();
+    let _ = cmd.print_help();
+    println!();
+}
+
+/// Print a "TUI unavailable" diagnostic to stderr, then clap help with a
+/// trailing newline to stdout. The caller is expected to `process::exit(2)`
+/// immediately after — same exit code as clap's non-TTY convention.
+pub fn print_tui_unavailable_help(reason: &str) {
+    eprintln!("{reason}");
+    print_help_with_newline();
 }
