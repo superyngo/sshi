@@ -3,11 +3,11 @@
 ## Build, Test, and Quality Commands
 
 ```bash
-# Build (two binaries: sshi and sshi-tui)
-cargo build                                       # sshi only (headless; default)
-cargo build --bin sshi-tui --features tui        # TUI binary
-cargo build --release --bin sshi                 # Release headless
-cargo build --release --bin sshi-tui --features tui  # Release TUI
+# Build (single sshi binary; TUI enabled via --features tui)
+cargo build                                       # headless (default)
+cargo build --features tui                        # with TUI
+cargo build --release                             # Release headless
+cargo build --release --features tui              # Release with TUI
 
 # Check without building (faster)
 cargo check
@@ -45,9 +45,8 @@ cargo fmt --check
 ## Code Style Guidelines
 
 ### Error Handling
-- Use `anyhow::Result<T>` throughout command handlers
-- Use `thiserror` for typed errors in library modules
-- Propagate with `?` and add context: `.context("description")`
+- Use `anyhow::Result<T>` throughout command handlers and library modules
+- Propagate with `?` and add context: `.context("description")?`
 - Example: `fs::read_to_string(path).context("Failed to read config")?`
 
 ### Imports
@@ -95,9 +94,19 @@ cargo fmt --check
 - Test builds with `--no-default-features` for TUI-less configs
 
 ### SSH Transport
-- NEVER use embedded SSH libraries - shell out to system ssh/scp
-- This ensures `~/.ssh/config` compatibility (ProxyJump, ssh-agent, etc.)
-- Use `tokio::process::Command` to spawn ssh/scp processes
+- Use `russh` (with `russh-keys` and `russh-sftp`) as the SSH transport; see
+  `docs/adr/0002-russh-migration.md` for the decision, trade-offs, and
+  follow-ups.
+- `~/.ssh/config` is parsed with `ssh2-config` (not via `ssh -G`) in
+  `host::session_pool::load_ssh_config`. Niche directives (`Match exec`,
+  `CanonicalizeHostname`, out-of-tree `Include`) may not be honoured — see
+  the evaluation docs referenced in the ADR.
+- `ssh-keyscan`, `ssh-keygen`, and `ssh-copy-id` remain subprocesses in
+  `commands/init.rs` (key-management workflows outside russh's scope).
+- Live sessions are owned by `host::session_pool::RusshSessionPool`; file
+  transfer goes through `host::sftp::SftpSession`; the auth chain
+  (public-key + passphrase cache + password fallback, with a TUI popup
+  bridge) lives in `host::auth`.
 
 ### Database
 - Use SQLite with `rusqlite` and `bundled` feature
@@ -138,10 +147,10 @@ cargo fmt --check
 sshi is a CLI tool managing remote hosts over SSH. Single binary, no embedded SSH.
 
 **Module Structure:**
-- `cli.rs` - Clap CLI definitions
-- `commands/` - One file per subcommand (init, check, checkout, sync, run, exec, log, config)
-- `config/` - Config schema, file I/O, SSH config parser
-- `host/` - SSH execution, shell detection, host/group filtering
+- `cli.rs` - Clap CLI definitions; pre-TUI fallback help printers
+- `commands/` - Subcommand handlers (one file each: init, check, run, exec, cp, log, config, checkout, list) plus `commands/sync/` (collect, decide, distribute, report, types submodules) and shared `commands/report.rs` (CommandReport type, ProgressSink)
+- `config/` - Config schema, file I/O, `ssh2-config` parser
+- `host/` - russh SSH transport: `session_pool.rs` (connection pool + known_hosts check), `sftp.rs` (file transfer), `auth.rs` (auth chain + `SecretString`), `concurrency.rs` (dual-level limiter), `pool.rs` (`SshPool` wrapper), `shell.rs` (shell-type detection), `filter.rs`
 - `metrics/` - System metrics collection, parsing, shell-specific probes
 - `state/` - SQLite DB, migrations, retention cleanup
 - `output/` - Terminal printer, execution summary
@@ -153,4 +162,4 @@ sshi is a CLI tool managing remote hosts over SSH. Single binary, no embedded SS
 4. All operations logged to `operation_log` table
 
 **Sync Strategy:**
-3-stage: (1) collect metadata (mtime + BLAKE3), (2) decide source (newest/skip), (3) distribute via local relay
+3-stage: (1) collect metadata (mtime + SHA-256), (2) decide source (newest/skip), (3) distribute via local relay

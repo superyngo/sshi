@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **docs(agents):** updated `AGENTS.md` to match the actual codebase. Build block now reflects the single `sshi` binary (TUI via `--features tui`, no `--bin sshi-tui`). "SSH Transport" section now describes the russh-based transport and references `docs/adr/0002-russh-migration.md`. "Module Structure" lists `host/{session_pool,sftp,auth,concurrency,pool}.rs`, `commands/sync/`, and `commands/report.rs`. Dropped the `thiserror` mandate (dep not in `Cargo.toml`; `anyhow::Result` is the actual convention). Sync strategy corrected from BLAKE3 to SHA-256. `host/pool.rs` module doc-comment fixed (it wraps `RusshSessionPool`, not a legacy subprocess pool)
 - **chore(build):** added `[profile.release]` overrides (`lto = "thin"`, `codegen-units = 1`, `strip = "symbols"`) for ~50% smaller release binaries
 
 ### Fixed

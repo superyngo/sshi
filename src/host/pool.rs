@@ -1,4 +1,7 @@
-//! Legacy SSH subprocess pool (shells out to system ssh/scp).
+//! Shared SSH connection pool: wraps `RusshSessionPool` (russh-based) with
+//! `ConcurrencyLimiter` and `SyncProgress`. Used by every SSH-using
+//! subcommand for consistent connection reuse, concurrency control, and
+//! progress reporting.
 
 use std::sync::Arc;
 
