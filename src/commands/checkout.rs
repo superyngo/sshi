@@ -155,31 +155,33 @@ pub(crate) fn fetch_latest_snapshots(
         .map(|h| h as &dyn rusqlite::types::ToSql)
         .collect();
 
-    let mut last_online_map: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
-    {
-        let mut stmt = ctx.db.prepare(&last_seen_sql)?;
-        let mut rows = stmt.query(params.as_slice())?;
-        while let Some(row) = rows.next()? {
-            let host: String = row.get(0)?;
-            let ts: i64 = row.get(1)?;
-            last_online_map.insert(host, ts);
-        }
-    }
+    let last_online_map: std::collections::HashMap<String, i64> =
+        ctx.db.with_conn(|conn| -> Result<_> {
+            let mut stmt = conn.prepare(&last_seen_sql)?;
+            let mut rows = stmt.query(params.as_slice())?;
+            let mut map = std::collections::HashMap::new();
+            while let Some(row) = rows.next()? {
+                let host: String = row.get(0)?;
+                let ts: i64 = row.get(1)?;
+                map.insert(host, ts);
+            }
+            Ok(map)
+        })?;
 
-    let mut snapshot_rows: std::collections::HashMap<String, (i64, bool, String)> =
-        std::collections::HashMap::new();
-    {
-        let mut stmt = ctx.db.prepare(&snapshot_sql)?;
-        let mut rows = stmt.query(params.as_slice())?;
-        while let Some(row) = rows.next()? {
-            let host: String = row.get(0)?;
-            let ts: i64 = row.get(1)?;
-            let online: bool = row.get(2)?;
-            let json_str: String = row.get(3)?;
-            snapshot_rows.entry(host).or_insert((ts, online, json_str));
-        }
-    }
+    let snapshot_rows: std::collections::HashMap<String, (i64, bool, String)> =
+        ctx.db.with_conn(|conn| -> Result<_> {
+            let mut stmt = conn.prepare(&snapshot_sql)?;
+            let mut rows = stmt.query(params.as_slice())?;
+            let mut map = std::collections::HashMap::new();
+            while let Some(row) = rows.next()? {
+                let host: String = row.get(0)?;
+                let ts: i64 = row.get(1)?;
+                let online: bool = row.get(2)?;
+                let json_str: String = row.get(3)?;
+                map.entry(host).or_insert((ts, online, json_str));
+            }
+            Ok(map)
+        })?;
 
     let mut snapshots = Vec::new();
     for host in host_names {
@@ -249,35 +251,38 @@ pub(crate) fn fetch_combined_snapshots(
         .map(|h| h as &dyn rusqlite::types::ToSql)
         .collect();
 
-    let mut last_online_map: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
-    {
-        let mut stmt = ctx.db.prepare(&last_seen_sql)?;
-        let mut rows = stmt.query(params.as_slice())?;
-        while let Some(row) = rows.next()? {
-            let host: String = row.get(0)?;
-            let ts: i64 = row.get(1)?;
-            last_online_map.insert(host, ts);
-        }
-    }
-
-    let mut per_host: std::collections::HashMap<String, Vec<(i64, bool, serde_json::Value)>> =
-        std::collections::HashMap::new();
-    {
-        let mut stmt = ctx.db.prepare(&snapshot_sql)?;
-        let mut all_params: Vec<&dyn rusqlite::types::ToSql> = params.clone();
-        all_params.push(&LOOKBACK);
-        let mut rows = stmt.query(all_params.as_slice())?;
-        while let Some(row) = rows.next()? {
-            let host: String = row.get(0)?;
-            let ts: i64 = row.get(1)?;
-            let online: bool = row.get(2)?;
-            let json_str: String = row.get(3)?;
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                per_host.entry(host).or_default().push((ts, online, v));
+    let last_online_map: std::collections::HashMap<String, i64> =
+        ctx.db.with_conn(|conn| -> Result<_> {
+            let mut stmt = conn.prepare(&last_seen_sql)?;
+            let mut rows = stmt.query(params.as_slice())?;
+            let mut map = std::collections::HashMap::new();
+            while let Some(row) = rows.next()? {
+                let host: String = row.get(0)?;
+                let ts: i64 = row.get(1)?;
+                map.insert(host, ts);
             }
-        }
-    }
+            Ok(map)
+        })?;
+
+    let per_host: std::collections::HashMap<String, Vec<(i64, bool, serde_json::Value)>> =
+        ctx.db.with_conn(|conn| -> Result<_> {
+            let mut stmt = conn.prepare(&snapshot_sql)?;
+            let mut all_params: Vec<&dyn rusqlite::types::ToSql> = params.clone();
+            all_params.push(&LOOKBACK);
+            let mut rows = stmt.query(all_params.as_slice())?;
+            let mut map: std::collections::HashMap<String, Vec<(i64, bool, serde_json::Value)>> =
+                std::collections::HashMap::new();
+            while let Some(row) = rows.next()? {
+                let host: String = row.get(0)?;
+                let ts: i64 = row.get(1)?;
+                let online: bool = row.get(2)?;
+                let json_str: String = row.get(3)?;
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    map.entry(host).or_default().push((ts, online, v));
+                }
+            }
+            Ok(map)
+        })?;
 
     let mut snapshots = Vec::new();
     for host in host_names {

@@ -143,11 +143,11 @@ mod tests {
                 proxy_jump: None,
             });
         }
-        let db = crate::state::db::open(None).unwrap();
+        let conn = crate::state::db::open(None).unwrap();
         Context {
             config,
             config_path: None,
-            db,
+            db: crate::state::db::DbHandle::new(conn),
             timeout: 30,
             mode: TargetMode::All,
             serial: false,

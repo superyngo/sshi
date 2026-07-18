@@ -140,11 +140,17 @@ pub async fn exec_core(
                 ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, stdout) \
                      VALUES (?1, 'exec', ?2, ?3, 'ok', ?4, ?5)",
-                    rusqlite::params![
-                        now, host.name, script, elapsed.as_millis() as i64,
-                        exec_stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string()),
+                    vec![
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(script.to_string()),
+                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
+                        crate::state::db::boxed_param(
+                            exec_stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string())
+                        ),
                     ],
-                )?;
+                )
+                .await?;
                 host_results.push(ExecHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Online,
@@ -162,8 +168,15 @@ pub async fn exec_core(
                 ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
                      VALUES (?1, 'exec', ?2, ?3, 'error', ?4, ?5)",
-                    rusqlite::params![now, host.name, script, elapsed.as_millis() as i64, e.to_string()],
-                )?;
+                    vec![
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(script.to_string()),
+                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
+                        crate::state::db::boxed_param(e.to_string()),
+                    ],
+                )
+                .await?;
                 host_results.push(ExecHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Error,

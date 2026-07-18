@@ -13,12 +13,12 @@ pub mod run;
 pub mod sync;
 
 use anyhow::{bail, Result};
-use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::cli::TargetArgs;
 use crate::config::schema::{AppConfig, CheckEntry, HostEntry, SyncEntry};
+use crate::state::db::DbHandle;
 
 /// Target mode derived from CLI flags.
 #[derive(Debug, Clone, PartialEq)]
@@ -37,7 +37,7 @@ pub enum TargetMode {
 pub struct Context {
     pub config: AppConfig,
     pub config_path: Option<PathBuf>,
-    pub db: Connection,
+    pub db: DbHandle,
     pub timeout: u64,
     pub mode: TargetMode,
     pub serial: bool,
@@ -52,7 +52,8 @@ impl Context {
         config_path: Option<&Path>,
     ) -> Result<Self> {
         let config = crate::config::app::load(config_path)?.unwrap_or_default();
-        let db = crate::state::db::open(config.settings.state_dir.as_deref())?;
+        let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
+        let db = DbHandle::new(conn);
         let timeout = target.timeout.unwrap_or(config.settings.default_timeout);
         let mode = resolve_target_mode(target, &config)?;
 
@@ -84,7 +85,8 @@ impl Context {
         verbose: bool,
         skip: Vec<String>,
     ) -> Result<Self> {
-        let db = crate::state::db::open(config.settings.state_dir.as_deref())?;
+        let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
+        let db = DbHandle::new(conn);
         Ok(Self {
             config,
             config_path,
@@ -104,7 +106,8 @@ impl Context {
         timeout_override: Option<u64>,
     ) -> Result<Self> {
         let config = crate::config::app::load(config_path)?.unwrap_or_default();
-        let db = crate::state::db::open(config.settings.state_dir.as_deref())?;
+        let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
+        let db = DbHandle::new(conn);
         let timeout = timeout_override.unwrap_or(config.settings.default_timeout);
 
         Ok(Self {

@@ -113,16 +113,23 @@ pub async fn run_core(
                 ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note, stdout) \
                      VALUES (?1, 'run', ?2, ?3, ?4, ?5, ?6, ?7)",
-                    rusqlite::params![
-                        now,
-                        host.name,
-                        command,
-                        if matches!(status, HostStatus::Online) { "ok" } else { "error" },
-                        elapsed.as_millis() as i64,
-                        if matches!(status, HostStatus::Error) { Some(exec_output.stderr.trim().to_string()) } else { None::<String> },
-                        exec_output.stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string()),
+                    vec![
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(command.to_string()),
+                        crate::state::db::boxed_param(
+                            if matches!(status, HostStatus::Online) { "ok".to_string() } else { "error".to_string() }
+                        ),
+                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
+                        crate::state::db::boxed_param(
+                            if matches!(status, HostStatus::Error) { Some(exec_output.stderr.trim().to_string()) } else { None::<String> }
+                        ),
+                        crate::state::db::boxed_param(
+                            exec_output.stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string())
+                        ),
                     ],
-                )?;
+                )
+                .await?;
 
                 host_results.push(RunHostResult {
                     host: host.name.clone(),
@@ -141,12 +148,15 @@ pub async fn run_core(
                 ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
                      VALUES (?1, 'run', ?2, ?3, 'error', ?4, ?5)",
-                    rusqlite::params![
-                        now, host.name, command,
-                        elapsed.as_millis() as i64,
-                        e.to_string(),
+                    vec![
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(command.to_string()),
+                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
+                        crate::state::db::boxed_param(e.to_string()),
                     ],
-                )?;
+                )
+                .await?;
                 host_results.push(RunHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Error,

@@ -151,14 +151,15 @@ pub async fn cp_core(
         if let Err(e) = ctx.db.execute(
             "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
              VALUES (?1, 'cp', ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                now,
-                host.name,
-                format!("cp {} -> {}", local, remote_base),
-                status_str,
-                ms as i64
+            vec![
+                crate::state::db::boxed_param(now),
+                crate::state::db::boxed_param(host.name.clone()),
+                crate::state::db::boxed_param(format!("cp {} -> {}", local, remote_base)),
+                crate::state::db::boxed_param(status_str),
+                crate::state::db::boxed_param(ms as i64),
             ],
-        ) {
+        )
+        .await {
             tracing::warn!(error = %e, "failed to record operation_log entry");
         }
 

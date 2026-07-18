@@ -562,11 +562,17 @@ async fn sync_inner(
                                     "INSERT INTO sync_state (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
                                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                                      ON CONFLICT(sync_group, host, path) DO UPDATE SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
-                                    rusqlite::params![
-                                        label, target, decision.path,
-                                        0i64, 0i64, "", now
+                                    vec![
+                                        crate::state::db::boxed_param(label.clone()),
+                                        crate::state::db::boxed_param(target.clone()),
+                                        crate::state::db::boxed_param(decision.path.clone()),
+                                        crate::state::db::boxed_param(0i64),
+                                        crate::state::db::boxed_param(0i64),
+                                        crate::state::db::boxed_param(""),
+                                        crate::state::db::boxed_param(now),
                                     ],
-                                ) {
+                                )
+                                .await {
                                     tracing::warn!(error = %e, "failed to record operation_log entry");
                                 }
                             }
@@ -574,12 +580,13 @@ async fn sync_inner(
                             if let Err(e) = ctx.db.execute(
                                 "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
                                  VALUES (?1, 'sync', ?2, ?3, 'ok', 0)",
-                                rusqlite::params![
-                                    now,
-                                    decision.source_host,
-                                    format!("sync {}", decision.path)
+                                vec![
+                                    crate::state::db::boxed_param(now),
+                                    crate::state::db::boxed_param(decision.source_host.clone()),
+                                    crate::state::db::boxed_param(format!("sync {}", decision.path)),
                                 ],
-                            ) {
+                            )
+                            .await {
                                 tracing::warn!(error = %e, "failed to record operation_log entry");
                             }
                         }
@@ -905,11 +912,17 @@ async fn sync_path_across(
                             "INSERT INTO sync_state (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
                              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                              ON CONFLICT(sync_group, host, path) DO UPDATE SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
-                            rusqlite::params![
-                                group_name, target, decision.path,
-                                0i64, 0i64, "", now
+                            vec![
+                                crate::state::db::boxed_param(group_name.to_string()),
+                                crate::state::db::boxed_param(target.clone()),
+                                crate::state::db::boxed_param(decision.path.clone()),
+                                crate::state::db::boxed_param(0i64),
+                                crate::state::db::boxed_param(0i64),
+                                crate::state::db::boxed_param(""),
+                                crate::state::db::boxed_param(now),
                             ],
-                        ) {
+                        )
+                        .await {
                             tracing::warn!(error = %e, "failed to record operation_log entry");
                         }
                     }
@@ -917,8 +930,13 @@ async fn sync_path_across(
                     if let Err(e) = ctx.db.execute(
                         "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
                          VALUES (?1, 'sync', ?2, ?3, 'ok', 0)",
-                        rusqlite::params![now, decision.source_host, format!("sync {}", decision.path)],
-                    ) {
+                        vec![
+                            crate::state::db::boxed_param(now),
+                            crate::state::db::boxed_param(decision.source_host.clone()),
+                            crate::state::db::boxed_param(format!("sync {}", decision.path)),
+                        ],
+                    )
+                    .await {
                         tracing::warn!(error = %e, "failed to record operation_log entry");
                     }
                 }

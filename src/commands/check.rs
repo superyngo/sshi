@@ -74,13 +74,22 @@ pub async fn check_core(
     for (name, err) in pool.failed_hosts() {
         ctx.db.execute(
             "INSERT INTO check_snapshots (host, collected_at, online, raw_json) VALUES (?1, ?2, 0, '{}')",
-            rusqlite::params![name, now_ts],
-        )?;
-        ctx.db.execute(
-            "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
+            vec![
+                crate::state::db::boxed_param(name.clone()),
+                crate::state::db::boxed_param(now_ts),
+            ],
+        )
+        .await?;
+        ctx.db
+            .execute(
+                "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
              ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
-            rusqlite::params![name, now_ts],
-        )?;
+                vec![
+                    crate::state::db::boxed_param(name.clone()),
+                    crate::state::db::boxed_param(now_ts),
+                ],
+            )
+            .await?;
         let detail = format!("unreachable — {}", err);
         if let Some(p) = progress {
             p.host_completed(&name, HostStatus::Unreachable, &detail, 0);
@@ -178,20 +187,34 @@ pub async fn check_core(
 
                 ctx.db.execute(
                     "INSERT INTO check_snapshots (host, collected_at, online, raw_json) VALUES (?1, ?2, ?3, ?4)",
-                    rusqlite::params![host.name, now, online_int, json_str],
-                )?;
+                    vec![
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(online_int),
+                        crate::state::db::boxed_param(json_str),
+                    ],
+                )
+                .await?;
                 if online_int == 1 {
                     ctx.db.execute(
                         "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, ?2) \
                          ON CONFLICT(host) DO UPDATE SET last_seen = ?2, last_online = ?2",
-                        rusqlite::params![host.name, now],
-                    )?;
+                        vec![
+                            crate::state::db::boxed_param(host.name.clone()),
+                            crate::state::db::boxed_param(now),
+                        ],
+                    )
+                    .await?;
                 } else {
                     ctx.db.execute(
                         "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
                          ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
-                        rusqlite::params![host.name, now],
-                    )?;
+                        vec![
+                            crate::state::db::boxed_param(host.name.clone()),
+                            crate::state::db::boxed_param(now),
+                        ],
+                    )
+                    .await?;
                 }
 
                 if let Some(p) = progress {
@@ -206,8 +229,14 @@ pub async fn check_core(
                 if let Err(e) = ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
                      VALUES (?1, 'check', ?2, 'metrics_batch', ?3, ?4)",
-                    rusqlite::params![now, host.name, status_str, ms as i64],
-                ) {
+                    vec![
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(status_str),
+                        crate::state::db::boxed_param(ms as i64),
+                    ],
+                )
+                .await {
                     tracing::warn!(error = %e, "failed to record operation_log entry");
                 }
 
@@ -226,13 +255,21 @@ pub async fn check_core(
             Err(e) => {
                 ctx.db.execute(
                     "INSERT INTO check_snapshots (host, collected_at, online, raw_json) VALUES (?1, ?2, 0, '{}')",
-                    rusqlite::params![host.name, now],
-                )?;
+                    vec![
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(now),
+                    ],
+                )
+                .await?;
                 ctx.db.execute(
                     "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
                      ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
-                    rusqlite::params![host.name, now],
-                )?;
+                    vec![
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(now),
+                    ],
+                )
+                .await?;
                 let detail = e.to_string();
                 if let Some(p) = progress {
                     p.host_completed(&host.name, HostStatus::Error, &detail, ms);
@@ -240,8 +277,14 @@ pub async fn check_core(
                 if let Err(e) = ctx.db.execute(
                     "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
                      VALUES (?1, 'check', ?2, 'metrics_batch', 'error', ?3, ?4)",
-                    rusqlite::params![now, host.name, ms as i64, &detail],
-                ) {
+                    vec![
+                        crate::state::db::boxed_param(now),
+                        crate::state::db::boxed_param(host.name.clone()),
+                        crate::state::db::boxed_param(ms as i64),
+                        crate::state::db::boxed_param(detail.clone()),
+                    ],
+                )
+                .await {
                     tracing::warn!(error = %e, "failed to record operation_log entry");
                 }
                 results.push(CheckHostResult {
@@ -260,7 +303,7 @@ pub async fn check_core(
     }
 
     pool.shutdown().await;
-    retention::cleanup(&ctx.db, ctx.config.settings.data_retention_days)?;
+    retention::cleanup(&ctx.db, ctx.config.settings.data_retention_days).await?;
 
     Ok(CommandReport::Check(CheckReport {
         executed_at,

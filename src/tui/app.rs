@@ -1631,7 +1631,7 @@ impl App {
                 let tmp_ctx = Context {
                     config: self.config.clone(),
                     config_path: self.config_path.clone(),
-                    db: conn,
+                    db: crate::state::db::DbHandle::new(conn),
                     timeout: self.last_timeout_secs,
                     mode: TargetMode::All,
                     serial: false,
@@ -1909,7 +1909,7 @@ impl App {
                         let ctx = Context {
                             config: self.config.clone(),
                             config_path: self.config_path.clone(),
-                            db: conn,
+                            db: crate::state::db::DbHandle::new(conn),
                             timeout: self.last_timeout_secs,
                             mode: TargetMode::All,
                             serial: false,
@@ -1940,7 +1940,7 @@ impl App {
                     let ctx = Context {
                         config: self.config.clone(),
                         config_path: self.config_path.clone(),
-                        db: conn,
+                        db: crate::state::db::DbHandle::new(conn),
                         timeout: self.last_timeout_secs,
                         mode: build_target_mode(&self.target_filter, &self.config),
                         serial: false,
@@ -1958,7 +1958,7 @@ impl App {
                     let ctx = Context {
                         config: self.config.clone(),
                         config_path: self.config_path.clone(),
-                        db: conn,
+                        db: crate::state::db::DbHandle::new(conn),
                         timeout: self.last_timeout_secs,
                         mode: TargetMode::All,
                         serial: false,

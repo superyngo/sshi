@@ -62,23 +62,26 @@ pub fn log_core(
     let limit: i64 = if last == 0 { -1 } else { last as i64 };
     query.push_str(&format!(" LIMIT {}", limit));
 
-    let mut stmt = ctx.db.prepare(&query)?;
-    let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-        bind_values.iter().map(|b| b.as_ref()).collect();
-    let rows = stmt.query_map(params_refs.as_slice(), |row| {
-        Ok(LogRow {
-            ts: row.get(0)?,
-            command: row.get(1)?,
-            host: row.get(2)?,
-            action: row.get(3)?,
-            status: row.get(4)?,
-            duration_ms: row.get(5)?,
-            note: row.get(6)?,
-            stdout: row.get(7)?,
-        })
+    let rows: Vec<LogRow> = ctx.db.with_conn(|conn| -> Result<_> {
+        let mut stmt = conn.prepare(&query)?;
+        let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+            bind_values.iter().map(|b| b.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok(LogRow {
+                ts: row.get(0)?,
+                command: row.get(1)?,
+                host: row.get(2)?,
+                action: row.get(3)?,
+                status: row.get(4)?,
+                duration_ms: row.get(5)?,
+                note: row.get(6)?,
+                stdout: row.get(7)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
     })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(Into::into)
+    Ok(rows)
 }
 
 pub async fn run(
@@ -227,12 +230,12 @@ mod tests {
 
     #[test]
     fn log_core_empty_db_returns_no_rows() {
-        let db = rusqlite::Connection::open_in_memory().unwrap();
-        crate::state::db::migrate_for_test(&db);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn);
         let ctx = crate::commands::Context {
             config: crate::config::schema::AppConfig::default(),
             config_path: None,
-            db,
+            db: crate::state::db::DbHandle::new(conn),
             timeout: 30,
             mode: crate::commands::TargetMode::All,
             serial: false,
@@ -245,10 +248,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_run_with_output() {
-        let db = rusqlite::Connection::open_in_memory().unwrap();
-        crate::state::db::migrate_for_test(&db);
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn);
 
-        db.execute(
+        conn.execute(
             "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![1717000000i64, "check", "host-a", "metrics_batch", "ok", 1500i64, "all good"],
@@ -257,7 +260,7 @@ mod tests {
         let ctx = crate::commands::Context {
             config: crate::config::schema::AppConfig::default(),
             config_path: None,
-            db,
+            db: crate::state::db::DbHandle::new(conn),
             timeout: 30,
             mode: crate::commands::TargetMode::All,
             serial: false,

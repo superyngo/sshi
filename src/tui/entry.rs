@@ -39,7 +39,8 @@ pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Resul
 
     let _ = verbose; // tracing already initialised; verbose only affects level filter
     let config = crate::config::app::load(config_path)?.unwrap_or_default();
-    let db = crate::state::db::open(config.settings.state_dir.as_deref())?;
+    let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
+    let db = crate::state::db::DbHandle::new(conn);
     let timeout = config.settings.default_timeout;
     let ctx = Context {
         config,
