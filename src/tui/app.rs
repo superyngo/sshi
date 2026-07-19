@@ -10,6 +10,7 @@
 
 use std::io::{self, Write as _};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -107,7 +108,7 @@ pub struct App {
     pub checkout_snapshots: Vec<HostSnapshot>,
     checkout_all_snapshots: Vec<HostSnapshot>,
     pub checkout_columns: DisplayColumns,
-    pub config: AppConfig,
+    pub config: Arc<AppConfig>,
     pub config_path: Option<PathBuf>,
     config_tab: ConfigTabState,
     needs_editor_open: bool,
@@ -1182,7 +1183,7 @@ impl App {
         let out_for_op = self.out_path();
         let verbose = false;
         let names = comma_names(&self.operate.check_name.value);
-        let cfg = self.config.clone();
+        let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
@@ -1285,7 +1286,7 @@ impl App {
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
-        let cfg = self.config.clone();
+        let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
@@ -1376,7 +1377,7 @@ impl App {
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
-        let cfg = self.config.clone();
+        let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
@@ -1476,7 +1477,7 @@ impl App {
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
-        let cfg = self.config.clone();
+        let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
@@ -1562,7 +1563,7 @@ impl App {
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
-        let cfg = self.config.clone();
+        let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
@@ -1646,7 +1647,7 @@ impl App {
                     self.config.host.iter().map(|h| h.name.as_str()).collect();
                 // Build a temporary minimal Context for fetch_latest_snapshots.
                 let tmp_ctx = Context {
-                    config: self.config.clone(),
+                    config: Arc::clone(&self.config),
                     config_path: self.config_path.clone(),
                     db: crate::state::db::DbHandle::new(conn),
                     timeout: self.last_timeout_secs,
@@ -1925,7 +1926,7 @@ impl App {
                         crate::state::db::open(self.config.settings.state_dir.as_deref())
                     {
                         let ctx = Context {
-                            config: self.config.clone(),
+                            config: Arc::clone(&self.config),
                             config_path: self.config_path.clone(),
                             db: crate::state::db::DbHandle::new(conn),
                             timeout: self.last_timeout_secs,
@@ -1957,7 +1958,7 @@ impl App {
                 {
                     // List honors the target filter (the `f` popup applies to it).
                     let ctx = Context {
-                        config: self.config.clone(),
+                        config: Arc::clone(&self.config),
                         config_path: self.config_path.clone(),
                         db: crate::state::db::DbHandle::new(conn),
                         timeout: self.last_timeout_secs,
@@ -1976,7 +1977,7 @@ impl App {
                 if let Ok(conn) = crate::state::db::open(self.config.settings.state_dir.as_deref())
                 {
                     let ctx = Context {
-                        config: self.config.clone(),
+                        config: Arc::clone(&self.config),
                         config_path: self.config_path.clone(),
                         db: crate::state::db::DbHandle::new(conn),
                         timeout: self.last_timeout_secs,
@@ -2460,7 +2461,9 @@ impl App {
 
         // §popup-guard: while any config popup is open, suspend all global shortcuts.
         if self.active_tab == TabId::Config && self.config_tab.is_any_popup_open() {
-            let handled = self.config_tab.handle_key(key, &mut self.config);
+            let handled = self
+                .config_tab
+                .handle_key(key, Arc::make_mut(&mut self.config));
             self.after_config_key();
             return Ok(handled);
         }
@@ -2816,7 +2819,9 @@ impl App {
             }
             // All other Config tab keys routed to ConfigTabState (including 'e'/Enter for inline edit).
             _ if self.active_tab == TabId::Config => {
-                let handled = self.config_tab.handle_key(key, &mut self.config);
+                let handled = self
+                    .config_tab
+                    .handle_key(key, Arc::make_mut(&mut self.config));
                 self.after_config_key();
                 Ok(handled)
             }
@@ -3357,7 +3362,7 @@ impl App {
     fn after_config_key(&mut self) {
         if let Some((kind, index)) = self.config_tab.pending_delete.take() {
             self.config_tab
-                .execute_delete(&mut self.config, kind, index);
+                .execute_delete(Arc::make_mut(&mut self.config), kind, index);
         }
         // Autosave: every committed mutation marks the config dirty + pending,
         // which we flush to disk here (no explicit save key).
@@ -3731,7 +3736,7 @@ impl App {
         if should_reload {
             match crate::config::app::load(Some(&path)) {
                 Ok(Some(new_config)) => {
-                    self.config = new_config;
+                    self.config = Arc::new(new_config);
                     self.config_tab.reload(&self.config, Some(&path));
                     self.config_tab.reload_banner_until =
                         Some(Instant::now() + Duration::from_secs(2));

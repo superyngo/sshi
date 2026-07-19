@@ -145,7 +145,7 @@ mod tests {
         }
         let conn = crate::state::db::open(None).unwrap();
         Context {
-            config,
+            config: std::sync::Arc::new(config),
             config_path: None,
             db: crate::state::db::DbHandle::new(conn),
             timeout: 30,

@@ -572,7 +572,7 @@ mod tests {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::state::db::migrate_for_test(&conn);
         Context {
-            config: crate::config::schema::AppConfig::default(),
+            config: std::sync::Arc::new(crate::config::schema::AppConfig::default()),
             config_path: None,
             db: crate::state::db::DbHandle::new(conn),
             timeout: 5,

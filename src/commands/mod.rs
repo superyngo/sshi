@@ -37,7 +37,7 @@ pub enum TargetMode {
 
 /// Shared context available to all commands.
 pub struct Context {
-    pub config: AppConfig,
+    pub config: Arc<AppConfig>,
     pub config_path: Option<PathBuf>,
     pub db: DbHandle,
     pub timeout: u64,
@@ -63,7 +63,7 @@ impl Context {
         let mode = resolve_target_mode(target, &config)?;
 
         Ok(Self {
-            config,
+            config: Arc::new(config),
             config_path: config_path.map(|p| p.to_path_buf()),
             db,
             timeout,
@@ -84,7 +84,7 @@ impl Context {
     #[cfg(feature = "tui")]
     #[allow(clippy::too_many_arguments)]
     pub fn from_tui_parts(
-        config: AppConfig,
+        config: Arc<AppConfig>,
         config_path: Option<PathBuf>,
         mode: TargetMode,
         serial: bool,
@@ -120,7 +120,7 @@ impl Context {
         let timeout = timeout_override.unwrap_or(config.settings.default_timeout);
 
         Ok(Self {
-            config,
+            config: Arc::new(config),
             config_path: config_path.map(|p| p.to_path_buf()),
             db,
             timeout,
@@ -424,5 +424,26 @@ mod tests {
         // skip-all yields empty
         let kept = filter_skipped(all, &["h1".into(), "h2".into(), "h3".into()]);
         assert!(kept.is_empty());
+    }
+
+    #[cfg(feature = "tui")]
+    #[test]
+    fn from_tui_parts_shares_appconfig_arc_with_caller() {
+        let cfg = Arc::new(crate::config::schema::AppConfig::default());
+        let ctx = Context::from_tui_parts(
+            Arc::clone(&cfg),
+            None,
+            TargetMode::All,
+            false,
+            30,
+            false,
+            Vec::new(),
+            None,
+        )
+        .unwrap();
+        // The Context's `config` field is the SAME Arc — `from_tui_parts` did
+        // not deep-clone the AppConfig. This is the perf intent behind G2.
+        assert_eq!(Arc::strong_count(&cfg), 2);
+        assert!(std::ptr::eq(Arc::as_ptr(&ctx.config), Arc::as_ptr(&cfg)));
     }
 }

@@ -43,7 +43,7 @@ pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Resul
     let db = crate::state::db::DbHandle::new(conn);
     let timeout = config.settings.default_timeout;
     let ctx = Context {
-        config,
+        config: std::sync::Arc::new(config),
         config_path: config_path.map(|p| p.to_path_buf()),
         db,
         timeout,
