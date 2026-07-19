@@ -3,6 +3,10 @@ name = "sshi"
 version = "1.6.1"
 edition = "2021"
 description = "SSH-config-based cross-platform remote management tool"
+homepage = "https://github.com/superyngo/sshi"
+repository = "https://github.com/superyngo/sshi"
+license = "MIT"
+authors = ["wen"]
 
 [lib]
 name = "sshi"

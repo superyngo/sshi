@@ -76,6 +76,26 @@ const MIN_COLS: u16 = 60;
 const MIN_ROWS: u16 = 20;
 const POLL_INTERVAL_MS: u64 = 50;
 
+/// Active section of the Info (`i`) popup. Cycles TabInfo → About → Help →
+/// TabInfo via `Tab` inside the popup.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InfoSection {
+    #[default]
+    TabInfo,
+    About,
+    Help,
+}
+
+impl InfoSection {
+    pub fn next(self) -> Self {
+        match self {
+            Self::TabInfo => Self::About,
+            Self::About => Self::Help,
+            Self::Help => Self::TabInfo,
+        }
+    }
+}
+
 pub struct App {
     pub active_tab: TabId,
     navbar_focused: bool,
@@ -109,6 +129,7 @@ pub struct App {
     auth_bridge_tx: Option<SshAuthSender>,
     help_vp: Viewport,
     info_vp: Viewport,
+    info_section: InfoSection,
 }
 
 impl App {
@@ -181,6 +202,7 @@ impl App {
             auth_bridge_tx: None,
             help_vp: Viewport::new(),
             info_vp: Viewport::new(),
+            info_section: InfoSection::default(),
         }
     }
 
@@ -2260,11 +2282,21 @@ impl App {
             }
         }
 
-        // Info popup intercepts: Esc/i close it; arrow/pgup/pgdn scroll.
+        // Info popup intercepts: Esc/i close it; Tab/i cycle sections; arrows scroll.
         if self.info_open {
             match key.code {
-                KeyCode::Esc | KeyCode::Char('i') => {
+                KeyCode::Esc => {
                     self.info_open = false;
+                    return Ok(true);
+                }
+                KeyCode::Char('i') => {
+                    self.info_section = self.info_section.next();
+                    self.info_vp = Viewport::new();
+                    return Ok(true);
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.info_section = self.info_section.next();
+                    self.info_vp = Viewport::new();
                     return Ok(true);
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -2521,8 +2553,14 @@ impl App {
                 Ok(true)
             }
             KeyCode::Char('i') => {
-                self.info_open = true;
-                self.info_vp = Viewport::new();
+                if self.info_open {
+                    self.info_section = self.info_section.next();
+                    self.info_vp = Viewport::new();
+                } else {
+                    self.info_open = true;
+                    self.info_section = InfoSection::TabInfo;
+                    self.info_vp = Viewport::new();
+                }
                 Ok(true)
             }
             KeyCode::Char('L') => {
@@ -4055,7 +4093,42 @@ impl App {
     }
 
     fn render_info_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
-        let body = match self.active_tab {
+        let (title, body) = match self.info_section {
+            InfoSection::TabInfo => (
+                " Info (i) — Tab cycle: Tab-info / About / Help ",
+                self.render_tab_info_body(),
+            ),
+            InfoSection::About => (
+                " About (i) — Tab cycle: Tab-info / About / Help ",
+                self.render_about_body(),
+            ),
+            InfoSection::Help => (
+                " Keybindings (i) — Tab cycle: Tab-info / About / Help ",
+                self.render_help_body(),
+            ),
+        };
+        let popup_area = content_aware_popup_rect(area, 60, 80, body.len(), 24);
+        frame.render_widget(Clear, popup_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.border_active))
+            .title(title);
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let wrap_width = inner.width.max(1) as usize;
+        let lines = wrap_text_to_lines(&body, wrap_width);
+        let visible_h = inner.height as usize;
+        self.info_vp.set_dims(lines.len(), visible_h);
+        let scroll = self.info_vp.scroll_y;
+        let p = Paragraph::new(lines)
+            .scroll((scroll as u16, 0))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(p, inner);
+    }
+
+    fn render_tab_info_body(&self) -> String {
+        match self.active_tab {
             TabId::Operate => format!(
                 "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\ncp    — copy a local file/dir to targets (defaults to ~).\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults appear in a popup when the operation completes.",
                 self.last_timeout_secs
@@ -4075,25 +4148,81 @@ impl App {
                     .map(|p| p.display().to_string())
                     .unwrap_or_else(|| "(default — ~/.config/sshi/config.toml)".to_string())
             ),
-        };
-        let popup_area = content_aware_popup_rect(area, 60, 80, body.len(), 24);
-        frame.render_widget(Clear, popup_area);
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.border_active))
-            .title(" Info (i) — ↑↓ scroll, Esc close ");
-        let inner = block.inner(popup_area);
-        frame.render_widget(block, popup_area);
+        }
+    }
 
-        let wrap_width = inner.width.max(1) as usize;
-        let lines = wrap_text_to_lines(&body, wrap_width);
-        let visible_h = inner.height as usize;
-        self.info_vp.set_dims(lines.len(), visible_h);
-        let scroll = self.info_vp.scroll_y;
-        let p = Paragraph::new(lines)
-            .scroll((scroll as u16, 0))
-            .wrap(Wrap { trim: false });
-        frame.render_widget(p, inner);
+    /// About-section body sourced from compile-time Cargo env! macros so the
+    /// `[package]` table in Cargo.toml remains the single source of truth
+    /// (audit §1 P18 HIGH).
+    fn render_about_body(&self) -> String {
+        let name = env!("CARGO_PKG_NAME");
+        let version = env!("CARGO_PKG_VERSION");
+        let description = env!("CARGO_PKG_DESCRIPTION");
+        let authors = env!("CARGO_PKG_AUTHORS");
+        let license = env!("CARGO_PKG_LICENSE");
+        let homepage = env!("CARGO_PKG_HOMEPAGE");
+        let repository = env!("CARGO_PKG_REPOSITORY");
+        format!(
+            "{name} v{version}\n\n\
+             {description}\n\n\
+             Author:     {authors}\n\
+             License:    {license}\n\
+             Homepage:   {homepage}\n\
+             Repository: {repository}\n\n\
+             Privacy: sshi is a local CLI/TUI tool. It connects only to the\n\
+             SSH hosts you configure in ~/.config/sshi/config.toml or ~/.ssh/config.\n\
+             No telemetry, analytics, or automatic update checks are performed.\n\
+             Operation logs and per-host checkout snapshots are stored locally in\n\
+             the sshi state database (see `state_dir` in config.toml).\n\n\
+             Press Tab to cycle: Tab-info → About → Keybindings."
+        )
+    }
+
+    fn render_help_body(&self) -> String {
+        "\
+Global keys
+  1 / 2 / 3   Switch to Config / Operate / View
+  Tab         Cycle to next tab
+  Shift+Tab   Cycle to previous tab
+  q           Quit (state saved)
+  Ctrl+C      Quit immediately (state saved)
+  Esc         Close popup / clear error
+  ?           Toggle this help
+  L           Toggle log overlay
+  i           Toggle contextual info popup
+
+Operate tab
+  ↑↓ / j k   Navigate zones: OpRadio → ParamPanel → TargetRow → Execute
+  ← → / Tab   (OpRadio / Target row) cycle the selected option
+  f           Open Target Filter popup
+  Enter       (ParamPanel text field) activate input; (Execute) run operation
+  e           Run the current operation (from anywhere on the tab)
+  Space       (checkbox) toggle sudo / keep / dry-run; (Source) cycle host
+  Del         Clear the focused optional field (members/skip/names/source/
+              out/cp-remote); on the ad-hoc input, remove the last path
+  Esc         Dismiss results popup / cancel running operation
+  (while typing) Enter to confirm, Esc to revert
+
+View tab
+  ← → / Tab   (Show row) cycle checkout / list / log
+  ↑↓ / j k    Move row selection
+  PgUp/PgDn   Page navigation
+  Home/End    Jump to top / bottom
+  f           Open Filter popup (disabled for Log)
+
+Config tab
+  ↑↓ / j k    Move sidebar / field rows
+  ← / →       Switch zones (Sidebar ↔ FieldTable)
+  Tab         Switch zone (Sidebar → FieldTable)
+  e / Enter   Edit text field inline; cycle option fields (bool/shell/enum)
+  Space       Cycle the focused option field (bool/shell/tri-bool/enum)
+  Del         Clear the focused optional field (required names are kept)
+  a           Add new entry (host / check / sync)
+  d           Delete focused entry
+              (changes autosave to disk, format-preserving via toml_edit)
+  E           Open config in $VISUAL/$EDITOR (TUI suspends, reloads on change)
+"
+        .to_string()
     }
 
     fn render_status_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
@@ -4645,5 +4774,27 @@ mod help_scroll_tests {
         assert_eq!(vp.scroll_y, 10, "PageDown should advance by visible_height");
         vp.page_up();
         assert_eq!(vp.scroll_y, 0, "PageUp should retreat by visible_height");
+    }
+}
+
+#[cfg(test)]
+mod info_section_tests {
+    use super::InfoSection;
+
+    #[test]
+    fn info_section_cycle_is_three_way() {
+        // E2 spec verify: "section-switching state machine".
+        // Tab cycles TabInfo → About → Help → TabInfo.
+        let s = InfoSection::TabInfo;
+        assert_eq!(s.next(), InfoSection::About);
+        assert_eq!(s.next().next(), InfoSection::Help);
+        assert_eq!(s.next().next().next(), InfoSection::TabInfo);
+    }
+
+    #[test]
+    fn info_section_default_is_tab_info() {
+        // `i` opens on TabInfo (the legacy per-tab help) so the original
+        // user flow is preserved.
+        assert_eq!(InfoSection::default(), InfoSection::TabInfo);
     }
 }
