@@ -151,23 +151,23 @@ pub(crate) async fn batch_keyscan_and_accept(
     progress: Option<&dyn ProgressSink>,
 ) -> Vec<String> {
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for (name, _err) in hosts {
         let sem = semaphore.clone();
         let alias = name.clone();
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             let result = keyscan_host(&alias, timeout_secs).await;
             (alias, result)
-        }));
+        });
     }
 
     let mut all_keys = String::new();
     let mut succeeded = Vec::new();
 
-    for handle in handles {
-        match handle.await {
+    while let Some(joined) = set.join_next().await {
+        match joined {
             Ok((alias, Ok(keys))) => {
                 if !all_keys.is_empty() {
                     all_keys.push('\n');

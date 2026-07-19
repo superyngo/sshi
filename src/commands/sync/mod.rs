@@ -449,7 +449,7 @@ async fn expand_paths(
 
         if !no_source_paths.is_empty() {
             let semaphore = Arc::new(Semaphore::new(ctx.concurrency()));
-            let mut handles = Vec::new();
+            let mut set = tokio::task::JoinSet::new();
 
             for host in reachable_hosts {
                 let host = Arc::clone(host);
@@ -458,15 +458,15 @@ async fn expand_paths(
                 let timeout = ctx.timeout;
                 let sem = semaphore.clone();
 
-                handles.push(tokio::spawn(async move {
+                set.spawn(async move {
                     let _permit = sem.acquire().await.unwrap();
                     expand_directory_paths(&host, &paths, false, timeout, &sessions).await
-                }));
+                });
             }
 
             let mut host_results: Vec<HashMap<String, DirExpandResult>> = Vec::new();
-            for handle in handles {
-                match handle.await {
+            while let Some(joined) = set.join_next().await {
+                match joined {
                     Ok(Ok(expansions)) => host_results.push(expansions),
                     Ok(Err(e)) => tracing::warn!(error = %e, "Failed to expand directories"),
                     Err(e) => tracing::warn!(error = %e, "Directory expand task panicked"),

@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 
 use crate::config::schema::HostEntry;
 use crate::host::pool::SshPool;
@@ -111,7 +111,7 @@ pub async fn check_core(
 
     let reachable = pool.filter_reachable(&hosts);
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
     for host in &reachable {
         let (enabled, check_paths) = match host_configs.get(&host.name) {
             Some(config) => config.clone(),
@@ -125,14 +125,14 @@ pub async fn check_core(
         let sessions = pool.session_pool.clone();
         let global_sem = pool.limiter.global_semaphore();
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = global_sem.acquire_owned().await.unwrap();
             let start = Instant::now();
             let result =
                 collector::collect_pooled(&host, &enabled, &check_paths, timeout, sessions).await;
             let elapsed = start.elapsed();
             (host, result, elapsed)
-        }));
+        });
     }
 
     // Pending per-host DB writes collected as handles resolve. Executing
@@ -142,8 +142,8 @@ pub async fn check_core(
     let mut pending_writes: Vec<(String, i64, i64, String, bool, String, i64, Option<String>)> =
         Vec::new();
 
-    for handle in handles {
-        let (host, result, elapsed) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (host, result, elapsed) = joined.context("task panic")?;
         let now = chrono::Utc::now().timestamp();
         let ms = elapsed.as_millis() as u64;
 

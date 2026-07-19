@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 
 use crate::host::pool::SshPool;
 use crate::output::printer;
@@ -88,7 +88,7 @@ pub async fn cp_core(
 
     let reachable = pool.filter_sftp_capable(&hosts);
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
     for host in &reachable {
         let host = Arc::clone(host);
         let transfers = transfers.clone();
@@ -99,7 +99,7 @@ pub async fn cp_core(
             p.host_started(&host.name);
         }
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = global_sem.acquire_owned().await.unwrap();
             let start = Instant::now();
             let mut copied = 0usize;
@@ -112,11 +112,11 @@ pub async fn cp_core(
             }
             let elapsed = start.elapsed();
             (host, copied, errors, elapsed)
-        }));
+        });
     }
 
-    for handle in handles {
-        let (host, copied, errors, elapsed) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (host, copied, errors, elapsed) = joined.context("task panic")?;
         let ms = elapsed.as_millis() as u64;
         let now = chrono::Utc::now().timestamp();
         let failed = errors.len();

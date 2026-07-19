@@ -165,7 +165,7 @@ impl RusshSessionPool {
         let timeout = Duration::from_secs(timeout_secs);
         let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
         let ssh_config = Arc::new(crate::config::ssh_config::load_ssh_config()?);
-        let mut handles = Vec::new();
+        let mut set = tokio::task::JoinSet::new();
 
         for host in hosts {
             let alias = host.ssh_host.clone();
@@ -173,21 +173,21 @@ impl RusshSessionPool {
             let config = ssh_config.clone();
             let auth_sender = auth_sender.clone();
 
-            handles.push(tokio::spawn(async move {
+            set.spawn(async move {
                 let _permit = sem.acquire_owned().await.unwrap();
                 let mut cache = PassphraseCache::new();
                 let result =
                     connect_one(&alias, timeout, &mut cache, &config, auth_sender.as_ref()).await;
                 (alias, result)
-            }));
+            });
         }
 
         let mut sessions: HashMap<String, Arc<Handle<SshHandler>>> = HashMap::new();
         let mut failed: Vec<(String, String)> = Vec::new();
         let mut proxy_cancels: Vec<tokio::sync::oneshot::Sender<()>> = Vec::new();
 
-        for jh in handles {
-            let (alias, result) = jh.await.context("task panic")?;
+        while let Some(jh) = set.join_next().await {
+            let (alias, result) = jh.context("task panic")?;
             match result {
                 Ok((handle, cancel_tx)) => {
                     sessions.insert(alias, Arc::new(handle));
@@ -639,6 +639,7 @@ pub async fn exec_on_handle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::Mutex;
 
     #[test]
     fn test_remote_output_success_flag() {
@@ -855,5 +856,40 @@ mod tests {
             config.inactivity_timeout, None,
             "inactivity_timeout must remain None — we never proactively close idle sessions"
         );
+    }
+
+    #[tokio::test]
+    async fn joinset_drain_completes_all_tasks_before_returning() {
+        // Regression for G3: confirms that switching from `Vec<JoinHandle>` +
+        // sequential `await` to `JoinSet::join_next()` still drains every
+        // spawned task before the function returns. The drain loop must not
+        // short-circuit on the first result; partial drains would leave
+        // unprocessed work behind.
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = std::sync::Arc::new(Mutex::new(Vec::new()));
+
+        let mut set = tokio::task::JoinSet::new();
+        for i in 0..16usize {
+            let counter = std::sync::Arc::clone(&counter);
+            let observed = std::sync::Arc::clone(&observed);
+            set.spawn(async move {
+                // Stagger completion so join order != spawn order.
+                tokio::time::sleep(std::time::Duration::from_millis(15 - (i as u64 % 8))).await;
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                observed.lock().await.push(i);
+                i
+            });
+        }
+
+        let mut collected = Vec::new();
+        while let Some(joined) = set.join_next().await {
+            collected.push(joined.unwrap());
+        }
+
+        // Every task ran (counter at 16) and every result was observed.
+        assert_eq!(counter.load(std::sync::atomic::Ordering::SeqCst), 16);
+        assert_eq!(collected.len(), 16);
+        collected.sort_unstable();
+        assert_eq!(collected, (0..16).collect::<Vec<_>>());
     }
 }

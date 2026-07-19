@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use tokio::sync::Semaphore;
 
 use crate::config::schema::HostEntry;
@@ -28,7 +28,7 @@ pub(crate) async fn distribute(
         .await?;
 
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for target_name in &decision.target_hosts {
         let target = hosts
@@ -43,20 +43,20 @@ pub(crate) async fn distribute(
         let target_name = target_name.clone();
         let sessions = Arc::clone(&sessions);
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
 
             let result = sessions
                 .upload(&target, &local_temp, &remote_path, timeout)
                 .await;
             (target_name, result)
-        }));
+        });
     }
 
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
-    for handle in handles {
-        let (target_name, result) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (target_name, result) = joined.context("task panic")?;
         match result {
             Ok(()) => succeeded.push(target_name),
             Err(e) => failed.push((target_name, e.to_string())),
@@ -87,7 +87,7 @@ pub(crate) async fn distribute_pooled(
             .await?;
     }
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for target_name in &decision.target_hosts {
         let target = hosts
@@ -106,7 +106,7 @@ pub(crate) async fn distribute_pooled(
             .per_host_semaphore(&target.name)
             .expect("target not registered");
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _global_permit = limiter_global.acquire().await.unwrap();
             let _per_host_permit = limiter_per_host.acquire().await.unwrap();
 
@@ -114,13 +114,13 @@ pub(crate) async fn distribute_pooled(
                 .upload(&target, &local_temp, &remote_path, timeout)
                 .await;
             (target_name, result)
-        }));
+        });
     }
 
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
-    for handle in handles {
-        let (target_name, result) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (target_name, result) = joined.context("task panic")?;
         match result {
             Ok(()) => {
                 succeeded.push(target_name.clone());

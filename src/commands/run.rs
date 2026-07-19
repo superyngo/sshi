@@ -3,7 +3,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 
 use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
@@ -61,7 +61,7 @@ pub async fn run_core(
 
     let reachable = pool.filter_reachable(&hosts);
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
     for host in &reachable {
         let host = Arc::clone(host);
         let cmd = if sudo {
@@ -76,17 +76,17 @@ pub async fn run_core(
             p.host_started(&host.name);
         }
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = global_sem.acquire_owned().await.unwrap();
             let start = Instant::now();
             let result = sessions.exec(&host.ssh_host, &cmd, timeout).await;
             let elapsed = start.elapsed();
             (host, result, elapsed)
-        }));
+        });
     }
 
-    for handle in handles {
-        let (host, result, elapsed) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (host, result, elapsed) = joined.context("task panic")?;
         let ms = elapsed.as_millis() as u64;
         let now = chrono::Utc::now().timestamp();
 

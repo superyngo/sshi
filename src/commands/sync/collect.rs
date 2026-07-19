@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use tokio::sync::Semaphore;
 
 use crate::config::schema::{HostEntry, ShellType};
@@ -105,14 +105,14 @@ pub(crate) async fn collect_file_metadata(
     sessions: Arc<RusshSessionPool>,
 ) -> Result<CollectResult> {
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for host in hosts {
         let sem = semaphore.clone();
         let host = Arc::clone(host);
         let file_path = path.to_string();
         let sessions = Arc::clone(&sessions);
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
 
             let cmd = match host.shell {
@@ -187,13 +187,13 @@ pub(crate) async fn collect_file_metadata(
                     (host.name.clone(), None, false)
                 }
             }
-        }));
+        });
     }
 
     let mut found = Vec::new();
     let mut missing = Vec::new();
-    for handle in handles {
-        let (host_name, info, is_missing) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (host_name, info, is_missing) = joined.context("task panic")?;
         if let Some(fi) = info {
             found.push(fi);
         } else if is_missing {
@@ -212,7 +212,7 @@ pub(crate) async fn batch_collect_all_metadata(
     sessions: &Arc<RusshSessionPool>,
 ) -> Result<BatchCollectResult> {
     let semaphore = Arc::new(Semaphore::new(concurrency));
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
 
     for host in hosts {
         let sem = semaphore.clone();
@@ -221,7 +221,7 @@ pub(crate) async fn batch_collect_all_metadata(
         let cmd = build_batch_metadata_cmd(&paths, host.shell);
         let sessions = Arc::clone(sessions);
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
             let result = sessions.exec(&host.ssh_host, &cmd, timeout).await;
             match result {
@@ -231,7 +231,7 @@ pub(crate) async fn batch_collect_all_metadata(
                 }
                 _ => (host.name.clone(), None, true),
             }
-        }));
+        });
     }
 
     let mut per_file: HashMap<String, CollectResult> = HashMap::new();
@@ -245,8 +245,8 @@ pub(crate) async fn batch_collect_all_metadata(
         );
     }
 
-    for handle in handles {
-        let (host_name, parsed_opt, is_unreachable) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (host_name, parsed_opt, is_unreachable) = joined.context("task panic")?;
         if is_unreachable {
             continue;
         }

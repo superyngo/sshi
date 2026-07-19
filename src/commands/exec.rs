@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context as _, Result};
 
 use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
@@ -80,7 +80,7 @@ pub async fn exec_core(
 
     let reachable = pool.filter_reachable(&hosts);
 
-    let mut handles = Vec::new();
+    let mut set = tokio::task::JoinSet::new();
     for host in &reachable {
         // Check shell compatibility — skipped hosts are reported immediately.
         if let Some(required) = compatible_shell {
@@ -113,18 +113,18 @@ pub async fn exec_core(
             p.host_started(&host.name);
         }
 
-        handles.push(tokio::spawn(async move {
+        set.spawn(async move {
             let _permit = global_sem.acquire_owned().await.unwrap();
             let start = Instant::now();
             let result =
                 exec_on_host_pooled(&host, &script_path, timeout, keep, sudo, sessions).await;
             let elapsed = start.elapsed();
             (host, result, elapsed)
-        }));
+        });
     }
 
-    for handle in handles {
-        let (host, result, elapsed) = handle.await?;
+    while let Some(joined) = set.join_next().await {
+        let (host, result, elapsed) = joined.context("task panic")?;
         let ms = elapsed.as_millis() as u64;
         let now = chrono::Utc::now().timestamp();
 
