@@ -3696,6 +3696,11 @@ impl App {
             },
         };
 
+        // Snapshot the cursor identity before the editor may rewrite the
+        // config — mirrors save_config's capture/restore flow (audit §1 P8
+        // MED, also covers the editor-bypass gap noted in the same finding).
+        let snap = self.config_tab.capture_selection(&self.config);
+
         // Resolve editor: $VISUAL → $EDITOR → platform default.
         let editor = std::env::var("VISUAL")
             .or_else(|_| std::env::var("EDITOR"))
@@ -3741,6 +3746,7 @@ impl App {
                     self.config_tab.reload(&self.config, Some(&path));
                     self.config_tab.reload_banner_until =
                         Some(Instant::now() + Duration::from_secs(2));
+                    self.config_tab.restore_selection(snap, &self.config);
                 }
                 Ok(None) => {
                     self.error = Some("Config file disappeared after editor exit.".to_string());

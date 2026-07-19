@@ -254,9 +254,18 @@ pub struct ConfigTabState {
 /// captured indices must NOT be reapplied to a different form.
 ///
 /// Each field is clamped against the post-reload state in `restore_selection`.
+///
+/// `entry_id` is the stable `id` of the selected `Host/Check/Sync` entry at
+/// capture time (audit §1 P8 MED). When non-empty, `restore_selection`
+/// prefers a sidebar lookup by id over the positional `sidebar_idx` fallback,
+/// so deleting host #2 of 5 lands the cursor on the next host by identity
+/// rather than whatever now occupies position 2. Empty for section-header
+/// selections and for legacy configs that predate the `id` field — those
+/// still fall back to the positional clamp.
 #[derive(Default, Clone, Debug)]
 pub struct ConfigSelectionSnapshot {
     sidebar_idx: usize,
+    entry_id: String,
     /// Outer right-panel field cursor. Restored when the entry form is closed
     /// at the time of restoration (i.e. user committed a direct popup or
     /// inline edit and we want to land back on the same row).
@@ -317,17 +326,18 @@ impl ConfigTabState {
     /// Autosaves: sets `pending_save` so `app.rs` flushes every committed
     /// mutation to disk (there is no explicit save key). Quit also flushes via
     /// `flush_dirty_config_to_disk` as a safety net.
-    fn mark_dirty(&mut self) {
+    fn mark_dirty(&mut self, config: &AppConfig) {
         if self.pending_restore_snapshot.is_none() {
-            self.pending_restore_snapshot = Some(self.capture_selection());
+            self.pending_restore_snapshot = Some(self.capture_selection(config));
         }
         self.config_dirty = true;
         self.pending_save = true;
     }
 
-    pub(super) fn capture_selection(&self) -> ConfigSelectionSnapshot {
+    pub(crate) fn capture_selection(&self, config: &AppConfig) -> ConfigSelectionSnapshot {
         let mut snap = ConfigSelectionSnapshot {
             sidebar_idx: self.sidebar_vp.selected,
+            entry_id: self.selected_entry_id(config).unwrap_or_default(),
             field_vp_idx: self.field_vp.selected,
             ..Default::default()
         };
@@ -354,7 +364,12 @@ impl ConfigTabState {
             }
         };
         let sidebar_len = self.items.len();
-        self.sidebar_vp.selected = clamp(snap.sidebar_idx, sidebar_len);
+        let resolved = if !snap.entry_id.is_empty() {
+            self.find_sidebar_idx_by_id(&snap.entry_id, config)
+        } else {
+            None
+        };
+        self.sidebar_vp.selected = resolved.unwrap_or_else(|| clamp(snap.sidebar_idx, sidebar_len));
         self.sidebar_vp
             .set_dims(sidebar_len, self.sidebar_vp.visible_height);
 
@@ -392,6 +407,36 @@ impl ConfigTabState {
             dve.vp.selected = clamp(didx, ilen);
             dve.vp.set_dims(ilen, dve.vp.visible_height);
         }
+    }
+
+    /// `id` of the Check/Sync entry under the current sidebar cursor.
+    /// `None` for section-header selections, out-of-range indices, and
+    /// `Host` entries — `HostEntry` has no `id` field (only Check/Sync got
+    /// one per AD-18), so host deletions fall back to positional clamping.
+    fn selected_entry_id(&self, config: &AppConfig) -> Option<String> {
+        match self.items.get(self.sidebar_vp.selected) {
+            Some(SidebarItem::Check(i)) => config.check.get(*i).map(|c| c.id.clone()),
+            Some(SidebarItem::Sync(i)) => config.sync.get(*i).map(|s| s.id.clone()),
+            _ => None,
+        }
+    }
+
+    /// First sidebar index whose underlying entry has the given `id`.
+    /// `None` if `id` is empty, no entry has it, or the matching entry was
+    /// removed entirely from the reloaded config. Only Check/Sync entries
+    /// carry an `id` (see `selected_entry_id`).
+    fn find_sidebar_idx_by_id(&self, id: &str, config: &AppConfig) -> Option<usize> {
+        if id.is_empty() {
+            return None;
+        }
+        self.items.iter().enumerate().find_map(|(i, item)| {
+            let entry_id = match item {
+                SidebarItem::Check(idx) => config.check.get(*idx).map(|c| &c.id),
+                SidebarItem::Sync(idx) => config.sync.get(*idx).map(|s| &s.id),
+                _ => None,
+            };
+            entry_id.filter(|eid| *eid == id).map(|_| i)
+        })
     }
 
     /// Number of fields in the right-panel for the currently-selected sidebar
@@ -732,7 +777,7 @@ impl ConfigTabState {
                         } else if !is_empty {
                             self.editing_field_index = sel;
                             self.commit_inline_edit("", config);
-                            self.mark_dirty();
+                            self.mark_dirty(config);
                         }
                         return true;
                     }
@@ -744,7 +789,7 @@ impl ConfigTabState {
                         if let Some(new_val) = cycle_option_value(&f.kind, &f.display_value) {
                             self.editing_field_index = self.field_vp.selected;
                             self.commit_inline_edit(&new_val, config);
-                            self.mark_dirty();
+                            self.mark_dirty(config);
                             return true;
                         }
                     }
@@ -757,7 +802,7 @@ impl ConfigTabState {
                         if let Some(new_val) = cycle_option_value(&f.kind, &f.display_value) {
                             self.editing_field_index = field_idx;
                             self.commit_inline_edit(&new_val, config);
-                            self.mark_dirty();
+                            self.mark_dirty(config);
                             return true;
                         }
                         match &f.kind {
@@ -868,7 +913,7 @@ impl ConfigTabState {
                     return true;
                 }
                 self.commit_inline_edit(&input.value, config);
-                self.mark_dirty();
+                self.mark_dirty(config);
             }
             return true;
         }
@@ -1439,7 +1484,7 @@ impl ConfigTabState {
         // Snapshot BEFORE any state mutation. After this point the entry form
         // closes and the sidebar/field viewports get rebuilt; capturing later
         // would lose the user's cursor position.
-        self.mark_dirty();
+        self.mark_dirty(config);
         let form = self.entry_form.take().unwrap();
         // Single dispatch: feed every form field through the unified apply().
         // Same code path as right-panel inline edits.
@@ -1528,7 +1573,7 @@ impl ConfigTabState {
     }
 
     pub fn execute_delete(&mut self, config: &mut AppConfig, kind: EntryFormKind, index: usize) {
-        self.mark_dirty();
+        self.mark_dirty(config);
         match kind {
             EntryFormKind::Host => {
                 if index < config.host.len() {
@@ -2255,7 +2300,7 @@ impl ConfigTabState {
                       // Snapshot BEFORE mutation; the popup will be closed by the caller
                       // right after this returns, and save_config's reload would otherwise
                       // wipe the field_vp cursor.
-        self.mark_dirty();
+        self.mark_dirty(config);
         self.editing_field_index = field_index;
         self.commit_inline_edit(display_value, config);
     }
@@ -3054,7 +3099,7 @@ mod tests {
         state.sidebar_vp.move_down();
         state.sidebar_vp.move_down();
         let captured_sidebar = state.sidebar_vp.selected;
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         state.sidebar_vp = Viewport::new();
         state.sidebar_vp.set_dims(state.items.len(), 0);
         state.restore_selection(snap, &config);
@@ -3078,13 +3123,111 @@ mod tests {
         for _ in 0..last {
             state.sidebar_vp.move_down();
         }
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         config.host.pop();
         state.items = build_sidebar_items(&config, &state.collapsed);
         state.sidebar_vp = Viewport::new();
         state.sidebar_vp.set_dims(state.items.len(), 0);
         state.restore_selection(snap, &config);
         let expected = state.items.len().saturating_sub(1);
+        assert_eq!(state.sidebar_vp.selected, expected);
+    }
+
+    #[test]
+    fn snapshot_restores_by_entry_id_when_position_changes() {
+        // E5: delete sync #2 of 3; cursor must land on the entry that took
+        // position 2's *id* (i.e. the original #3), not on the entry that
+        // now occupies position 2 (the original #1).
+        let mut config = AppConfig::default();
+        for i in 0..3 {
+            config.sync.push(crate::config::schema::SyncEntry {
+                name: Some(format!("s{i}")),
+                id: format!("id-{i}"),
+                paths: vec![format!("p{i}")],
+                recursive: false,
+                mode: None,
+                propagate_deletes: None,
+                source: None,
+            });
+        }
+        let mut state = ConfigTabState::new(&config, None);
+        // Walk to Sync #1 (id "id-1"): SectionSettings, SectionHosts,
+        // SectionChecks, Check(0) (default), SectionSyncs, Sync(0), Sync(1).
+        for _ in 0..6 {
+            state.sidebar_vp.move_down();
+        }
+        let captured_idx = state.sidebar_vp.selected;
+        assert!(matches!(
+            state.items.get(captured_idx),
+            Some(SidebarItem::Sync(1))
+        ));
+        let snap = state.capture_selection(&config);
+        assert_eq!(snap.entry_id, "id-1");
+
+        // Simulate reload after the user deleted the *first* sync entry.
+        // The captured cursor was on Sync(1) → after deletion, the same
+        // entry is now at Sync(0). Positional restore would land on Sync(1)
+        // of the new list (which is the original Sync(2)). Identity restore
+        // must land on Sync(0) of the new list (the original Sync(1)).
+        config.sync.remove(0);
+        state.items = build_sidebar_items(&config, &state.collapsed);
+        state.sidebar_vp = Viewport::new();
+        state.sidebar_vp.set_dims(state.items.len(), 0);
+        state.restore_selection(snap, &config);
+
+        // Find the sidebar index of Sync(0) in the rebuilt list.
+        let expected = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Sync(0)))
+            .unwrap();
+        assert_eq!(
+            state.sidebar_vp.selected, expected,
+            "identity restore must land on the original Sync(1) entry"
+        );
+        // The landed entry's id matches what we captured.
+        match state.items.get(state.sidebar_vp.selected) {
+            Some(SidebarItem::Sync(i)) => {
+                assert_eq!(config.sync.get(*i).map(|s| s.id.as_str()), Some("id-1"));
+            }
+            other => panic!("expected Sync(0) after restore, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn snapshot_falls_back_to_positional_when_entry_id_missing() {
+        // HostEntry has no `id` field (only Check/Sync); host-deletion
+        // restore must still work via positional clamping. This codifies
+        // the E5 scope gap so a future change doesn't silently regress.
+        let mut config = AppConfig::default();
+        for i in 0..3 {
+            config.host.push(HostEntry {
+                name: format!("h{i}"),
+                ssh_host: format!("{i}.{i}.{i}.{i}"),
+                shell: ShellType::Sh,
+                groups: vec![],
+                proxy_jump: None,
+            });
+        }
+        let mut state = ConfigTabState::new(&config, None);
+        // Walk to Host(1).
+        for _ in 0..3 {
+            state.sidebar_vp.move_down();
+        }
+        let snap = state.capture_selection(&config);
+        assert!(snap.entry_id.is_empty(), "HostEntry has no id field");
+        // Simulate deleting Host(0); positional clamp lands on the new
+        // Host(1) (which was Host(2) before).
+        config.host.remove(0);
+        state.items = build_sidebar_items(&config, &state.collapsed);
+        state.sidebar_vp = Viewport::new();
+        state.sidebar_vp.set_dims(state.items.len(), 0);
+        state.restore_selection(snap, &config);
+        let expected = state
+            .items
+            .iter()
+            .position(|i| matches!(i, SidebarItem::Host(1)))
+            .unwrap();
         assert_eq!(state.sidebar_vp.selected, expected);
     }
 
@@ -3102,7 +3245,7 @@ mod tests {
         let mut state = ConfigTabState::new(&config, None);
         // Move cursor off zero.
         state.sidebar_vp.move_down();
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         // Simulate a reload that ends up with zero items.
         state.items = vec![];
         state.sidebar_vp = Viewport::new();
@@ -3139,7 +3282,7 @@ mod tests {
             .as_ref()
             .map(|f| f.field_vp.selected)
             .unwrap();
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         // Simulate reload that resets the form's field cursor to 0.
         if let Some(form) = state.entry_form.as_mut() {
             form.field_vp = Viewport::new();
@@ -3199,7 +3342,7 @@ mod tests {
             .map(|ve| ve.vp.selected)
             .unwrap();
         assert_eq!(captured_ve, 2);
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         // Reset the vec editor's cursor to 0.
         if let Some(form) = state.entry_form.as_mut() {
             if let Some(ve) = form.vec_editor.as_mut() {
@@ -3263,7 +3406,7 @@ mod tests {
             ve.vp.move_down();
             form.vec_editor = Some(ve);
         }
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         // Between capture and restore, the form's vec_editor switches to another field.
         if let Some(form) = state.entry_form.as_mut() {
             form.vec_editor = Some(VecEditorState {
@@ -3304,7 +3447,7 @@ mod tests {
         dve.vp.move_down();
         dve.vp.move_down();
         state.direct_vec_editor = Some(dve);
-        let snap = state.capture_selection();
+        let snap = state.capture_selection(&config);
         if let Some(dve) = state.direct_vec_editor.as_mut() {
             dve.vp = Viewport::new();
             dve.vp.set_dims(dve.items.len(), 0);
