@@ -628,3 +628,82 @@ Phase D did not make thiserror adoption more urgent. All four new
 sync helpers return `anyhow::Result<()>` or `Result<Vec<SyncDecision>>`.
 The `*Report` typed structs (`InitReport`, `CheckoutReport`) carry the
 structured data callers need. Recommendation stands: defer to Phase F/G.
+
+---
+
+## Phase E execution notes (landed 2026-07-19)
+
+Phase E shipped as 5 commits (`efdd337` `2857b88` E1/E2 + `9183470`
+E3 + `dcfb74f` E4 + `b385310` E5). 306 tests pass (+36 from Phase D's
+270: E1 +7, E2 +2, E3 +9, E4 +16, E5 +2). Three deviations from spec
++ two scope gaps recorded here:
+
+1. **E3 — `GlyphSet::for_status` helper beyond spec.** Spec listed
+   the 4 status-glyph pairs (`✓ ✗ ⊘ ⚠`) and explicit routing sites.
+   Implementation added a small `pub fn for_status(&self, HostStatus)
+   -> &'static str` method on `GlyphSet` to DRY the 3 HostStatus→glyph
+   match sites (`app.rs::render_row`, `operate_tab::render_progress_popup`,
+   `view_tab::log-row match`) and make the routing unit-testable. The
+   helper returns the `⏱` literal for `HostStatus::TimedOut` since
+   the spec defines no ASCII pair for it — that variant degrades only
+   when `TERM=linux` is set if a future spec extends the glyph set.
+
+2. **E3 — glyph scope decision: left non-status glyphs hardcoded.**
+   The audit §1 P20 lists `▶ ◉ ○ ▼ ☑ ☐ ↳ ↵ … ⏱` as also-problematic.
+   The E3 spec only defines pairs for the 4 status glyphs, so non-status
+   UI glyphs (radio-button indicators, disclosure triangles, subline
+   prefixes, truncation markers) remain Unicode unconditionally. Touched
+   sites cover all 4 spec'd glyphs across `app.rs`, `member_picker.rs`,
+   `view_tab.rs`, `operate_tab.rs`. CLI output (`src/output/printer.rs`)
+   intentionally untouched — CLI keeps Unicode glyphs unconditionally.
+
+3. **E4 — kill ring is per-field.** Spec implied a single kill ring;
+   implementation puts `kill_ring: Vec<String>` on each `InputField`,
+   cleared on `activate()`. Cross-field yank (kill from one field,
+   navigate to another field, yank) does not work; making it work
+   would require threading the ring through `App` (out of scope).
+   `Ctrl+W` and `Meta+Backspace` are aliases (Emacs distinguishes
+   `unix-word-rubout` from `backward-kill-word`; modern users expect
+   both to delete a word back). `Ctrl+_` and `Ctrl+Z` are both wired
+   to undo since crossterm's `Ctrl+_` delivery is terminal-dependent.
+
+4. **E4 — deferred: Shift+arrow selection.** Per spec; remains audit
+   §1 P10 HIGH ×1. The grapheme infrastructure added here is the
+   foundation for it.
+
+5. **E5 — `HostEntry` has no `id` field.** The spec assumed all 3
+   entry types have `id` per reconstruct plan AD-18; in reality only
+   `CheckEntry` and `SyncEntry` do. Per the task contract ("do not
+   add it speculatively"), `HostEntry` was not modified. The
+   identity-based restore therefore fires only for Check/Sync
+   selections; **host deletions still fall back to positional
+   clamping — the audit's literal example (host deletion) is not
+   fully fixed by E5.** Codified by the
+   `snapshot_falls_back_to_positional_when_entry_id_missing` test so
+   a future `HostEntry.id` addition doesn't silently regress.
+
+### Scope gaps (Phase F or follow-up)
+
+- **E5 follow-up: add `id` to `HostEntry`.** Mirror the
+  `CheckEntry`/`SyncEntry` pattern: `pub id: String` with
+  `#[serde(default, skip_serializing_if = "String::is_empty")]`,
+  generated via `generate_entry_id(&host.name)` at host-creation
+  sites. Once added, the E5 identity-restore path will start firing
+  for host deletions automatically (no code change in `config_tab.rs`
+  beyond updating the `selected_entry_id` / `find_sidebar_idx_by_id`
+  match arms to include `Host(i)`). This is the single highest-value
+  follow-up from Phase E.
+- **E3 follow-up: extend `GlyphSet` for `⏱` (and possibly `▶ ◉ ○`).**
+  Add fields as audit findings resurface. Punt until a real
+  `TERM=linux` user complains.
+- **E4 follow-up: Shift+arrow selection.** Build on the grapheme
+  infrastructure. Separate larger task.
+- **E4 follow-up: cross-field kill ring.** Thread `kill_ring: &mut
+  Vec<String>` through `App` if user demand materialises.
+
+### thiserror question — still not urgent
+
+Phase E did not make thiserror adoption more urgent. The kill ring
+returns `()`, the undo ring returns `()`, the glyph lookup returns
+`&'static str`. No place where a typed enum would have been cleaner.
+Recommendation stands: defer to Phase F/G.
