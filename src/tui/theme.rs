@@ -130,9 +130,16 @@ mod tests {
     use super::{GlyphSet, Theme};
     use ratatui::style::Color;
 
-    fn clear_env() {
+    // Env-mutating tests share process-global state and race under cargo's
+    // default parallel test runner. Serialise them through a module-level
+    // mutex so the set_var/remove_var windows don't observe each other.
+    static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn clear_env() -> std::sync::MutexGuard<'static, ()> {
+        let guard = ENV_TEST_LOCK.lock().unwrap();
         std::env::remove_var("NO_COLOR");
         std::env::remove_var("TERM");
+        guard
     }
 
     #[test]
@@ -156,7 +163,7 @@ mod tests {
 
     #[test]
     fn no_color_env_switches_to_reset_palette() {
-        clear_env();
+        let _guard = clear_env();
         std::env::set_var("NO_COLOR", "1");
         let t = Theme::from_env();
         assert_eq!(t.accent_config, Color::Reset);
@@ -164,14 +171,13 @@ mod tests {
         assert_eq!(t.border_active, Color::Reset);
         // NO_COLOR is orthogonal to glyph set: Unicode still default.
         assert_eq!(t.glyphs, GlyphSet::unicode());
-        std::env::remove_var("NO_COLOR");
     }
 
     #[test]
     fn no_color_empty_string_does_not_trigger_monochrome() {
         // Per https://no-color.org: NO_COLOR must be "present and not an
         // empty string" — empty value is the explicit opt-out.
-        clear_env();
+        let _guard = clear_env();
         std::env::set_var("NO_COLOR", "");
         let t = Theme::from_env();
         assert_eq!(
@@ -179,44 +185,39 @@ mod tests {
             Color::Yellow,
             "empty NO_COLOR keeps colour"
         );
-        std::env::remove_var("NO_COLOR");
     }
 
     #[test]
     fn term_linux_switches_to_ascii_glyphs() {
-        clear_env();
+        let _guard = clear_env();
         std::env::set_var("TERM", "linux");
         let t = Theme::from_env();
         assert_eq!(t.glyphs, GlyphSet::ascii());
         // Colours are independent — TERM=linux alone keeps coloured palette.
         assert_eq!(t.accent_checkout, Color::Green);
-        std::env::remove_var("TERM");
     }
 
     #[test]
     fn term_xterm_256color_keeps_unicode_glyphs() {
-        clear_env();
+        let _guard = clear_env();
         std::env::set_var("TERM", "xterm-256color");
         let t = Theme::from_env();
         assert_eq!(t.glyphs, GlyphSet::unicode());
-        std::env::remove_var("TERM");
     }
 
     #[test]
     fn no_color_plus_term_linux_combines_both() {
-        clear_env();
+        let _guard = clear_env();
         std::env::set_var("NO_COLOR", "1");
         std::env::set_var("TERM", "linux");
         let t = Theme::from_env();
         assert_eq!(t.accent_config, Color::Reset);
         assert_eq!(t.glyphs, GlyphSet::ascii());
-        std::env::remove_var("NO_COLOR");
-        std::env::remove_var("TERM");
     }
 
     #[test]
     fn default_palette_keeps_unicode_and_colour_when_env_absent() {
-        clear_env();
+        let _guard = clear_env();
         let t = Theme::from_env();
         assert_eq!(t.glyphs, GlyphSet::unicode());
         assert_eq!(t.accent_config, Color::Yellow);
