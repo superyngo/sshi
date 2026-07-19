@@ -4,6 +4,7 @@
 //! Phase 7: Case A inline scalar edit, Case B entry forms, toml_edit write-back,
 //! `S` save, `a`/`d` add/delete, Vec sub-editors, dirty guard.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent};
@@ -448,7 +449,7 @@ impl ConfigTabState {
             Some(SidebarItem::Host(i)) => config
                 .host
                 .get(*i)
-                .map(host_fields)
+                .map(|h| host_fields(h))
                 .map(|f| f.len())
                 .unwrap_or(0),
             Some(SidebarItem::Check(i)) => config
@@ -1026,7 +1027,7 @@ impl ConfigTabState {
                     .get(i)
                     .and_then(|h| host_fields(h).get(idx).map(|f| f.key.clone()));
                 if let (Some(h), Some(key)) = (config.host.get_mut(i), key) {
-                    apply_host(h, &key, new_value);
+                    apply_host(Arc::make_mut(h), &key, new_value);
                 }
             }
             SidebarItem::Check(i) => {
@@ -1492,7 +1493,7 @@ impl ConfigTabState {
         match form.kind {
             EntryFormKind::Host => {
                 let mut h = if let Some(idx) = form.edit_index {
-                    config.host[idx].clone()
+                    (*config.host[idx]).clone()
                 } else {
                     HostEntry {
                         name: String::new(),
@@ -1506,9 +1507,9 @@ impl ConfigTabState {
                     apply_host(&mut h, &f.key, &f.display_value);
                 }
                 if let Some(idx) = form.edit_index {
-                    config.host[idx] = h;
+                    config.host[idx] = Arc::new(h);
                 } else {
-                    config.host.push(h);
+                    config.host.push(Arc::new(h));
                 }
             }
             EntryFormKind::Check => {
@@ -2067,7 +2068,11 @@ impl ConfigTabState {
                     format!("{} configured", config.host.len()),
                 )]
             }
-            Some(SidebarItem::Host(i)) => config.host.get(*i).map(host_fields).unwrap_or_default(),
+            Some(SidebarItem::Host(i)) => config
+                .host
+                .get(*i)
+                .map(|h| host_fields(h))
+                .unwrap_or_default(),
             Some(SidebarItem::SectionChecks) => {
                 vec![FieldDescriptor::readonly(
                     "checks",
@@ -2916,13 +2921,13 @@ mod tests {
     fn toggle_section_collapse_hides_children_and_keeps_cursor() {
         let mut config = AppConfig::default();
         for n in ["h1", "h2", "h3"] {
-            config.host.push(HostEntry {
+            config.host.push(Arc::new(HostEntry {
                 name: n.to_string(),
                 ssh_host: "1.1.1.1".to_string(),
                 shell: ShellType::Sh,
                 groups: vec![],
                 proxy_jump: None,
-            });
+            }));
         }
         let mut state = ConfigTabState::new(&config, None);
         // Focus the Hosts section header.
@@ -3056,20 +3061,20 @@ mod tests {
     #[test]
     fn snapshot_round_trip_no_form_no_popup() {
         let mut config = AppConfig::default();
-        config.host.push(HostEntry {
+        config.host.push(Arc::new(HostEntry {
             name: "h1".to_string(),
             ssh_host: "1.1.1.1".to_string(),
             shell: ShellType::Sh,
             groups: vec![],
             proxy_jump: None,
-        });
-        config.host.push(HostEntry {
+        }));
+        config.host.push(Arc::new(HostEntry {
             name: "h2".to_string(),
             ssh_host: "2.2.2.2".to_string(),
             shell: ShellType::Sh,
             groups: vec![],
             proxy_jump: None,
-        });
+        }));
         let mut state = ConfigTabState::new(&config, None);
         state.sidebar_vp.move_down();
         state.sidebar_vp.move_down();
@@ -3085,13 +3090,13 @@ mod tests {
     fn snapshot_clamps_when_entry_deleted() {
         let mut config = AppConfig::default();
         for i in 0..3 {
-            config.host.push(HostEntry {
+            config.host.push(Arc::new(HostEntry {
                 name: format!("h{i}"),
                 ssh_host: format!("{i}.{i}.{i}.{i}"),
                 shell: ShellType::Sh,
                 groups: vec![],
                 proxy_jump: None,
-            });
+            }));
         }
         let mut state = ConfigTabState::new(&config, None);
         let last = state.items.len() - 1;
@@ -3176,13 +3181,13 @@ mod tests {
         // the E5 scope gap so a future change doesn't silently regress.
         let mut config = AppConfig::default();
         for i in 0..3 {
-            config.host.push(HostEntry {
+            config.host.push(Arc::new(HostEntry {
                 name: format!("h{i}"),
                 ssh_host: format!("{i}.{i}.{i}.{i}"),
                 shell: ShellType::Sh,
                 groups: vec![],
                 proxy_jump: None,
-            });
+            }));
         }
         let mut state = ConfigTabState::new(&config, None);
         // Walk to Host(1).
@@ -3210,13 +3215,13 @@ mod tests {
     fn snapshot_clamps_on_empty_list() {
         // Spec §7.4 empty-list edge case: post-reload length 0 → cursor at 0, no panic.
         let mut config = AppConfig::default();
-        config.host.push(HostEntry {
+        config.host.push(Arc::new(HostEntry {
             name: "h1".to_string(),
             ssh_host: "1.1.1.1".to_string(),
             shell: ShellType::Sh,
             groups: vec![],
             proxy_jump: None,
-        });
+        }));
         let mut state = ConfigTabState::new(&config, None);
         // Move cursor off zero.
         state.sidebar_vp.move_down();
@@ -3232,13 +3237,13 @@ mod tests {
     #[test]
     fn snapshot_restores_entry_form_field_cursor() {
         let mut config = AppConfig::default();
-        config.host.push(crate::config::schema::HostEntry {
+        config.host.push(Arc::new(crate::config::schema::HostEntry {
             name: "h1".to_string(),
             ssh_host: "1.1.1.1".to_string(),
             shell: crate::config::schema::ShellType::Sh,
             groups: vec![],
             proxy_jump: None,
-        });
+        }));
         let mut state = ConfigTabState::new(&config, None);
         let form = EntryFormState::new_host(&config.host[0]);
         state.entry_form = Some(form);
@@ -3445,13 +3450,13 @@ mod tests {
 
     fn make_host_config() -> AppConfig {
         let mut c = AppConfig::default();
-        c.host.push(HostEntry {
+        c.host.push(Arc::new(HostEntry {
             name: "h1".into(),
             ssh_host: "1.2.3.4".into(),
             shell: ShellType::Sh,
             groups: vec!["old".into()],
             proxy_jump: None,
-        });
+        }));
         c
     }
 

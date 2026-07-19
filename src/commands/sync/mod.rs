@@ -343,7 +343,7 @@ async fn sync_inner(
 #[allow(clippy::too_many_arguments)]
 async fn expand_paths(
     ctx: &Context,
-    reachable_hosts: &[&HostEntry],
+    reachable_hosts: &[Arc<HostEntry>],
     all_paths: &mut Vec<String>,
     path_source_map: &mut PathSourceMap<'_>,
     host_applicable_paths: &mut Option<HostPathMap>,
@@ -452,7 +452,7 @@ async fn expand_paths(
             let mut handles = Vec::new();
 
             for host in reachable_hosts {
-                let host = (*host).clone();
+                let host = Arc::clone(host);
                 let paths = no_source_paths.clone();
                 let sessions = Arc::clone(sessions);
                 let timeout = ctx.timeout;
@@ -520,7 +520,7 @@ async fn expand_paths(
 #[allow(clippy::too_many_arguments)]
 async fn decide_batch(
     ctx: &Context,
-    reachable_hosts: &[&HostEntry],
+    reachable_hosts: &[Arc<HostEntry>],
     all_paths: &[String],
     path_source_map: &PathSourceMap<'_>,
     host_applicable_paths: &Option<HostPathMap>,
@@ -629,7 +629,7 @@ async fn decide_batch(
 #[allow(clippy::too_many_arguments)]
 async fn distribute_batch(
     ctx: &Context,
-    reachable_hosts: &[&HostEntry],
+    reachable_hosts: &[Arc<HostEntry>],
     all_decisions: &[SyncDecision],
     limiter: &crate::host::concurrency::ConcurrencyLimiter,
     sessions: &Arc<RusshSessionPool>,
@@ -818,7 +818,7 @@ async fn distribute_batch(
 #[allow(clippy::too_many_arguments)]
 async fn run_recursive_entries(
     ctx: &Context,
-    reachable_hosts: &[&HostEntry],
+    reachable_hosts: &[Arc<HostEntry>],
     recursive_entries: &[RecursiveEntry<'_>],
     sessions: &Arc<RusshSessionPool>,
     dry_run: bool,
@@ -828,10 +828,10 @@ async fn run_recursive_entries(
     summary: &mut SyncSummary,
 ) -> Result<()> {
     for (entry, hosts_for_entry, effective_source) in recursive_entries {
-        let scoped_hosts: Vec<&HostEntry> = reachable_hosts
+        let scoped_hosts: Vec<Arc<HostEntry>> = reachable_hosts
             .iter()
             .filter(|h| hosts_for_entry.contains(&h.name))
-            .copied()
+            .cloned()
             .collect();
         if scoped_hosts.len() < 2 {
             continue;
@@ -907,7 +907,7 @@ async fn run_recursive_entries(
 #[allow(clippy::too_many_arguments)]
 async fn sync_path_across(
     ctx: &Context,
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     path: &str,
     group_name: &str,
     dry_run: bool,

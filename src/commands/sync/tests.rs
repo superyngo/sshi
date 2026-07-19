@@ -509,7 +509,7 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
             .await
             .unwrap(),
     );
-    let reachable_hosts: Vec<&crate::config::schema::HostEntry> = Vec::new();
+    let reachable_hosts: Vec<std::sync::Arc<crate::config::schema::HostEntry>> = Vec::new();
     let path_source_map: HashMap<String, Option<&str>> = HashMap::new();
     let mut summary = crate::output::summary::SyncSummary::default();
 

@@ -15,7 +15,7 @@ use super::types::{
 
 pub(crate) fn collect_sync_paths<'a>(
     ctx: &'a Context,
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     names: &[String],
     positional: &'a [String],
     cli_source: Option<&'a str>,
@@ -98,7 +98,7 @@ pub(crate) fn scope_collect_result(
 }
 
 pub(crate) async fn collect_file_metadata(
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     path: &str,
     timeout: u64,
     concurrency: usize,
@@ -109,7 +109,7 @@ pub(crate) async fn collect_file_metadata(
 
     for host in hosts {
         let sem = semaphore.clone();
-        let host = (*host).clone();
+        let host = Arc::clone(host);
         let file_path = path.to_string();
         let sessions = Arc::clone(&sessions);
         handles.push(tokio::spawn(async move {
@@ -205,7 +205,7 @@ pub(crate) async fn collect_file_metadata(
 }
 
 pub(crate) async fn batch_collect_all_metadata(
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     paths: &[String],
     timeout: u64,
     concurrency: usize,
@@ -216,7 +216,7 @@ pub(crate) async fn batch_collect_all_metadata(
 
     for host in hosts {
         let sem = semaphore.clone();
-        let host = (*host).clone();
+        let host = Arc::clone(host);
         let paths = paths.to_vec();
         let cmd = build_batch_metadata_cmd(&paths, host.shell);
         let sessions = Arc::clone(sessions);

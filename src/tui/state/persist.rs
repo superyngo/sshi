@@ -382,13 +382,13 @@ active_tab = "Config"
     fn cfg_with_hosts(specs: &[(&str, &[&str])]) -> AppConfig {
         let mut cfg = AppConfig::default();
         for (name, groups) in specs {
-            cfg.host.push(HostEntry {
+            cfg.host.push(std::sync::Arc::new(HostEntry {
                 name: name.to_string(),
                 ssh_host: name.to_string(),
                 shell: ShellType::Sh,
                 groups: groups.iter().map(|s| s.to_string()).collect(),
                 proxy_jump: None,
-            });
+            }));
         }
         cfg
     }

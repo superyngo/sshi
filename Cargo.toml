@@ -24,7 +24,7 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "process", "time", "macros", "sync", "io-util", "fs", "signal"] }
 
 # Config
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 toml = "0.8"
 toml_edit = "0.22"
 

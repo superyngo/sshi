@@ -19,6 +19,8 @@ pub mod report;
 
 use anyhow::Result;
 
+use std::sync::Arc;
+
 use crate::commands::report::printer_sink_with_skip;
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config;
@@ -165,18 +167,17 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
         detect_hosts.len()
     );
 
-    let temp_entries: Vec<HostEntry> = detect_hosts
+    let temp_entries: Vec<Arc<HostEntry>> = detect_hosts
         .iter()
-        .map(|name| HostEntry::placeholder(name, name))
+        .map(|name| Arc::new(HostEntry::placeholder(name, name)))
         .collect();
-    let entry_refs: Vec<&HostEntry> = temp_entries.iter().collect();
 
     let mut progress = SyncProgress::new();
-    progress.start_host_check(entry_refs.len());
+    progress.start_host_check(temp_entries.len());
     let session_pool =
-        RusshSessionPool::setup(&entry_refs, ctx.timeout, ctx.concurrency(), None).await?;
+        RusshSessionPool::setup(&temp_entries, ctx.timeout, ctx.concurrency(), None).await?;
     let connected = session_pool.reachable_hosts().len();
-    let failed_count = entry_refs.len() - connected;
+    let failed_count = temp_entries.len() - connected;
     progress.finish_host_check(connected, failed_count);
 
     let (host_key_failures, rest) = partition_host_key_failures(session_pool.failed_hosts());
@@ -225,19 +226,22 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
                 }
 
                 if !accepted.is_empty() {
-                    let retry_entries: Vec<HostEntry> = accepted
+                    let retry_entries: Vec<Arc<HostEntry>> = accepted
                         .iter()
-                        .map(|name| HostEntry::placeholder(name, name))
+                        .map(|name| Arc::new(HostEntry::placeholder(name, name)))
                         .collect();
-                    let retry_refs: Vec<&HostEntry> = retry_entries.iter().collect();
 
                     println!("\nRetrying {} host(s)...", accepted.len());
-                    progress.start_host_check(retry_refs.len());
-                    let rp =
-                        RusshSessionPool::setup(&retry_refs, ctx.timeout, ctx.concurrency(), None)
-                            .await?;
+                    progress.start_host_check(retry_entries.len());
+                    let rp = RusshSessionPool::setup(
+                        &retry_entries,
+                        ctx.timeout,
+                        ctx.concurrency(),
+                        None,
+                    )
+                    .await?;
                     let retry_connected = rp.reachable_hosts().len();
-                    let retry_failed = retry_refs.len() - retry_connected;
+                    let retry_failed = retry_entries.len() - retry_connected;
                     progress.finish_host_check(retry_connected, retry_failed);
 
                     for (name, err) in rp.failed_hosts() {
@@ -312,18 +316,18 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
             }
 
             if !copied.is_empty() {
-                let retry_entries: Vec<HostEntry> = copied
+                let retry_entries: Vec<Arc<HostEntry>> = copied
                     .iter()
-                    .map(|name| HostEntry::placeholder(name, name))
+                    .map(|name| Arc::new(HostEntry::placeholder(name, name)))
                     .collect();
-                let retry_refs: Vec<&HostEntry> = retry_entries.iter().collect();
 
                 println!("\nRetrying {} host(s)...", copied.len());
-                progress.start_host_check(retry_refs.len());
-                let rp = RusshSessionPool::setup(&retry_refs, ctx.timeout, ctx.concurrency(), None)
-                    .await?;
+                progress.start_host_check(retry_entries.len());
+                let rp =
+                    RusshSessionPool::setup(&retry_entries, ctx.timeout, ctx.concurrency(), None)
+                        .await?;
                 let retry_connected = rp.reachable_hosts().len();
-                let retry_failed = retry_refs.len() - retry_connected;
+                let retry_failed = retry_entries.len() - retry_connected;
                 progress.finish_host_check(retry_connected, retry_failed);
 
                 for (name, err) in rp.failed_hosts() {

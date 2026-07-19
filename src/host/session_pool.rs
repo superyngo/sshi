@@ -157,7 +157,7 @@ impl RusshSessionPool {
     /// / password fallback) through the TUI auth bridge instead of blocking
     /// `rpassword`. The CLI passes `None`.
     pub async fn setup(
-        hosts: &[&HostEntry],
+        hosts: &[Arc<HostEntry>],
         timeout_secs: u64,
         concurrency: usize,
         auth_sender: Option<SshAuthSender>,
@@ -342,11 +342,7 @@ impl RusshSessionPool {
     /// Run SFTP probe on all connected hosts. Records failures in `sftp_failed`.
     /// Successfully probed hosts have their open SFTP channel cached so the
     /// subsequent `upload`/`download` reuses it.
-    pub async fn run_sftp_probe(
-        &mut self,
-        hosts: &[&crate::config::schema::HostEntry],
-        timeout_secs: u64,
-    ) {
+    pub async fn run_sftp_probe(&mut self, hosts: &[Arc<HostEntry>], timeout_secs: u64) {
         let timeout = Duration::from_secs(timeout_secs);
 
         let tasks: Vec<_> = hosts

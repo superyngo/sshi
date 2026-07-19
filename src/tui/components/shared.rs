@@ -151,7 +151,7 @@ mod tests {
         let mut host = crate::config::schema::HostEntry::placeholder("h1", "h1");
         host.groups = vec!["web".into(), "db".into(), "web".into()];
         let config = AppConfig {
-            host: vec![host],
+            host: vec![std::sync::Arc::new(host)],
             ..Default::default()
         };
         assert_eq!(
@@ -175,7 +175,7 @@ mod tests {
         let mut host = crate::config::schema::HostEntry::placeholder("h1", "h1");
         host.groups = vec!["".to_string(), "web".to_string()];
         let config = AppConfig {
-            host: vec![host],
+            host: vec![std::sync::Arc::new(host)],
             ..Default::default()
         };
         assert_eq!(

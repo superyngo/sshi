@@ -1,6 +1,7 @@
 //! Serializable configuration types: hosts, groups, check, and sync entries.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ pub struct AppConfig {
     pub settings: Settings,
 
     #[serde(default)]
-    pub host: Vec<HostEntry>,
+    pub host: Vec<Arc<HostEntry>>,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub check: Vec<CheckEntry>,
@@ -262,5 +263,53 @@ mod tests {
         let toml_str = toml::to_string_pretty(&entry).unwrap();
         let parsed: HostEntry = toml::from_str(&toml_str).unwrap();
         assert_eq!(parsed.proxy_jump.as_deref(), Some("bastion"));
+    }
+
+    #[test]
+    fn app_config_host_arc_roundtrips_through_toml() {
+        let cfg = AppConfig {
+            host: vec![
+                Arc::new(HostEntry {
+                    name: "h1".to_string(),
+                    ssh_host: "h1".to_string(),
+                    shell: ShellType::Sh,
+                    groups: vec!["web".to_string()],
+                    proxy_jump: None,
+                }),
+                Arc::new(HostEntry {
+                    name: "h2".to_string(),
+                    ssh_host: "h2.example.com".to_string(),
+                    shell: ShellType::PowerShell,
+                    groups: vec![],
+                    proxy_jump: Some("bastion".to_string()),
+                }),
+            ],
+            ..Default::default()
+        };
+        let toml_str = toml::to_string_pretty(&cfg).unwrap();
+        let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+        assert_eq!(parsed.host.len(), 2);
+        assert_eq!(parsed.host[0].name, "h1");
+        assert_eq!(parsed.host[0].groups, vec!["web".to_string()]);
+        assert_eq!(parsed.host[1].name, "h2");
+        assert_eq!(parsed.host[1].shell, ShellType::PowerShell);
+        assert_eq!(parsed.host[1].proxy_jump.as_deref(), Some("bastion"));
+    }
+
+    #[test]
+    fn arc_host_entry_clone_increments_strong_count_not_deep_clone() {
+        let h = Arc::new(HostEntry {
+            name: "h1".to_string(),
+            ssh_host: "h1".to_string(),
+            shell: ShellType::Sh,
+            groups: vec!["g".to_string()],
+            proxy_jump: None,
+        });
+        let clones: Vec<Arc<HostEntry>> = (0..5).map(|_| Arc::clone(&h)).collect();
+        assert_eq!(Arc::strong_count(&h), 6);
+        let base = Arc::as_ptr(&h);
+        assert!(clones.iter().all(|c| std::ptr::eq(Arc::as_ptr(c), base)));
+        drop(clones);
+        assert_eq!(Arc::strong_count(&h), 1);
     }
 }

@@ -1,5 +1,6 @@
 //! Run a shell command on remote hosts.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -62,7 +63,7 @@ pub async fn run_core(
 
     let mut handles = Vec::new();
     for host in &reachable {
-        let host = (*host).clone();
+        let host = Arc::clone(host);
         let cmd = if sudo {
             shell::sudo_wrap(host.shell, command)
         } else {

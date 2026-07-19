@@ -1,6 +1,7 @@
 //! Collect and store system metrics from remote hosts.
 
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -119,7 +120,7 @@ pub async fn check_core(
         if let Some(p) = progress {
             p.host_started(&host.name);
         }
-        let host = (*host).clone();
+        let host = Arc::clone(host);
         let timeout = ctx.timeout;
         let sessions = pool.session_pool.clone();
         let global_sem = pool.limiter.global_semaphore();
@@ -386,7 +387,7 @@ pub async fn run(
 /// metrics/paths from the named (or "default") [[check]] entries.
 fn build_host_check_configs(
     ctx: &Context,
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     names: &[String],
 ) -> HashMap<String, HostCheckConfig> {
     let checks = ctx.resolve_checks(names);

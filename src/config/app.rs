@@ -2,6 +2,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, Value};
@@ -249,7 +250,9 @@ fn apply_config_to_doc(doc: &mut DocumentMut, config: &AppConfig) {
     // entries are rare in practice. Previously these sections were never
     // written back, so any Hosts/Checks/Syncs edit through the TUI was
     // silently dropped on save (only [settings] persisted).
-    write_aot(doc, "host", &config.host, host_to_table);
+    write_aot(doc, "host", &config.host, |h: &Arc<HostEntry>| {
+        host_to_table(h)
+    });
     write_aot(doc, "check", &config.check, check_to_table);
     write_aot(doc, "sync", &config.sync, sync_to_table);
 }
@@ -555,8 +558,8 @@ recursive = false
         let f = write_tmp(original);
         // Mutate one field of each kind through the same path the TUI uses.
         let mut cfg = load(Some(&*f)).unwrap().unwrap();
-        cfg.host[0].groups = vec!["new1".into(), "new2".into()];
-        cfg.host[0].proxy_jump = Some("bastion".into());
+        Arc::make_mut(&mut cfg.host[0]).groups = vec!["new1".into(), "new2".into()];
+        Arc::make_mut(&mut cfg.host[0]).proxy_jump = Some("bastion".into());
         cfg.check[0].enabled = vec!["online".into(), "cpu_load".into()];
         cfg.check[0].path = vec![CheckPath {
             path: "/var/log".into(),

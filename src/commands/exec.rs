@@ -1,6 +1,7 @@
 //! Execute scripts or commands on remote hosts with shell wrapping.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Result};
@@ -103,7 +104,7 @@ pub async fn exec_core(
             }
         }
 
-        let host = (*host).clone();
+        let host = Arc::clone(host);
         let script_path = script_path.to_path_buf();
         let timeout = ctx.timeout;
         let sessions = pool.session_pool.clone();

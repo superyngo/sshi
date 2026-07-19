@@ -22,6 +22,7 @@
 //! extraction (it parallelises cleanly with no per-host prompt).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
 
@@ -321,10 +322,10 @@ pub(crate) fn persist_init_result(
             .retain(|h| !stale_host_names.contains(&h.ssh_host));
     }
     for host in new_hosts {
-        if let Some(existing) = config.host.iter_mut().find(|h| h.ssh_host == host.ssh_host) {
-            existing.shell = host.shell;
+        if let Some(idx) = config.host.iter().position(|h| h.ssh_host == host.ssh_host) {
+            Arc::make_mut(&mut config.host[idx]).shell = host.shell;
         } else {
-            config.host.push(host.clone());
+            config.host.push(Arc::new(host.clone()));
         }
     }
     for s in &plan.skip {

@@ -15,6 +15,7 @@ pub mod sync;
 use anyhow::{bail, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::cli::TargetArgs;
 use crate::config::schema::{AppConfig, CheckEntry, HostEntry, SyncEntry};
@@ -133,26 +134,29 @@ impl Context {
 
     /// Resolve targeted hosts based on mode.
     /// For --all: all hosts. For --host: named hosts. For --group: hosts in group.
-    pub fn resolve_hosts(&self) -> Result<Vec<&HostEntry>> {
-        let hosts: Vec<&HostEntry> = match &self.mode {
-            TargetMode::All => self.config.host.iter().collect(),
+    pub fn resolve_hosts(&self) -> Result<Vec<Arc<HostEntry>>> {
+        let hosts: Vec<Arc<HostEntry>> = match &self.mode {
+            TargetMode::All => self.config.host.clone(),
             TargetMode::Hosts(names) => self
                 .config
                 .host
                 .iter()
                 .filter(|h| names.contains(&h.name))
+                .cloned()
                 .collect(),
             TargetMode::Groups(groups) => self
                 .config
                 .host
                 .iter()
                 .filter(|h| h.groups.iter().any(|g| groups.contains(g)))
+                .cloned()
                 .collect(),
             TargetMode::Shell(shells) => self
                 .config
                 .host
                 .iter()
                 .filter(|h| shells.contains(&h.shell))
+                .cloned()
                 .collect(),
         };
 
@@ -344,7 +348,7 @@ fn collect_available_groups(config: &AppConfig) -> BTreeSet<String> {
 }
 
 /// Drop any host whose name appears in `skip`. Unknown names are ignored.
-fn filter_skipped<'a>(hosts: Vec<&'a HostEntry>, skip: &[String]) -> Vec<&'a HostEntry> {
+fn filter_skipped(hosts: Vec<Arc<HostEntry>>, skip: &[String]) -> Vec<Arc<HostEntry>> {
     if skip.is_empty() {
         return hosts;
     }
@@ -404,10 +408,10 @@ mod tests {
 
     #[test]
     fn filter_skipped_removes_named_hosts() {
-        let h1 = host("h1");
-        let h2 = host("h2");
-        let h3 = host("h3");
-        let all: Vec<&HostEntry> = vec![&h1, &h2, &h3];
+        let h1 = Arc::new(host("h1"));
+        let h2 = Arc::new(host("h2"));
+        let h3 = Arc::new(host("h3"));
+        let all: Vec<Arc<HostEntry>> = vec![h1, h2, h3];
 
         let kept = filter_skipped(all.clone(), &["h2".to_string()]);
         let names: Vec<&str> = kept.iter().map(|h| h.name.as_str()).collect();

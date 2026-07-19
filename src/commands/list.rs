@@ -21,7 +21,7 @@ pub struct ListData {
 /// TUI View tab calls `.unwrap_or_default()` at its own call site.
 pub fn list_core(ctx: &Context) -> Result<ListData> {
     Ok(ListData {
-        hosts: ctx.resolve_hosts()?.into_iter().cloned().collect(),
+        hosts: ctx.resolve_hosts()?.iter().map(|a| (**a).clone()).collect(),
         // Viewer: list every configured entry (selection now happens by --name).
         checks: ctx.config.check.clone(),
         syncs: ctx.config.sync.clone(),
@@ -135,13 +135,13 @@ mod tests {
     fn make_ctx(hosts: &[(&str, &[&str])]) -> Context {
         let mut config = AppConfig::default();
         for (name, groups) in hosts {
-            config.host.push(HostEntry {
+            config.host.push(std::sync::Arc::new(HostEntry {
                 name: name.to_string(),
                 ssh_host: name.to_string(),
                 groups: groups.iter().map(|g| g.to_string()).collect(),
                 shell: ShellType::Sh,
                 proxy_jump: None,
-            });
+            }));
         }
         let conn = crate::state::db::open(None).unwrap();
         Context {

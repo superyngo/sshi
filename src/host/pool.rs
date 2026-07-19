@@ -27,7 +27,7 @@ impl SshPool {
     /// Set up the pool: create ControlMaster connections, build ConcurrencyLimiter,
     /// initialize progress bars. Returns (pool, connected_count).
     pub async fn setup(
-        hosts: &[&HostEntry],
+        hosts: &[Arc<HostEntry>],
         timeout: u64,
         global_concurrency: usize,
         per_host_concurrency: usize,
@@ -48,7 +48,7 @@ impl SshPool {
     /// When `probe_sftp` is true, reachable hosts are also tested for SFTP capability.
     /// The progress bar reflects both SSH + SFTP checks.
     pub async fn setup_with_options(
-        hosts: &[&HostEntry],
+        hosts: &[Arc<HostEntry>],
         timeout: u64,
         global_concurrency: usize,
         per_host_concurrency: usize,
@@ -91,13 +91,13 @@ impl SshPool {
     }
 
     /// Filter a host list to only reachable hosts.
-    pub fn filter_reachable<'a>(&self, hosts: &[&'a HostEntry]) -> Vec<&'a HostEntry> {
+    pub fn filter_reachable(&self, hosts: &[Arc<HostEntry>]) -> Vec<Arc<HostEntry>> {
         let reachable: std::collections::HashSet<String> =
             self.session_pool.reachable_hosts().into_iter().collect();
         hosts
             .iter()
             .filter(|h| reachable.contains(&h.ssh_host))
-            .copied()
+            .cloned()
             .collect()
     }
 
@@ -107,12 +107,12 @@ impl SshPool {
     }
 
     /// Filter a host list to only hosts that passed the SFTP probe.
-    pub fn filter_sftp_capable<'a>(&self, hosts: &[&'a HostEntry]) -> Vec<&'a HostEntry> {
+    pub fn filter_sftp_capable(&self, hosts: &[Arc<HostEntry>]) -> Vec<Arc<HostEntry>> {
         let capable = self.session_pool.sftp_capable_hosts();
         hosts
             .iter()
             .filter(|h| capable.contains(&h.ssh_host))
-            .copied()
+            .cloned()
             .collect()
     }
 

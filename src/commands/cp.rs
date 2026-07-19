@@ -5,6 +5,7 @@
 //! directory; a leading `~` is expanded per host.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{bail, Result};
@@ -89,7 +90,7 @@ pub async fn cp_core(
 
     let mut handles = Vec::new();
     for host in &reachable {
-        let host = (*host).clone();
+        let host = Arc::clone(host);
         let transfers = transfers.clone();
         let timeout = ctx.timeout;
         let sessions = pool.session_pool.clone();

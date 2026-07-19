@@ -10,7 +10,7 @@ use crate::host::session_pool::RusshSessionPool;
 use super::types::SyncDecision;
 
 pub(crate) async fn distribute(
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     decision: &SyncDecision,
     timeout: u64,
     concurrency: usize,
@@ -37,7 +37,7 @@ pub(crate) async fn distribute(
             .ok_or_else(|| anyhow::anyhow!("Target host not found: {}", target_name))?;
 
         let sem = semaphore.clone();
-        let target = (*target).clone();
+        let target = Arc::clone(target);
         let local_temp = local_temp.clone();
         let remote_path = decision.path.clone();
         let target_name = target_name.clone();
@@ -67,7 +67,7 @@ pub(crate) async fn distribute(
 }
 
 pub(crate) async fn distribute_pooled(
-    hosts: &[&HostEntry],
+    hosts: &[Arc<HostEntry>],
     decision: &SyncDecision,
     timeout: u64,
     limiter: &ConcurrencyLimiter,
@@ -95,7 +95,7 @@ pub(crate) async fn distribute_pooled(
             .find(|h| h.name == *target_name)
             .ok_or_else(|| anyhow::anyhow!("Target host not found: {}", target_name))?;
 
-        let target = (*target).clone();
+        let target = Arc::clone(target);
         let local_temp = local_temp.clone();
         let remote_path = decision.path.clone();
         let target_name = target_name.clone();
