@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Reason for skipping a file during sync.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SkipReason {
     pub path: String,
     pub host: String,
@@ -11,7 +11,7 @@ pub struct SkipReason {
 }
 
 /// A single error entry with optional file-path context for deduplication.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ErrorEntry {
     pub host: String,
     pub message: String,
@@ -19,7 +19,7 @@ pub struct ErrorEntry {
 }
 
 /// Execution summary for a batch operation.
-#[derive(Default)]
+#[derive(Default, Debug, Clone)]
 pub struct Summary {
     pub succeeded: usize,
     pub failed: usize,
