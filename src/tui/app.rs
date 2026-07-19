@@ -172,7 +172,7 @@ impl App {
         Self {
             active_tab,
             navbar_focused: false,
-            theme: Theme::default_palette(),
+            theme: Theme::from_env(),
             error: None,
             help_open: false,
             should_quit: false,
@@ -3882,14 +3882,7 @@ impl App {
 
         // Helper closure to render a per-host row.
         let render_row = |host: &str, status: HostStatus, detail: &str, ms: Option<u64>| {
-            let glyph = match status {
-                HostStatus::Online => "✓",
-                HostStatus::Partial => "⚠",
-                HostStatus::Offline | HostStatus::Error => "✗",
-                HostStatus::Unreachable => "⊘",
-                HostStatus::TimedOut => "⏱",
-                HostStatus::Skipped => "⊘",
-            };
+            let glyph = self.theme.glyphs.for_status(status);
             let color = match status {
                 HostStatus::Online => self.theme.accent_checkout,
                 HostStatus::Partial => self.theme.warning,
@@ -4232,7 +4225,7 @@ Config tab
             .split(area);
 
         if self.active_tab == TabId::Config && self.config_tab.banner_active() {
-            let p = Paragraph::new("  ✓ Config saved").style(
+            let p = Paragraph::new(format!("  {} Config saved", self.theme.glyphs.ok)).style(
                 Style::default()
                     .fg(self.theme.warning)
                     .add_modifier(Modifier::BOLD),

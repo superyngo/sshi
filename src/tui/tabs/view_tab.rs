@@ -260,9 +260,9 @@ fn view_skip_line<'a>(data: &ViewRenderData) -> Line<'a> {
 /// can toggle with Space / `c` while this row is focused.
 fn view_combined_toggle_line<'a>(data: &ViewRenderData) -> Line<'a> {
     let glyph = if data.checkout_combined {
-        "[✓]"
+        format!("[{}]", data.theme.glyphs.ok)
     } else {
-        "[ ]"
+        "[ ]".to_string()
     };
     let label = format!(" Combined: {glyph}  c=toggle");
     Line::from(Span::styled(
@@ -474,9 +474,9 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
     for (i, snap) in snapshots[start..end].iter().enumerate() {
         let selected = start + i == data.checkout_selected;
         let status_text = if snap.online {
-            "✓ online"
+            format!("{} online", data.theme.glyphs.ok)
         } else {
-            "✗ offline"
+            format!("{} offline", data.theme.glyphs.error)
         };
         let status_style = Style::default().fg(if snap.online {
             data.theme.accent_checkout
@@ -862,9 +862,9 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         };
 
         let (glyph, glyph_color) = match r.status.as_str() {
-            "ok" => ("✓", data.theme.accent_checkout),
-            "error" => ("✗", data.theme.error),
-            "skipped" => ("⊘", data.theme.warning),
+            "ok" => (data.theme.glyphs.ok, data.theme.accent_checkout),
+            "error" => (data.theme.glyphs.error, data.theme.error),
+            "skipped" => (data.theme.glyphs.skip, data.theme.warning),
             _ => ("·", Color::Reset),
         };
 

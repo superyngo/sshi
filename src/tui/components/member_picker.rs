@@ -233,14 +233,14 @@ impl MemberPicker {
                     let i = start + rel;
                     let glyph = if self.multi {
                         if self.selected[i] {
-                            "[✓]"
+                            format!("[{}]", theme.glyphs.ok)
                         } else {
-                            "[ ]"
+                            "[ ]".to_string()
                         }
                     } else if self.selected[i] {
-                        "◉"
+                        "◉".to_string()
                     } else {
-                        "○"
+                        "○".to_string()
                     };
                     let focused = i == self.viewport.selected;
                     let style = if focused {

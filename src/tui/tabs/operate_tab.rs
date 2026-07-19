@@ -504,9 +504,9 @@ fn serial_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::Serial;
     let active = !data.navbar_focused;
     let glyph = if data.target_filter.serial {
-        "[✓] Serial (s)"
+        format!("[{}] Serial (s)", data.theme.glyphs.ok)
     } else {
-        "[ ] Serial (s)"
+        "[ ] Serial (s)".to_string()
     };
     Line::from(vec![
         Span::raw(" "),
@@ -518,9 +518,9 @@ fn dry_run_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::DryRun;
     let active = !data.navbar_focused;
     let glyph = if data.dry_run {
-        "[✓] dry-run (d)"
+        format!("[{}] dry-run (d)", data.theme.glyphs.ok)
     } else {
-        "[ ] dry-run (d)"
+        "[ ] dry-run (d)".to_string()
     };
     Line::from(vec![
         Span::raw(" "),
@@ -542,7 +542,7 @@ fn timeout_line<'a>(data: &OperateRenderData) -> Line<'a> {
 
 fn toggle_line<'a>(label: &str, on: bool, focused: bool, active: bool, theme: &Theme) -> Line<'a> {
     let glyph = if on {
-        format!("[✓] {label}")
+        format!("[{}] {label}", theme.glyphs.ok)
     } else {
         format!("[ ] {label}")
     };
@@ -666,15 +666,7 @@ pub fn render_progress_popup(
     lines.push(Line::from(""));
 
     for (host, status, detail, ms) in &host_outcomes[start..(start + take).min(total_outcomes)] {
-        let glyph = match status {
-            HostStatus::Online => "✓",
-            HostStatus::Partial => "⚠",
-            HostStatus::Offline => "✗",
-            HostStatus::Unreachable => "⊘",
-            HostStatus::TimedOut => "⏱",
-            HostStatus::Error => "✗",
-            HostStatus::Skipped => "⊘",
-        };
+        let glyph = theme.glyphs.for_status(*status);
         let color = match status {
             HostStatus::Online => theme.accent_checkout,
             HostStatus::Partial => theme.warning,
