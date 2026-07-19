@@ -1,7 +1,8 @@
-//! Crossterm event helpers. The main loop uses `crossterm::event::poll`
-//! directly with a 50ms timeout (per §18.1) so this module currently only
-//! re-exports types and provides drain helpers for the size-guard path
-//! (§7.8 step 2: discard non-Resize events while terminal is too small).
+//! Crossterm event helpers. The main loop uses `crossterm::event::EventStream`
+//! (per G4, replacing the legacy 50ms `event::poll`). This module currently
+//! only re-exports types and provides the `drain_non_resize` helper used by
+//! the size-guard path (§7.8 step 2: discard non-Resize events while terminal
+//! is too small).
 
 use std::time::Duration;
 

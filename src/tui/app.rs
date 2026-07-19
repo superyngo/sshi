@@ -15,9 +15,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute, terminal,
 };
+use futures::StreamExt;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -74,7 +75,6 @@ fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std
 
 const MIN_COLS: u16 = 60;
 const MIN_ROWS: u16 = 20;
-const POLL_INTERVAL_MS: u64 = 50;
 
 /// Active section of the Info (`i`) popup. Cycles TabInfo → About → Help →
 /// TabInfo via `Tab` inside the popup.
@@ -700,6 +700,9 @@ impl App {
         });
 
         let mut dirty = true;
+        let mut event_stream = EventStream::new();
+        let mut sig_rx_fut = Box::pin(sig_rx.recv());
+        let mut event_rx_fut = Box::pin(event_rx.recv());
         loop {
             if self.should_quit {
                 self.save_state();
@@ -707,29 +710,59 @@ impl App {
                 break;
             }
 
-            // Drain any pending signals (non-blocking).
-            while let Ok(()) = sig_rx.try_recv() {
-                self.should_quit = true;
-                dirty = true;
-            }
-
-            // Drain bridge events (non-blocking) before rendering.
-            while let Ok(ev) = event_rx.try_recv() {
-                if self.handle_tui_event(ev) {
-                    dirty = true;
-                }
-            }
-
             if dirty {
                 terminal.draw(|f| self.render(f.area(), f))?;
                 dirty = false;
             }
 
-            // Poll crossterm with a short timeout so signal & dirty paths stay
-            // responsive without busy-looping.
-            if event::poll(Duration::from_millis(POLL_INTERVAL_MS))? {
-                let ev = event::read()?;
-                if self.handle_event(ev)? {
+            // Build the banner-expiry future: if the reload banner is active,
+            // sleep until it expires; otherwise park forever on pending().
+            let banner_deadline = self.config_tab.reload_banner_until;
+            let banner_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+                match banner_deadline {
+                    Some(until) => Box::pin(async move {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(until)).await;
+                    }),
+                    None => Box::pin(std::future::pending()),
+                };
+
+            // Block until the first of: terminal input, signal, bridge event,
+            // or banner-expiry fires. Re-arms each future after firing.
+            tokio::select! {
+                biased;
+                ev = event_stream.next() => {
+                    match ev {
+                        Some(Ok(ev)) => {
+                            if self.handle_event(ev)? {
+                                dirty = true;
+                            }
+                        }
+                        Some(Err(e)) => {
+                            return Err(anyhow::Error::from(e).context("terminal event read"));
+                        }
+                        None => {
+                            // EventStream closed: treat as quit so the loop
+                            // exits instead of busy-spinning on a dead stream.
+                            self.should_quit = true;
+                            dirty = true;
+                        }
+                    }
+                }
+                Some(()) = &mut sig_rx_fut => {
+                    self.should_quit = true;
+                    dirty = true;
+                    drop(sig_rx_fut);
+                    sig_rx_fut = Box::pin(sig_rx.recv());
+                }
+                Some(ev) = &mut event_rx_fut => {
+                    if self.handle_tui_event(ev) {
+                        dirty = true;
+                    }
+                    drop(event_rx_fut);
+                    event_rx_fut = Box::pin(event_rx.recv());
+                }
+                _ = banner_fut => {
+                    self.config_tab.reload_banner_until = None;
                     dirty = true;
                 }
             }
@@ -745,14 +778,6 @@ impl App {
                 self.needs_editor_open = false;
                 self.do_open_editor(&mut terminal)?;
                 dirty = true;
-            }
-
-            // Expire the "Config reloaded" banner so it disappears after 2s.
-            if let Some(until) = self.config_tab.reload_banner_until {
-                if Instant::now() >= until {
-                    self.config_tab.reload_banner_until = None;
-                    dirty = true;
-                }
             }
         }
 
@@ -1191,60 +1216,45 @@ impl App {
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
 
-        // Run the operation on a dedicated OS thread with its own
-        // current-thread tokio runtime. This sidesteps the Send constraint
-        // imposed by tokio::spawn on the main multi-thread runtime
-        // (rusqlite::Connection is Send but !Sync, so &Context is !Send and
-        // check_core's future cannot be sent between threads). A current-
-        // thread runtime never moves the future across threads.
-        let _ = std::thread::Builder::new()
-            .name("sshi-op".to_string())
-            .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        return;
-                    }
-                };
-                rt.block_on(async move {
-                    let ctx = match Context::from_tui_parts(
-                        cfg,
-                        cfg_path,
-                        target_mode,
-                        serial,
-                        timeout,
-                        verbose,
-                        skip,
-                        auth_sender,
-                    ) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                            return;
-                        }
-                    };
-                    let sink = EventSender::new(event_tx.clone());
-                    let outcome = tokio::select! {
-                        res = crate::commands::check::check_core(&ctx, &names, Some(&sink)) => res,
-                        _ = cancel_for_task.cancelled() => {
-                            let _ = event_tx.send(TuiEvent::OperationCancelled);
-                            return;
-                        }
-                    };
-                    match outcome {
-                        Ok(report) => {
-                            let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        }
-                    }
-                });
-            });
+        // Spawn the operation directly on the main multi-thread runtime.
+        // Phase B made `Context` `Send + Sync` (via `Arc<Mutex<Connection>>`);
+        // G1 wrapped `HostEntry` in `Arc`, G2 wrapped `AppConfig` in `Arc`, so
+        // the operation future is `Send` and no longer needs a dedicated
+        // OS thread + current-thread runtime to satisfy `tokio::spawn`'s bound.
+        tokio::spawn(async move {
+            let ctx = match Context::from_tui_parts(
+                cfg,
+                cfg_path,
+                target_mode,
+                serial,
+                timeout,
+                verbose,
+                skip,
+                auth_sender,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                    return;
+                }
+            };
+            let sink = EventSender::new(event_tx.clone());
+            let outcome = tokio::select! {
+                res = crate::commands::check::check_core(&ctx, &names, Some(&sink)) => res,
+                _ = cancel_for_task.cancelled() => {
+                    let _ = event_tx.send(TuiEvent::OperationCancelled);
+                    return;
+                }
+            };
+            match outcome {
+                Ok(report) => {
+                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                }
+            }
+        });
 
         self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
@@ -1295,47 +1305,40 @@ impl App {
         let cancel_for_task = cancel.clone();
         let sudo = self.operate.run_sudo;
 
-        let _ = std::thread::Builder::new()
-            .name("sshi-op".to_string())
-            .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        return;
-                    }
-                };
-                rt.block_on(async move {
-                    let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
-                    ) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                            return;
-                        }
-                    };
-                    let sink = EventSender::new(event_tx.clone());
-                    let outcome = tokio::select! {
-                        res = crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink)) => res,
-                        _ = cancel_for_task.cancelled() => {
-                            let _ = event_tx.send(TuiEvent::OperationCancelled);
-                            return;
-                        }
-                    };
-                    match outcome {
-                        Ok(report) => {
-                            let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        }
-                    }
-                });
-            });
+        tokio::spawn(async move {
+            let ctx = match Context::from_tui_parts(
+                cfg,
+                cfg_path,
+                target_mode,
+                serial,
+                timeout,
+                false,
+                skip,
+                auth_sender,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                    return;
+                }
+            };
+            let sink = EventSender::new(event_tx.clone());
+            let outcome = tokio::select! {
+                res = crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink)) => res,
+                _ = cancel_for_task.cancelled() => {
+                    let _ = event_tx.send(TuiEvent::OperationCancelled);
+                    return;
+                }
+            };
+            match outcome {
+                Ok(report) => {
+                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                }
+            }
+        });
 
         self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
@@ -1387,47 +1390,40 @@ impl App {
         let sudo = self.operate.exec_sudo;
         let keep = self.operate.exec_keep;
 
-        let _ = std::thread::Builder::new()
-            .name("sshi-op".to_string())
-            .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        return;
-                    }
-                };
-                rt.block_on(async move {
-                    let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
-                    ) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                            return;
-                        }
-                    };
-                    let sink = EventSender::new(event_tx.clone());
-                    let outcome = tokio::select! {
-                        res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res,
-                        _ = cancel_for_task.cancelled() => {
-                            let _ = event_tx.send(TuiEvent::OperationCancelled);
-                            return;
-                        }
-                    };
-                    match outcome {
-                        Ok(report) => {
-                            let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        }
-                    }
-                });
-            });
+        tokio::spawn(async move {
+            let ctx = match Context::from_tui_parts(
+                cfg,
+                cfg_path,
+                target_mode,
+                serial,
+                timeout,
+                false,
+                skip,
+                auth_sender,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                    return;
+                }
+            };
+            let sink = EventSender::new(event_tx.clone());
+            let outcome = tokio::select! {
+                res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res,
+                _ = cancel_for_task.cancelled() => {
+                    let _ = event_tx.send(TuiEvent::OperationCancelled);
+                    return;
+                }
+            };
+            match outcome {
+                Ok(report) => {
+                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                }
+            }
+        });
 
         self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
@@ -1485,47 +1481,40 @@ impl App {
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
 
-        let _ = std::thread::Builder::new()
-            .name("sshi-op".to_string())
-            .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        return;
-                    }
-                };
-                rt.block_on(async move {
-                    let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
-                    ) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                            return;
-                        }
-                    };
-                    let sink = EventSender::new(event_tx.clone());
-                    let outcome = tokio::select! {
-                        res = crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink)) => res,
-                        _ = cancel_for_task.cancelled() => {
-                            let _ = event_tx.send(TuiEvent::OperationCancelled);
-                            return;
-                        }
-                    };
-                    match outcome {
-                        Ok(report) => {
-                            let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        }
-                    }
-                });
-            });
+        tokio::spawn(async move {
+            let ctx = match Context::from_tui_parts(
+                cfg,
+                cfg_path,
+                target_mode,
+                serial,
+                timeout,
+                false,
+                skip,
+                auth_sender,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                    return;
+                }
+            };
+            let sink = EventSender::new(event_tx.clone());
+            let outcome = tokio::select! {
+                res = crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink)) => res,
+                _ = cancel_for_task.cancelled() => {
+                    let _ = event_tx.send(TuiEvent::OperationCancelled);
+                    return;
+                }
+            };
+            match outcome {
+                Ok(report) => {
+                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                }
+            }
+        });
 
         self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
@@ -1584,47 +1573,40 @@ impl App {
             }
         };
 
-        let _ = std::thread::Builder::new()
-            .name("sshi-op".to_string())
-            .spawn(move || {
-                let rt = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(rt) => rt,
-                    Err(e) => {
-                        let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        return;
-                    }
-                };
-                rt.block_on(async move {
-                    let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
-                    ) {
-                        Ok(c) => c,
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                            return;
-                        }
-                    };
-                    let sink = EventSender::new(event_tx.clone());
-                    let outcome = tokio::select! {
-                        res = crate::commands::sync::sync_core(&ctx, &adhoc_files, &names, dry_run, source_override.as_deref(), Some(&sink)) => res,
-                        _ = cancel_for_task.cancelled() => {
-                            let _ = event_tx.send(TuiEvent::OperationCancelled);
-                            return;
-                        }
-                    };
-                    match outcome {
-                        Ok(report) => {
-                            let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                        }
-                        Err(e) => {
-                            let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                        }
-                    }
-                });
-            });
+        tokio::spawn(async move {
+            let ctx = match Context::from_tui_parts(
+                cfg,
+                cfg_path,
+                target_mode,
+                serial,
+                timeout,
+                false,
+                skip,
+                auth_sender,
+            ) {
+                Ok(c) => c,
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                    return;
+                }
+            };
+            let sink = EventSender::new(event_tx.clone());
+            let outcome = tokio::select! {
+                res = crate::commands::sync::sync_core(&ctx, &adhoc_files, &names, dry_run, source_override.as_deref(), Some(&sink)) => res,
+                _ = cancel_for_task.cancelled() => {
+                    let _ = event_tx.send(TuiEvent::OperationCancelled);
+                    return;
+                }
+            };
+            match outcome {
+                Ok(report) => {
+                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
+                }
+                Err(e) => {
+                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
+                }
+            }
+        });
 
         self.popup.progress_scroll = None;
         self.running_op = Some(RunningOp {
@@ -4789,5 +4771,26 @@ mod info_section_tests {
         // `i` opens on TabInfo (the legacy per-tab help) so the original
         // user flow is preserved.
         assert_eq!(InfoSection::default(), InfoSection::TabInfo);
+    }
+}
+
+#[cfg(test)]
+mod g4_send_futures {
+    use crate::commands::Context;
+
+    // Compile-time regression: the five TUI operation launch sites
+    // (`execute_check` / `_run` / `_exec` / `_cp` / `_sync`) hand their
+    // future to `tokio::spawn`, which requires `Send`. Phase B made
+    // `Context` `Send + Sync` (via `Arc<Mutex<Connection>>`); G1 wrapped
+    // `HostEntry` in `Arc`; G2 wrapped `AppConfig` in `Arc`. If any of
+    // those regress, this test stops compiling — surfacing the same
+    // `Send` failure that motivated the (now-removed) dedicated-OS-thread
+    // workaround at app.rs:1194-1247 + 4 similar sites.
+    #[test]
+    fn context_is_send_sync() {
+        fn assert_send<T: Send>() {}
+        fn assert_sync<T: Sync>() {}
+        assert_send::<Context>();
+        assert_sync::<Context>();
     }
 }
