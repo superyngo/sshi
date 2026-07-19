@@ -387,7 +387,6 @@ pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> St
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn parse_batch_metadata_output(
     output: &str,
     paths: &[String],

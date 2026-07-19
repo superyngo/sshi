@@ -23,14 +23,6 @@ pub struct SshPool {
     pub progress: SyncProgress,
 }
 
-/// Result of a per-host operation executed through the pool.
-#[allow(dead_code)]
-pub struct PoolHostResult<T> {
-    pub host_name: String,
-    pub result: Result<T>,
-    pub elapsed: std::time::Duration,
-}
-
 impl SshPool {
     /// Set up the pool: create ControlMaster connections, build ConcurrencyLimiter,
     /// initialize progress bars. Returns (pool, connected_count).
@@ -93,12 +85,6 @@ impl SshPool {
         ))
     }
 
-    /// Get names of all reachable hosts.
-    #[allow(dead_code)]
-    pub fn reachable_hosts(&self) -> Vec<String> {
-        self.session_pool.reachable_hosts()
-    }
-
     /// Get names and errors of all failed hosts.
     pub fn failed_hosts(&self) -> Vec<(String, String)> {
         self.session_pool.failed_hosts()
@@ -143,48 +129,5 @@ impl SshPool {
                 );
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::super::session_pool::RemoteOutput;
-    use super::*;
-
-    #[test]
-    fn test_pool_host_result_struct() {
-        let r: PoolHostResult<String> = PoolHostResult {
-            host_name: "h1".into(),
-            result: Ok("ok".into()),
-            elapsed: std::time::Duration::from_millis(100),
-        };
-        assert_eq!(r.host_name, "h1");
-        assert!(r.result.is_ok());
-    }
-
-    #[test]
-    fn test_pool_host_result_error() {
-        let r: PoolHostResult<String> = PoolHostResult {
-            host_name: "h2".into(),
-            result: Err(anyhow::anyhow!("connection refused")),
-            elapsed: std::time::Duration::from_millis(50),
-        };
-        assert!(r.result.is_err());
-        assert_eq!(r.host_name, "h2");
-    }
-
-    #[test]
-    fn test_pool_host_result_with_russh_output() {
-        let r: PoolHostResult<RemoteOutput> = PoolHostResult {
-            host_name: "h1".into(),
-            result: Ok(RemoteOutput {
-                stdout: "ok".into(),
-                stderr: String::new(),
-                exit_code: Some(0),
-                success: true,
-            }),
-            elapsed: std::time::Duration::from_millis(50),
-        };
-        assert!(r.result.is_ok());
     }
 }

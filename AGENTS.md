@@ -150,7 +150,7 @@ sshi is a CLI tool managing remote hosts over SSH. Single binary, no embedded SS
 - `cli.rs` - Clap CLI definitions; pre-TUI fallback help printers
 - `commands/` - Subcommand handlers (one file each: init, check, run, exec, cp, log, config, checkout, list) plus `commands/sync/` (collect, decide, distribute, report, types submodules) and shared `commands/report.rs` (CommandReport type, ProgressSink)
 - `config/` - Config schema, file I/O, `ssh2-config` parser
-- `host/` - russh SSH transport: `session_pool.rs` (connection pool + known_hosts check), `sftp.rs` (file transfer), `auth.rs` (auth chain + `SecretString`), `concurrency.rs` (dual-level limiter), `pool.rs` (`SshPool` wrapper), `shell.rs` (shell-type detection), `filter.rs`
+- `host/` - russh SSH transport: `session_pool.rs` (connection pool + known_hosts check), `sftp.rs` (file transfer), `auth.rs` (auth chain + `SecretString`), `concurrency.rs` (dual-level limiter), `pool.rs` (`SshPool` wrapper), `shell.rs` (shell-type detection)
 - `metrics/` - System metrics collection, parsing, shell-specific probes
 - `state/` - SQLite DB, migrations, retention cleanup
 - `output/` - Terminal printer, execution summary
