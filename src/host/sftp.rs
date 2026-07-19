@@ -43,7 +43,7 @@ const MAX_SFTP_FILE_SIZE: u64 = 64 * 1024 * 1024;
 
 /// Open an SFTP session on the given SSH handle.
 /// Callers are responsible for wrapping this in a timeout.
-async fn open_sftp(handle: &Handle<SshHandler>) -> Result<SftpSession> {
+pub(crate) async fn open_sftp(handle: &Handle<SshHandler>) -> Result<SftpSession> {
     let channel = handle
         .channel_open_session()
         .await
@@ -62,7 +62,7 @@ async fn open_sftp(handle: &Handle<SshHandler>) -> Result<SftpSession> {
 /// Upload a local file to a remote path via SFTP.
 /// The `remote_path` may start with `~` (expanded using `home_dir`).
 pub async fn upload(
-    handle: &Handle<SshHandler>,
+    sftp: &SftpSession,
     local_path: &Path,
     remote_path: &str,
     home_dir: &str,
@@ -81,13 +81,12 @@ pub async fn upload(
                 MAX_SFTP_FILE_SIZE
             );
         }
-        let sftp = open_sftp(handle).await?;
         let local_data = tokio::fs::read(local_path)
             .await
             .with_context(|| format!("Failed to read {}", local_path.display()))?;
         if let Some(parent) = std::path::Path::new(&resolved).parent() {
             if parent != std::path::Path::new("") {
-                mkdir_p_sftp(&sftp, parent).await?;
+                mkdir_p_sftp(sftp, parent).await?;
             }
         }
         sftp.create(&resolved)
@@ -105,7 +104,7 @@ pub async fn upload(
 /// Download a remote file to a local path via SFTP.
 /// The `remote_path` may start with `~` (expanded using `home_dir`).
 pub async fn download(
-    handle: &Handle<SshHandler>,
+    sftp: &SftpSession,
     remote_path: &str,
     local_path: &Path,
     home_dir: &str,
@@ -113,7 +112,6 @@ pub async fn download(
 ) -> Result<()> {
     tokio::time::timeout(timeout, async {
         let resolved = resolve_remote_path(remote_path, home_dir);
-        let sftp = open_sftp(handle).await?;
         if let Ok(attrs) = sftp.metadata(&resolved).await {
             if let Some(size) = attrs.size {
                 if size > MAX_SFTP_FILE_SIZE {
@@ -173,14 +171,9 @@ async fn mkdir_p_sftp(sftp: &SftpSession, path: &Path) -> Result<()> {
 
 /// SFTP probe: attempt to write and delete a sentinel file.
 /// Returns Ok(()) if SFTP is available, Err otherwise.
-pub async fn sftp_probe(
-    handle: &Handle<SshHandler>,
-    home_dir: &str,
-    timeout: Duration,
-) -> Result<()> {
+pub async fn sftp_probe(sftp: &SftpSession, home_dir: &str, timeout: Duration) -> Result<()> {
     tokio::time::timeout(timeout, async {
         let probe_path = format!("{}/.sshi_probe", home_dir);
-        let sftp = open_sftp(handle).await?;
         sftp.create(&probe_path)
             .await
             .context("SFTP probe create failed")?

@@ -1,6 +1,7 @@
 //! Russh-based session pool with concurrent connect, auth, and SFTP support.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::net::ToSocketAddrs;
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,6 +9,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use russh::client::{self, Handle};
 use russh_keys::key::PublicKey;
+use russh_sftp::client::SftpSession;
 
 use super::auth::{authenticate, PassphraseCache};
 use crate::config::schema::HostEntry;
@@ -86,6 +88,50 @@ pub struct RemoteOutput {
     pub success: bool,
 }
 
+/// Per-host cache of an expensive-to-open resource (e.g. `SftpSession`).
+///
+/// `get_or_try_insert_with` performs double-checked locking: the mutex is
+/// released across the opener's `await` so concurrent opens for different
+/// hosts don't serialize. On a race (two opens for the same key), the
+/// loser's value is dropped and the existing entry is returned.
+struct LazyCache<V> {
+    inner: tokio::sync::Mutex<HashMap<String, Arc<V>>>,
+}
+
+impl<V> LazyCache<V> {
+    fn new() -> Self {
+        Self {
+            inner: tokio::sync::Mutex::new(HashMap::new()),
+        }
+    }
+
+    async fn get_or_try_insert_with<F, Fut, E>(&self, key: &str, opener: F) -> Result<Arc<V>, E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<V, E>>,
+    {
+        {
+            let guard = self.inner.lock().await;
+            if let Some(v) = guard.get(key) {
+                return Ok(Arc::clone(v));
+            }
+        }
+        let value = Arc::new(opener().await?);
+        let mut guard = self.inner.lock().await;
+        if let Some(existing) = guard.get(key) {
+            return Ok(Arc::clone(existing));
+        }
+        guard.insert(key.to_string(), Arc::clone(&value));
+        Ok(value)
+    }
+
+    /// Seed the cache with an already-open value (used after the SFTP probe
+    /// successfully opens a session that subsequent uploads can re-use).
+    async fn insert(&self, key: String, value: Arc<V>) {
+        self.inner.lock().await.insert(key, value);
+    }
+}
+
 /// Pool of authenticated russh sessions, one per host alias.
 pub struct RusshSessionPool {
     /// host alias → open authenticated session handle
@@ -96,6 +142,10 @@ pub struct RusshSessionPool {
     sftp_failed: Vec<(String, String)>,
     /// cached remote home directories: host alias → home path
     home_dirs: tokio::sync::Mutex<HashMap<String, String>>,
+    /// cached `SftpSession` per host alias, opened on first use and re-used
+    /// for subsequent `upload`/`download` calls. The cache lives for the
+    /// pool's lifetime; sessions are torn down together in `shutdown`.
+    sftp_cache: LazyCache<SftpSession>,
     /// cancel senders for proxy keepalive tasks (one per proxied connection)
     proxy_cancels: Vec<tokio::sync::oneshot::Sender<()>>,
 }
@@ -152,6 +202,7 @@ impl RusshSessionPool {
             failed,
             sftp_failed: Vec::new(),
             home_dirs: tokio::sync::Mutex::new(HashMap::new()),
+            sftp_cache: LazyCache::new(),
             proxy_cancels,
         })
     }
@@ -208,6 +259,27 @@ impl RusshSessionPool {
         Ok(home)
     }
 
+    /// Get a cached `SftpSession` for `host_alias`, opening one on first use.
+    /// Subsequent calls return the cached channel, avoiding a fresh SFTP
+    /// subsystem negotiation per file transfer.
+    async fn sftp_session(&self, host_alias: &str) -> Result<Arc<SftpSession>> {
+        let handle = self
+            .sessions
+            .get(host_alias)
+            .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))?
+            .clone();
+        let alias = host_alias.to_string();
+        self.sftp_cache
+            .get_or_try_insert_with(host_alias, move || {
+                let alias = alias.clone();
+                async move {
+                    tracing::debug!("Opening SFTP channel for {}", alias);
+                    crate::host::sftp::open_sftp(&handle).await
+                }
+            })
+            .await
+    }
+
     /// Upload a local file to a remote host via SFTP.
     pub async fn upload(
         &self,
@@ -216,11 +288,7 @@ impl RusshSessionPool {
         remote_path: &str,
         timeout_secs: u64,
     ) -> Result<()> {
-        let handle = self
-            .sessions
-            .get(&host.ssh_host)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' not connected", host.ssh_host))?
-            .clone();
+        let sftp = self.sftp_session(&host.ssh_host).await?;
         let home = self
             .home_dir(
                 &host.ssh_host,
@@ -229,7 +297,7 @@ impl RusshSessionPool {
             )
             .await?;
         crate::host::sftp::upload(
-            &handle,
+            &sftp,
             local_path,
             remote_path,
             &home,
@@ -246,11 +314,7 @@ impl RusshSessionPool {
         local_path: &std::path::Path,
         timeout_secs: u64,
     ) -> Result<()> {
-        let handle = self
-            .sessions
-            .get(&host.ssh_host)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' not connected", host.ssh_host))?
-            .clone();
+        let sftp = self.sftp_session(&host.ssh_host).await?;
         let home = self
             .home_dir(
                 &host.ssh_host,
@@ -259,7 +323,7 @@ impl RusshSessionPool {
             )
             .await?;
         crate::host::sftp::download(
-            &handle,
+            &sftp,
             remote_path,
             local_path,
             &home,
@@ -269,6 +333,8 @@ impl RusshSessionPool {
     }
 
     /// Run SFTP probe on all connected hosts. Records failures in `sftp_failed`.
+    /// Successfully probed hosts have their open SFTP channel cached so the
+    /// subsequent `upload`/`download` reuses it.
     pub async fn run_sftp_probe(
         &mut self,
         hosts: &[&crate::config::schema::HostEntry],
@@ -290,22 +356,30 @@ impl RusshSessionPool {
             set.spawn(async move {
                 let home = crate::host::sftp::remote_home_dir(&handle, shell, timeout).await;
                 match home {
-                    Err(e) => (ssh_host, None, Some(format!("home dir: {:#}", e))),
-                    Ok(home_dir) => {
-                        match crate::host::sftp::sftp_probe(&handle, &home_dir, timeout).await {
-                            Ok(()) => (ssh_host, Some(home_dir), None),
-                            Err(e) => (ssh_host, Some(home_dir), Some(format!("{:#}", e))),
+                    Err(e) => (ssh_host, None, None, Some(format!("home dir: {:#}", e))),
+                    Ok(home_dir) => match crate::host::sftp::open_sftp(&handle).await {
+                        Err(e) => (ssh_host, Some(home_dir), None, Some(format!("{:#}", e))),
+                        Ok(sftp) => {
+                            match crate::host::sftp::sftp_probe(&sftp, &home_dir, timeout).await {
+                                Ok(()) => (ssh_host, Some(home_dir), Some(Arc::new(sftp)), None),
+                                Err(e) => {
+                                    (ssh_host, Some(home_dir), None, Some(format!("{:#}", e)))
+                                }
+                            }
                         }
-                    }
+                    },
                 }
             });
         }
 
         while let Some(result) = set.join_next().await {
             match result {
-                Ok((ssh_host, home_dir, failure)) => {
+                Ok((ssh_host, home_dir, sftp, failure)) => {
                     if let Some(home) = home_dir {
                         self.home_dirs.lock().await.insert(ssh_host.clone(), home);
+                    }
+                    if let Some(s) = sftp {
+                        self.sftp_cache.insert(ssh_host.clone(), s).await;
                     }
                     if let Some(err) = failure {
                         self.sftp_failed.push((ssh_host, err));
@@ -676,5 +750,78 @@ mod tests {
             r.proxy_jump.is_none(),
             "Host not in config should have no ProxyJump"
         );
+    }
+
+    #[tokio::test]
+    async fn test_lazy_cache_reuses_value_for_same_key() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let cache: LazyCache<u32> = LazyCache::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let c = Arc::clone(&counter);
+        let v1 = cache
+            .get_or_try_insert_with("host-a", move || {
+                let c = Arc::clone(&c);
+                async move {
+                    let n = c.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, std::convert::Infallible>(n as u32 + 100)
+                }
+            })
+            .await
+            .expect("first open");
+
+        let c = Arc::clone(&counter);
+        let v2 = cache
+            .get_or_try_insert_with("host-a", move || {
+                let c = Arc::clone(&c);
+                async move {
+                    let n = c.fetch_add(1, Ordering::SeqCst);
+                    Ok::<_, std::convert::Infallible>(n as u32 + 100)
+                }
+            })
+            .await
+            .expect("cache hit");
+
+        // Same Arc contents returned both times; opener ran exactly once.
+        assert_eq!(*v1, 100);
+        assert_eq!(*v2, 100);
+        assert!(Arc::ptr_eq(&v1, &v2));
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn test_lazy_cache_distinct_keys_get_distinct_values() {
+        let cache: LazyCache<String> = LazyCache::new();
+
+        let a = cache
+            .get_or_try_insert_with("a", || async {
+                Ok::<_, std::convert::Infallible>("A".to_string())
+            })
+            .await
+            .unwrap();
+        let b = cache
+            .get_or_try_insert_with("b", || async {
+                Ok::<_, std::convert::Infallible>("B".to_string())
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(a.as_str(), "A");
+        assert_eq!(b.as_str(), "B");
+        assert_eq!(cache.inner.lock().await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_lazy_cache_propagates_opener_error() {
+        let cache: LazyCache<u32> = LazyCache::new();
+
+        let err: Result<Arc<u32>, &'static str> = cache
+            .get_or_try_insert_with("missing", || async { Err("boom") })
+            .await;
+
+        assert!(err.is_err());
+        assert_eq!(err.unwrap_err(), "boom");
+        assert!(cache.inner.lock().await.is_empty());
     }
 }
