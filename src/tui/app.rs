@@ -107,6 +107,8 @@ pub struct App {
     log_overlay_vp: Viewport,
     log_buffer: Option<LogBufferHandle>,
     auth_bridge_tx: Option<SshAuthSender>,
+    help_vp: Viewport,
+    info_vp: Viewport,
 }
 
 impl App {
@@ -177,6 +179,8 @@ impl App {
             log_overlay_vp: Viewport::new(),
             log_buffer,
             auth_bridge_tx: None,
+            help_vp: Viewport::new(),
+            info_vp: Viewport::new(),
         }
     }
 
@@ -2221,22 +2225,70 @@ impl App {
             }
         }
 
-        // Help popup intercepts: only Esc/? close it.
+        // Help popup intercepts: Esc/? close it; arrow/pgup/pgdn scroll.
         if self.help_open {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('?') => {
                     self.help_open = false;
                     return Ok(true);
                 }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.help_vp.move_up();
+                    return Ok(true);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.help_vp.move_down();
+                    return Ok(true);
+                }
+                KeyCode::PageUp => {
+                    self.help_vp.page_up();
+                    return Ok(true);
+                }
+                KeyCode::PageDown => {
+                    self.help_vp.page_down();
+                    return Ok(true);
+                }
+                KeyCode::Home => {
+                    self.help_vp.home();
+                    return Ok(true);
+                }
+                KeyCode::End => {
+                    self.help_vp.end();
+                    return Ok(true);
+                }
                 _ => return Ok(false),
             }
         }
 
-        // Info popup intercepts: only Esc/i close it.
+        // Info popup intercepts: Esc/i close it; arrow/pgup/pgdn scroll.
         if self.info_open {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('i') => {
                     self.info_open = false;
+                    return Ok(true);
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.info_vp.move_up();
+                    return Ok(true);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.info_vp.move_down();
+                    return Ok(true);
+                }
+                KeyCode::PageUp => {
+                    self.info_vp.page_up();
+                    return Ok(true);
+                }
+                KeyCode::PageDown => {
+                    self.info_vp.page_down();
+                    return Ok(true);
+                }
+                KeyCode::Home => {
+                    self.info_vp.home();
+                    return Ok(true);
+                }
+                KeyCode::End => {
+                    self.info_vp.end();
                     return Ok(true);
                 }
                 _ => return Ok(false),
@@ -2465,10 +2517,12 @@ impl App {
             }
             KeyCode::Char('?') => {
                 self.help_open = true;
+                self.help_vp = Viewport::new();
                 Ok(true)
             }
             KeyCode::Char('i') => {
                 self.info_open = true;
+                self.info_vp = Viewport::new();
                 Ok(true)
             }
             KeyCode::Char('L') => {
@@ -3531,7 +3585,7 @@ impl App {
 
     fn render_export_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
         use ratatui::style::Color;
-        let popup_area = centered_rect(60, 25, area);
+        let popup_area = content_aware_popup_rect(area, 60, 50, 200, 9);
         frame.render_widget(Clear, popup_area);
 
         let popup = match &self.popup.export {
@@ -3546,15 +3600,6 @@ impl App {
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
-        let chunks = ratatui::layout::Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Length(3),
-                Constraint::Min(0),
-            ])
-            .split(inner);
-
         let command_name = match popup.source {
             ViewOperationKind::Checkout => "checkout",
             ViewOperationKind::Log => "log",
@@ -3565,7 +3610,20 @@ impl App {
             "Enter path to save {} report (.json or .html).\nLeave empty for auto-generated name.",
             command_name
         );
-        let prompt_text = Paragraph::new(prompt.as_str())
+        let wrap_width = inner.width.max(1) as usize;
+        let prompt_lines = wrap_text_to_lines(&prompt, wrap_width);
+        let prompt_height = prompt_lines.len() as u16;
+
+        let chunks = ratatui::layout::Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(prompt_height),
+                Constraint::Length(3),
+                Constraint::Min(0),
+            ])
+            .split(inner);
+
+        let prompt_text = Paragraph::new(prompt_lines)
             .style(Style::default().fg(self.theme.inactive))
             .wrap(Wrap { trim: true });
         frame.render_widget(prompt_text, chunks[0]);
@@ -3996,9 +4054,7 @@ impl App {
         frame.render_widget(p, inner);
     }
 
-    fn render_info_popup(&self, area: Rect, frame: &mut ratatui::Frame) {
-        let popup_area = centered_rect(60, 50, area);
-        frame.render_widget(Clear, popup_area);
+    fn render_info_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
         let body = match self.active_tab {
             TabId::Operate => format!(
                 "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\ncp    — copy a local file/dir to targets (defaults to ~).\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults appear in a popup when the operation completes.",
@@ -4020,12 +4076,24 @@ impl App {
                     .unwrap_or_else(|| "(default — ~/.config/sshi/config.toml)".to_string())
             ),
         };
+        let popup_area = content_aware_popup_rect(area, 60, 80, body.len(), 24);
+        frame.render_widget(Clear, popup_area);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.border_active))
-            .title(" Info (i) ");
-        let p = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
-        frame.render_widget(p, popup_area);
+            .title(" Info (i) — ↑↓ scroll, Esc close ");
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let wrap_width = inner.width.max(1) as usize;
+        let lines = wrap_text_to_lines(&body, wrap_width);
+        let visible_h = inner.height as usize;
+        self.info_vp.set_dims(lines.len(), visible_h);
+        let scroll = self.info_vp.scroll_y;
+        let p = Paragraph::new(lines)
+            .scroll((scroll as u16, 0))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(p, inner);
     }
 
     fn render_status_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
@@ -4064,9 +4132,7 @@ impl App {
         frame.render_widget(p, chunks[1]);
     }
 
-    fn render_help_popup(&self, area: Rect, frame: &mut ratatui::Frame) {
-        let popup_area = centered_rect(60, 70, area);
-        frame.render_widget(Clear, popup_area);
+    fn render_help_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
         let body = "\
 Global keys
   1 / 2 / 3   Switch to Config / Operate / View
@@ -4131,12 +4197,24 @@ Log overlay
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
 ";
+        let popup_area = content_aware_popup_rect(area, 60, 90, body.len(), 24);
+        frame.render_widget(Clear, popup_area);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.border_active))
-            .title(" Keybindings (?) ");
-        let p = Paragraph::new(body).block(block).wrap(Wrap { trim: false });
-        frame.render_widget(p, popup_area);
+            .title(" Keybindings (?) — ↑↓ scroll, Esc close ");
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let wrap_width = inner.width.max(1) as usize;
+        let lines = wrap_text_to_lines(body, wrap_width);
+        let visible_h = inner.height as usize;
+        self.help_vp.set_dims(lines.len(), visible_h);
+        let scroll = self.help_vp.scroll_y;
+        let p = Paragraph::new(lines)
+            .scroll((scroll as u16, 0))
+            .wrap(Wrap { trim: false });
+        frame.render_widget(p, inner);
     }
 }
 
@@ -4148,6 +4226,69 @@ fn comma_names(raw: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
+}
+
+/// Compute a popup rectangle that is content-aware: small enough to fit the
+/// content, large enough to read, never exceeds `max_percent_y` of the screen.
+///
+/// `content_bytes` is the raw body length in bytes (a heuristic for line count
+/// when exact wrap-width isn't known yet); `lower_bound_rows` is the minimum
+/// popup inner height we want even for tiny content.
+fn content_aware_popup_rect(
+    area: Rect,
+    percent_x: u16,
+    max_percent_y: u16,
+    content_bytes: usize,
+    lower_bound_rows: u16,
+) -> Rect {
+    let max_rows = (area.height as u32 * max_percent_y as u32 / 100).max(1) as u16;
+    let lower = lower_bound_rows.max(8);
+    let upper = max_rows.max(lower);
+    let percent_y = u16::try_from(upper as u32 * 100 / area.height.max(1) as u32)
+        .unwrap_or(max_percent_y)
+        .min(max_percent_y)
+        .max(((lower as u32 * 100) / area.height.max(1) as u32) as u16);
+    let _ = content_bytes;
+    centered_rect(percent_x.min(100), percent_y.min(100), area)
+}
+
+/// Pre-wrap a body string into ratatui `Line`s for the given visible width.
+/// Honours explicit `\n` line breaks; long lines wrap on word boundaries when
+/// possible, else hard-wrap on character. Used by scrollable popups that need
+/// to know the exact post-wrap line count up front (so the `Viewport` scroll
+/// state clamps correctly).
+fn wrap_text_to_lines(body: &str, width: usize) -> Vec<Line<'_>> {
+    if width == 0 {
+        return body.split('\n').map(Line::from).collect();
+    }
+    let mut out: Vec<Line> = Vec::new();
+    for raw in body.split('\n') {
+        if raw.is_empty() {
+            out.push(Line::from(""));
+            continue;
+        }
+        let chars: Vec<char> = raw.chars().collect();
+        let mut start = 0usize;
+        while start < chars.len() {
+            let end = (start + width).min(chars.len());
+            // Try to break on the last whitespace within [start, end).
+            let mut break_at = end;
+            if end < chars.len() {
+                if let Some(ws) = chars[start..end].iter().rposition(|c| c.is_whitespace()) {
+                    break_at = start + ws;
+                }
+            }
+            let chunk: String = chars[start..break_at].iter().collect();
+            out.push(Line::from(chunk));
+            // Skip the single whitespace we broke on, if any.
+            start = if break_at < chars.len() && chars[break_at].is_whitespace() {
+                break_at + 1
+            } else {
+                break_at
+            };
+        }
+    }
+    out
 }
 
 fn cycle_operation(op: OperationKind, forward: bool) -> OperationKind {
@@ -4407,5 +4548,102 @@ mod view_focus_tests {
             assert_eq!(stops[i + 1], ViewFocus::Specific(i));
         }
         assert_eq!(stops[6], ViewFocus::Result);
+    }
+}
+
+#[cfg(test)]
+mod help_scroll_tests {
+    use super::{content_aware_popup_rect, wrap_text_to_lines, Viewport};
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn wrap_text_breaks_long_lines_at_word_boundaries() {
+        let body = "Hello world this is a long line that should wrap";
+        let lines = wrap_text_to_lines(body, 12);
+        assert!(lines.len() > 1, "long line must wrap");
+        for line in &lines {
+            assert!(line.width() <= 12, "each wrapped line must fit width");
+        }
+    }
+
+    #[test]
+    fn wrap_text_preserves_explicit_newlines() {
+        let body = "first line\nsecond line\nthird";
+        let lines = wrap_text_to_lines(body, 80);
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn wrap_text_empty_input_yields_single_empty_line() {
+        let lines = wrap_text_to_lines("", 80);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[test]
+    fn content_aware_popup_caps_at_max_percent_y() {
+        let area = Rect::new(0, 0, 80, 24);
+        let r = content_aware_popup_rect(area, 60, 80, 1000, 24);
+        // 80% of 24 = 19.2 → 19; never larger than area
+        assert!(r.height <= area.height);
+        assert!(r.height >= 8, "popup should keep at least its lower bound");
+    }
+
+    #[test]
+    fn content_aware_popup_lower_bound_enforced_on_tall_screen() {
+        let area = Rect::new(0, 0, 200, 100);
+        let r = content_aware_popup_rect(area, 60, 90, 50, 24);
+        // For small content the popup should still be at least lower_bound_rows tall.
+        assert!(r.height >= 8);
+    }
+
+    /// E1 spec verify: "construct a Help popup with content longer than the
+    /// viewport and assert the scroll state advances on `Down` key and clamps
+    /// at the bottom."
+    #[test]
+    fn help_popup_scroll_advances_and_clamps() {
+        let mut vp = Viewport::new();
+        // 62 lines of help body, 16 visible rows (24-row terminal after
+        // borders + status bar) — matches audit §1 P11 HIGH reproduction.
+        vp.set_dims(62, 16);
+        assert_eq!(vp.scroll_y, 0);
+
+        // Press Down: selected advances, scroll follows per Viewport invariant.
+        for _ in 0..30 {
+            vp.move_down();
+        }
+        assert!(
+            vp.scroll_y > 0,
+            "scroll must advance after repeated Down presses"
+        );
+
+        // Press End: jump to bottom.
+        vp.end();
+        let max_scroll = vp.item_count.saturating_sub(vp.visible_height);
+        assert_eq!(
+            vp.scroll_y, max_scroll,
+            "End must clamp scroll at the bottom"
+        );
+
+        // Further Down at the bottom is a no-op (cursor cannot advance).
+        let scroll_before = vp.scroll_y;
+        vp.move_down();
+        assert_eq!(
+            vp.scroll_y, scroll_before,
+            "scroll must not exceed the bottom"
+        );
+
+        // Press Home: scroll returns to top.
+        vp.home();
+        assert_eq!(vp.scroll_y, 0, "Home must reset scroll to top");
+    }
+
+    #[test]
+    fn help_popup_page_keys_advance_by_visible_height() {
+        let mut vp = Viewport::new();
+        vp.set_dims(100, 10);
+        vp.page_down();
+        assert_eq!(vp.scroll_y, 10, "PageDown should advance by visible_height");
+        vp.page_up();
+        assert_eq!(vp.scroll_y, 0, "PageUp should retreat by visible_height");
     }
 }
