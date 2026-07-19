@@ -4,9 +4,13 @@
 //! - Arrow keys drive cross-level transitions via `escape_to_parent`.
 //! - Tab / Shift+Tab cycle peers within the **current level only** and never
 //!   escape level boundaries.
-//! - Each focusable component declares its `AxisFreedom` and reports
-//!   `at_boundary(dir)` so the dispatch table in `Focusable::handle_arrow`
-//!   can decide between "move within element" and "escape to parent".
+//!
+//! Note: the `Focusable` trait that previously lived here was deleted
+//! (audit §1 P4 LOW, Phase F3) — it had zero non-test callers. The
+//! surviving types (`Direction`, `Axis`, `AxisFreedom`, `FocusZone`,
+//! `EscapeOutcome`, `escape_to_parent`, `FocusPath`) describe the focus
+//! model a future dispatch could be rebuilt on; they remain dead in
+//! the meantime and are silenced by the module-level allow below.
 
 #![allow(dead_code)]
 
@@ -129,42 +133,6 @@ pub fn escape_to_parent(tab: TabId, from: FocusZone, dir: Direction) -> EscapeOu
     }
 }
 
-/// Trait every focusable component implements (per §8.3).
-///
-/// Default `handle_arrow` provides the standard adaptive escape decision:
-/// when the element absorbs the direction and is not at a boundary, the
-/// component itself moves and returns `Consumed`; otherwise the arrow
-/// escapes via `Escaped(dir)`.
-pub trait Focusable {
-    fn axis_freedom(&self) -> AxisFreedom;
-
-    /// True iff a further move in `dir` would push the cursor off the end
-    /// of the absorbing range. Direction must match `axis_freedom`'s axis;
-    /// callers should not pass directions the element does not absorb.
-    fn at_boundary(&self, dir: Direction) -> bool;
-
-    fn handle_arrow(&mut self, dir: Direction) -> ArrowResult {
-        let af = self.axis_freedom();
-        if !af.absorbs(dir) {
-            return ArrowResult::Escaped(dir);
-        }
-        if self.at_boundary(dir) {
-            return ArrowResult::Escaped(dir);
-        }
-        self.move_within(dir);
-        ArrowResult::Consumed
-    }
-
-    /// Called by `handle_arrow` when the element should advance internally.
-    fn move_within(&mut self, dir: Direction);
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ArrowResult {
-    Consumed,
-    Escaped(Direction),
-}
-
 /// `FocusPath` ties the active focus zone to its breadcrumb trail
 /// (per §6.2). Breadcrumb updates only on zone change, never on plain ↑↓.
 #[derive(Debug, Clone)]
@@ -189,133 +157,6 @@ impl FocusPath {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::components::viewport::Viewport;
-
-    /// Adapter so `Viewport` can be tested through the `Focusable` trait.
-    struct ListAdapter<'a>(&'a mut Viewport);
-
-    impl Focusable for ListAdapter<'_> {
-        fn axis_freedom(&self) -> AxisFreedom {
-            AxisFreedom::Y
-        }
-        fn at_boundary(&self, dir: Direction) -> bool {
-            match dir {
-                Direction::Up => self.0.at_top(),
-                Direction::Down => self.0.at_bottom(),
-                _ => true,
-            }
-        }
-        fn move_within(&mut self, dir: Direction) {
-            match dir {
-                Direction::Up => self.0.move_up(),
-                Direction::Down => self.0.move_down(),
-                _ => {}
-            }
-        }
-    }
-
-    #[test]
-    fn y_only_horizontal_arrow_escapes_immediately() {
-        let mut vp = Viewport::new();
-        vp.set_dims(10, 5);
-        let mut a = ListAdapter(&mut vp);
-        assert_eq!(
-            a.handle_arrow(Direction::Left),
-            ArrowResult::Escaped(Direction::Left)
-        );
-        assert_eq!(
-            a.handle_arrow(Direction::Right),
-            ArrowResult::Escaped(Direction::Right)
-        );
-    }
-
-    #[test]
-    fn y_only_at_boundary_escapes() {
-        let mut vp = Viewport::new();
-        vp.set_dims(3, 5);
-        let mut a = ListAdapter(&mut vp);
-        // At top.
-        assert_eq!(
-            a.handle_arrow(Direction::Up),
-            ArrowResult::Escaped(Direction::Up)
-        );
-    }
-
-    #[test]
-    fn y_only_in_middle_consumes() {
-        let mut vp = Viewport::new();
-        vp.set_dims(10, 5);
-        vp.move_down();
-        vp.move_down();
-        let mut a = ListAdapter(&mut vp);
-        assert_eq!(a.handle_arrow(Direction::Up), ArrowResult::Consumed);
-        assert_eq!(a.handle_arrow(Direction::Down), ArrowResult::Consumed);
-    }
-
-    #[test]
-    fn empty_list_is_at_both_boundaries() {
-        let mut vp = Viewport::new();
-        vp.set_dims(0, 5);
-        let mut a = ListAdapter(&mut vp);
-        assert_eq!(
-            a.handle_arrow(Direction::Up),
-            ArrowResult::Escaped(Direction::Up)
-        );
-        assert_eq!(
-            a.handle_arrow(Direction::Down),
-            ArrowResult::Escaped(Direction::Down)
-        );
-    }
-
-    /// X-only adapter for testing radio-row escape.
-    struct RadioAdapter {
-        index: usize,
-        max: usize,
-    }
-    impl Focusable for RadioAdapter {
-        fn axis_freedom(&self) -> AxisFreedom {
-            AxisFreedom::X
-        }
-        fn at_boundary(&self, dir: Direction) -> bool {
-            match dir {
-                Direction::Left => self.index == 0,
-                Direction::Right => self.index + 1 >= self.max,
-                _ => true,
-            }
-        }
-        fn move_within(&mut self, dir: Direction) {
-            match dir {
-                Direction::Left if self.index > 0 => self.index -= 1,
-                Direction::Right if self.index + 1 < self.max => self.index += 1,
-                _ => {}
-            }
-        }
-    }
-
-    #[test]
-    fn x_only_radio_at_first_left_escapes() {
-        let mut r = RadioAdapter { index: 0, max: 3 };
-        assert_eq!(
-            r.handle_arrow(Direction::Left),
-            ArrowResult::Escaped(Direction::Left)
-        );
-    }
-
-    #[test]
-    fn x_only_radio_in_middle_consumes() {
-        let mut r = RadioAdapter { index: 1, max: 3 };
-        assert_eq!(r.handle_arrow(Direction::Left), ArrowResult::Consumed);
-        assert_eq!(r.index, 0);
-    }
-
-    #[test]
-    fn x_only_vertical_arrow_escapes() {
-        let mut r = RadioAdapter { index: 1, max: 3 };
-        assert_eq!(
-            r.handle_arrow(Direction::Up),
-            ArrowResult::Escaped(Direction::Up)
-        );
-    }
 
     #[test]
     fn escape_to_parent_checkout_table() {
