@@ -40,12 +40,12 @@ use super::async_bridge::{EventSender, RunningOp, TuiEvent};
 use super::components::input_field::{InputField, InputMode};
 use super::components::member_picker::{MemberPicker, PickerResult, PickerTarget};
 use super::components::popup::centered_rect;
+use super::components::shared::truncate;
 use super::components::viewport::Viewport;
 use super::log_layer::LogBufferHandle;
 use super::state::persist::{
     self, ActiveTab, OperationKind, TargetFilterMode, TargetFilterState, TuiPersistedState,
 };
-use super::tabs::config_tab::trunc;
 use super::tabs::config_tab::ConfigTabState;
 use super::tabs::config_tab::ConfigZone;
 use super::tabs::operate_schema;
@@ -53,7 +53,6 @@ use super::tabs::operate_tab::{self, OpField, OperateRenderData};
 use super::tabs::TabId;
 use super::theme::Theme;
 use crate::host::auth::{SshAuthRequest, SshAuthSender};
-use operate_tab::truncate;
 
 /// Persist `config` to `path` if `dirty` is set; clear `dirty` on success.
 /// On failure emits a `tracing::error!` — the caller is presumed to be the
@@ -371,17 +370,7 @@ impl App {
     /// Mirrors `config_tab::collect_known_groups` so the Operate picker offers
     /// the same set the Config tab does.
     fn available_groups(&self) -> Vec<String> {
-        let mut known: std::collections::BTreeSet<String> = self
-            .config
-            .host
-            .iter()
-            .flat_map(|h| h.groups.iter().cloned())
-            .filter(|g| !g.is_empty())
-            .collect();
-        for g in &self.target_filter.groups {
-            known.insert(g.clone());
-        }
-        known.into_iter().collect()
+        crate::tui::components::shared::collect_groups(&self.config, &self.target_filter.groups)
     }
 
     /// All configured host names.
@@ -3564,7 +3553,7 @@ impl App {
                     Style::default().fg(level_color)
                 };
                 let prefix = if is_sel { "▶ " } else { "  " };
-                let text = trunc(
+                let text = truncate(
                     &format!(
                         "{}{:5} {} {}",
                         prefix, entry.level, entry.target, entry.text

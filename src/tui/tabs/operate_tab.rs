@@ -14,7 +14,8 @@ use ratatui::{
 use crate::commands::report::HostStatus;
 
 use super::super::components::input_field::InputField;
-use super::super::state::persist::{OperationKind, ShellMode, TargetFilterMode, TargetFilterState};
+use super::super::components::shared;
+use super::super::state::persist::{OperationKind, TargetFilterMode, TargetFilterState};
 use super::super::theme::Theme;
 
 /// A single focusable element on the Operate tab, walked linearly with ↑↓.
@@ -184,14 +185,6 @@ fn focus_style(focused: bool, active: bool, theme: &Theme) -> Style {
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default()
-    }
-}
-
-fn shell_label(s: ShellMode) -> &'static str {
-    match s {
-        ShellMode::Sh => "sh",
-        ShellMode::PowerShell => "powershell",
-        ShellMode::Cmd => "cmd",
     }
 }
 
@@ -477,9 +470,9 @@ fn members_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let active = !data.navbar_focused;
     let tf = data.target_filter;
     let (label, value) = match tf.mode {
-        TargetFilterMode::Groups => ("Members", chips(&tf.groups, "no groups")),
-        TargetFilterMode::Hosts => ("Members", chips(&tf.hosts, "no hosts")),
-        TargetFilterMode::Shell => ("Shell", shell_label(tf.shell).to_string()),
+        TargetFilterMode::Groups => ("Members", shared::chips(&tf.groups, "no groups")),
+        TargetFilterMode::Hosts => ("Members", shared::chips(&tf.hosts, "no hosts")),
+        TargetFilterMode::Shell => ("Shell", shared::shell_label(tf.shell).to_string()),
         TargetFilterMode::All => ("Members", String::new()),
     };
     Line::from(vec![
@@ -494,7 +487,7 @@ fn skip_line<'a>(data: &OperateRenderData) -> Line<'a> {
     Line::from(vec![
         Span::raw(" Skip:    "),
         Span::styled(
-            chips(&data.target_filter.skip, "none"),
+            shared::chips(&data.target_filter.skip, "none"),
             focus_style(focused, active, data.theme),
         ),
     ])
@@ -572,14 +565,6 @@ fn name_select_line<'a>(
         Span::styled(display, focus_style(focused, active, theme)),
         Span::styled("  (Enter: choose)", Style::default().fg(theme.inactive)),
     ])
-}
-
-fn chips(items: &[String], empty: &str) -> String {
-    if items.is_empty() {
-        format!("({empty})")
-    } else {
-        items.join(", ")
-    }
 }
 
 fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
@@ -676,34 +661,15 @@ pub fn render_progress_popup(
         let line = format!(
             "  {} {:<16} ({:>4}ms) — {}",
             glyph,
-            truncate(host, 16),
+            shared::truncate(host, 16),
             ms,
-            truncate(detail, 60),
+            shared::truncate(detail, 60),
         );
         lines.push(Line::from(Span::styled(line, Style::default().fg(color))));
     }
 
     let p = Paragraph::new(lines).wrap(Wrap { trim: false });
     frame.render_widget(p, inner);
-}
-
-pub fn truncate(s: &str, max: usize) -> String {
-    use unicode_width::UnicodeWidthStr;
-    if s.width() <= max {
-        return s.to_string();
-    }
-    let mut w = 0;
-    let mut out = String::new();
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + cw > max.saturating_sub(1) {
-            break;
-        }
-        out.push(ch);
-        w += cw;
-    }
-    out.push('…');
-    out
 }
 
 #[cfg(test)]

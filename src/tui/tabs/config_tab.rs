@@ -21,6 +21,7 @@ use crate::config::schema::{
 };
 
 use super::super::components::input_field::{InputField, InputMode};
+use super::super::components::shared;
 use super::super::components::viewport::Viewport;
 use super::super::theme::Theme;
 use super::config_schema::{
@@ -2003,8 +2004,8 @@ impl ConfigTabState {
 
                 let prefix = if is_sel { "▶ " } else { "  " };
                 let max_w = inner.width as usize;
-                let key_str = trunc(&format!("{prefix}{} = ", field.key), max_w / 3);
-                let val_str = trunc(&val, max_w.saturating_sub(key_str.width()));
+                let key_str = shared::truncate(&format!("{prefix}{} = ", field.key), max_w / 3);
+                let val_str = shared::truncate(&val, max_w.saturating_sub(key_str.width()));
 
                 lines.push(Line::from(vec![
                     Span::styled(key_str, key_style),
@@ -2134,7 +2135,7 @@ impl ConfigTabState {
                 } else {
                     "  "
                 };
-                let label = trunc(&format!("{glyph}{prefix}{text}"), max_w);
+                let label = shared::truncate(&format!("{glyph}{prefix}{text}"), max_w);
 
                 let style = if is_sel && focused {
                     Style::default()
@@ -2783,24 +2784,6 @@ fn cycle_option_value(kind: &FieldKind, current: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn trunc(s: &str, max: usize) -> String {
-    if s.width() <= max {
-        return s.to_string();
-    }
-    let mut w = 0usize;
-    let mut out = String::new();
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + cw > max.saturating_sub(1) {
-            break;
-        }
-        out.push(ch);
-        w += cw;
-    }
-    out.push('…');
-    out
-}
-
 fn strip_unit(s: &str) -> String {
     s.trim_end_matches('s')
         .trim_end_matches('d')
@@ -2810,15 +2793,7 @@ fn strip_unit(s: &str) -> String {
 
 // Collect known groups across config (Step 3)
 fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>, Vec<bool>) {
-    let mut known: std::collections::BTreeSet<String> = config
-        .host
-        .iter()
-        .flat_map(|h| h.groups.iter().cloned())
-        .collect();
-    for item in current {
-        known.insert(item.clone());
-    }
-    let available: Vec<String> = known.into_iter().collect();
+    let available = shared::collect_groups(config, current);
     let checked: Vec<bool> = available.iter().map(|g| current.contains(g)).collect();
     (available, checked)
 }

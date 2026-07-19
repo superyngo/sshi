@@ -19,21 +19,20 @@
 //! Shell mode is hidden when the popup is invoked from the Checkout tab
 //! (caller passes `allow_shell = false`); see §13.
 
-use std::collections::BTreeSet;
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::config::schema::AppConfig;
-use crate::tui::state::persist::{ShellMode, TargetFilterMode, TargetFilterState};
+use crate::tui::state::persist::{TargetFilterMode, TargetFilterState};
 use crate::tui::theme::Theme;
 
 use super::popup::centered_rect;
+use super::shared;
 
 /// Field currently focused inside the popup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,7 +65,7 @@ pub struct FilterPopup {
 
 impl FilterPopup {
     pub fn new(state: TargetFilterState, allow_shell: bool, config: &AppConfig) -> Self {
-        let available_groups = collect_groups(config);
+        let available_groups = shared::collect_groups(config, &[]);
         let available_hosts: Vec<String> = config.host.iter().map(|h| h.name.clone()).collect();
         let field = Field::Mode(state.mode);
         Self {
@@ -248,12 +247,15 @@ impl FilterPopup {
             let glyph = if selected { "◉" } else { "○" };
             let label = format!(" {} {}", glyph, mode_label(m));
             let extra = match m {
-                TargetFilterMode::Groups => format_chips(&self.state.groups, "no groups"),
-                TargetFilterMode::Hosts => format_chips(&self.state.hosts, "no hosts"),
-                TargetFilterMode::Shell => format!("[{}]", shell_label(self.state.shell)),
+                TargetFilterMode::Groups => shared::chips(&self.state.groups, "no groups"),
+                TargetFilterMode::Hosts => shared::chips(&self.state.hosts, "no hosts"),
+                TargetFilterMode::Shell => format!("[{}]", shared::shell_label(self.state.shell)),
                 TargetFilterMode::All => String::new(),
             };
-            let mut spans = vec![Span::styled(label, focus_style(focused, theme))];
+            let mut spans = vec![Span::styled(
+                label,
+                shared::focus_accent(focused, theme.accent_operate),
+            )];
             if !extra.is_empty() {
                 spans.push(Span::raw("  "));
                 spans.push(Span::styled(extra, Style::default().fg(theme.inactive)));
@@ -265,9 +267,12 @@ impl FilterPopup {
         // gap row already counted into constraints
         row += 1;
         let skip_focused = self.field == Field::Skip;
-        let skip_text = format!(" Skip: {}", format_chips(&self.state.skip, "none"));
+        let skip_text = format!(" Skip: {}", shared::chips(&self.state.skip, "none"));
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(skip_text, focus_style(skip_focused, theme)))),
+            Paragraph::new(Line::from(Span::styled(
+                skip_text,
+                shared::focus_accent(skip_focused, theme.accent_operate),
+            ))),
             chunks[row],
         );
         row += 1;
@@ -280,7 +285,7 @@ impl FilterPopup {
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 serial_text,
-                focus_style(serial_focused, theme),
+                shared::focus_accent(serial_focused, theme.accent_operate),
             ))),
             chunks[row],
         );
@@ -289,9 +294,15 @@ impl FilterPopup {
         let apply_focused = self.field == Field::Apply;
         let cancel_focused = self.field == Field::Cancel;
         let buttons = Line::from(vec![
-            Span::styled(" [Apply]", focus_style(apply_focused, theme)),
+            Span::styled(
+                " [Apply]",
+                shared::focus_accent(apply_focused, theme.accent_operate),
+            ),
             Span::raw("   "),
-            Span::styled("[Cancel]", focus_style(cancel_focused, theme)),
+            Span::styled(
+                "[Cancel]",
+                shared::focus_accent(cancel_focused, theme.accent_operate),
+            ),
         ]);
         frame.render_widget(
             Paragraph::new(buttons).wrap(Wrap { trim: false }),
@@ -307,39 +318,4 @@ fn mode_label(m: TargetFilterMode) -> &'static str {
         TargetFilterMode::Hosts => "Hosts",
         TargetFilterMode::Shell => "Shell",
     }
-}
-
-fn shell_label(s: ShellMode) -> &'static str {
-    match s {
-        ShellMode::Sh => "sh",
-        ShellMode::PowerShell => "powershell",
-        ShellMode::Cmd => "cmd",
-    }
-}
-
-fn format_chips(items: &[String], empty: &str) -> String {
-    if items.is_empty() {
-        format!("({})", empty)
-    } else {
-        items.join(", ")
-    }
-}
-
-fn focus_style(focused: bool, theme: &Theme) -> Style {
-    if focused {
-        Style::default()
-            .fg(theme.accent_operate)
-            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default()
-    }
-}
-
-fn collect_groups(config: &AppConfig) -> Vec<String> {
-    let s: BTreeSet<String> = config
-        .host
-        .iter()
-        .flat_map(|h| h.groups.iter().filter(|g| !g.is_empty()).cloned())
-        .collect();
-    s.into_iter().collect()
 }

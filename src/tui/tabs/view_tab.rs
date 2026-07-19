@@ -18,6 +18,7 @@ use crate::commands::checkout::{
 use crate::commands::list::ListData;
 use crate::commands::log::LogRow;
 use crate::tui::components::input_field::InputField;
+use crate::tui::components::shared;
 
 use super::super::state::persist::{TargetFilterMode, TargetFilterState, ViewOperationKind};
 use super::super::theme::Theme;
@@ -178,13 +179,7 @@ fn render_view_common(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
 }
 
 fn view_focus_style(focused: bool, theme: &Theme) -> Style {
-    if focused {
-        Style::default()
-            .fg(theme.accent_checkout)
-            .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-    } else {
-        Style::default()
-    }
+    shared::focus_accent(focused, theme.accent_checkout)
 }
 
 fn view_target_mode_line<'a>(data: &ViewRenderData) -> Line<'a> {
@@ -238,12 +233,7 @@ fn view_members_line<'a>(data: &ViewRenderData) -> Line<'a> {
 }
 
 fn shell_label(s: super::super::state::persist::ShellMode) -> &'static str {
-    use super::super::state::persist::ShellMode;
-    match s {
-        ShellMode::Sh => "sh",
-        ShellMode::PowerShell => "powershell",
-        ShellMode::Cmd => "cmd",
-    }
+    shared::shell_label(s)
 }
 
 fn view_skip_line<'a>(data: &ViewRenderData) -> Line<'a> {
@@ -272,11 +262,7 @@ fn view_combined_toggle_line<'a>(data: &ViewRenderData) -> Line<'a> {
 }
 
 fn view_chips(items: &[String], empty: &str) -> String {
-    if items.is_empty() {
-        format!("({empty})")
-    } else {
-        items.join(", ")
-    }
+    shared::chips(items, empty)
 }
 
 /// Horizontal radio selector for checkout / list / log.
