@@ -482,3 +482,53 @@ fn test_all_hosts_missing_skipped() {
         "empty file_infos should produce no decisions even with missing hosts"
     );
 }
+
+#[tokio::test]
+async fn decide_batch_empty_paths_returns_empty_without_io() {
+    use std::sync::Arc;
+
+    use crate::commands::sync::decide_batch;
+    use crate::commands::Context;
+    use crate::host::session_pool::RusshSessionPool;
+
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    crate::state::db::migrate_for_test(&conn);
+    let ctx = Context {
+        config: crate::config::schema::AppConfig::default(),
+        config_path: None,
+        db: crate::state::db::DbHandle::new(conn),
+        timeout: 5,
+        mode: crate::commands::TargetMode::All,
+        serial: false,
+        skip: vec![],
+        verbose: false,
+        auth_sender: None,
+    };
+    let sessions = Arc::new(
+        RusshSessionPool::setup(&[], ctx.timeout, ctx.concurrency(), None)
+            .await
+            .unwrap(),
+    );
+    let reachable_hosts: Vec<&crate::config::schema::HostEntry> = Vec::new();
+    let path_source_map: HashMap<String, Option<&str>> = HashMap::new();
+    let mut summary = crate::output::summary::SyncSummary::default();
+
+    let decisions = decide_batch(
+        &ctx,
+        &reachable_hosts,
+        &[],
+        &path_source_map,
+        &None,
+        &sessions,
+        None,
+        true,
+        false,
+        &mut summary,
+    )
+    .await
+    .unwrap();
+
+    assert!(decisions.is_empty());
+    assert_eq!(summary.files_synced, 0);
+    assert_eq!(summary.files_skipped, 0);
+}
