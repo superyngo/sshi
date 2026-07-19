@@ -78,6 +78,9 @@ serde_json = "1"
 # Unicode display width (terminal column counting)
 unicode-width = "0.1"
 
+# Unicode grapheme clustering (cursor moves by grapheme in InputField)
+unicode-segmentation = "1.10"
+
 [features]
 default = ["tui"]
 tui = ["ratatui", "crossterm", "tokio-util"]

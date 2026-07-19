@@ -2212,6 +2212,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
  "unicode-width 0.1.14",
  "whoami",
  "zeroize",
