@@ -483,3 +483,78 @@ API uses `anyhow::Result<T>` throughout; no place where a typed enum
 would have been cleaner. Recommend deferring thiserror adoption to the
 security-critical modules (`host::auth`, `host::session_pool`) in
 Phase C or later.
+
+---
+
+## Phase C execution notes (landed 2026-07-19)
+
+Phase C shipped as 3 commits (`cce33f7` `e4a3ebe` `81c21df`). 263
+tests pass (+6 from Phase B: C1 added 3 LazyCache tests, C2 added 1
+keepalive test, C3 added 2 auth-bridge tests). Three deviations from
+spec + two deferred ADR items recorded here:
+
+1. **C2 — different field name than spec.** Plan said
+   `inactivity_timeout: Some(Duration::from_secs(30))`. Verified against
+   russh 0.44: `inactivity_timeout` is what *closes* idle connections;
+   `keepalive_interval` is what actually sends keepalive packets.
+   Implementation uses `keepalive_interval: Some(Duration::from_secs(30))`
+   with `inactivity_timeout: None` (we never want to proactively close
+   idle sessions). Documented inline in `session_pool.rs`. The audit
+   cited the wrong field name; flagged here so a future re-audit doesn't
+   re-flag it.
+
+2. **C3 — `host::auth::authenticate` signature is a breaking change.**
+   Gained required `auth_sender: Option<&SshAuthSender>` parameter. The
+   CLI is the only in-tree caller and uniformly passes `None`, so CLI
+   behaviour is unchanged. If/when this crate becomes a library, the
+   signature change must be reflected in its public API. Per audit §3.1
+   HIGH this breakage was expected.
+
+3. **C3 — files touched beyond spec's explicit list.** The WIP's new
+   `auth_sender` field on `Context` broke every `Context { ... }` struct
+   literal in the tree. Fixups (each got `auth_sender: None`):
+   `src/commands/list.rs`, `src/commands/log.rs`, `src/tui/entry.rs`
+   (the TUI launcher). No behavioural change at any of these — they're
+   test-only or non-operation contexts.
+
+4. **C3 — clippy `too_many_arguments` allow.** `Context::from_tui_parts`
+   now takes 8 args; added `#[allow(clippy::too_many_arguments)]` to
+   match the established pattern (`sync/mod.rs:790`,
+   `sync/report.rs:5`, `operate_tab.rs:626`). Not a refactor target.
+
+### Deferred ADR items (security follow-up)
+
+Two items from `docs/adr/ssh-auth-tui-popup.md` were **not** implemented
+by C3 and remain open:
+
+- **§(c) AUTH_POPUP_TIMEOUT = 120s.** The ADR specifies a `tokio::select!`
+  wrapper around `receiver.await` in `prompt_credential` so an
+  unresponsive user doesn't hang the operation indefinitely. C3 does a
+  bare `receiver.await`. Cancellation still works via the host
+  `CancellationToken` (Esc on the *progress* popup), but there's no
+  hard timeout. Recommend follow-up in Phase E or a dedicated security
+  pass.
+- **§(d) credential lifetime.** `SecretString` zeroizes on drop
+  (Phase A6) but the TUI-side input buffer (`AuthPopup::input.value:
+  String`) is **not** wrapped in `SecretString`; it's `std::mem::take`'n
+  on submit but not zeroized. Same follow-up slot.
+
+### What C3 unblocked
+
+The TUI auth bridge is now functional end-to-end. The chain closes:
+TUI operation → `Context::auth_sender` → `SshPool::setup` →
+`RusshSessionPool::setup` → `connect_one` → `connect_direct` /
+`connect_via_proxy` → `authenticate` → `prompt_credential` →
+`SshAuthRequest` over mpsc → forwarder task (`app.rs:680-684`) →
+`TuiEvent::SshAuthRequired` → `AuthPopup` (`app_state.rs:81-109`) →
+oneshot reply. Passphrase-protected keys now work in TUI mode (was
+previously blocking `rpassword`, which dead-locks the alt-screen).
+
+### thiserror question — still not urgent
+
+Phase C did not make thiserror adoption more urgent. `prompt_credential`
+returns `anyhow::Result<SecretString>` and the three error cases (bridge
+closed, responder dropped, `rpassword` failure) read fine as ad-hoc
+context. The `?` operator plus `.context()` is consistent with the rest
+of `host::auth`. Recommendation stands: defer to Phase F/G and only if a
+typed enum is needed for caller-side matching.
