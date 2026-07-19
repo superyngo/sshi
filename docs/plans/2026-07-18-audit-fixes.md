@@ -558,3 +558,73 @@ closed, responder dropped, `rpassword` failure) read fine as ad-hoc
 context. The `?` operator plus `.context()` is consistent with the rest
 of `host::auth`. Recommendation stands: defer to Phase F/G and only if a
 typed enum is needed for caller-side matching.
+
+---
+
+## Phase D execution notes (landed 2026-07-19)
+
+Phase D shipped as 3 commits (`7866f7f` `9462f23` `967ba9a`). 270 tests
+pass (+7 from Phase C: D1 added 6, D3 added 1, D2 added 0). Two
+deviations from spec + three scope gaps recorded here:
+
+1. **D1 — partial deviation from spec's helper list.** The spec called
+   for splitting `init::run` into `detect_shells`,
+   `offer_keyscan_retry`, `offer_ssh_copy_id_retry`, and
+   `persist_init_result`. Only `detect_shells` and
+   `persist_init_result` were extracted into `core.rs`. The two
+   `offer_*_retry` helpers were **not** extracted because their logic
+   is interleaved with per-host interactive prompts (ssh-keygen prompt
+   → ssh-keygen subprocess; per-host ssh-copy-id prompt → ssh-copy-id
+   subprocess). Extracting them into `init_core` would either (a)
+   force double-SSH-connect (re-establishing pools inside the helper)
+   or (b) reorder the byte stream (all prompts first, then all work).
+   Neither preserves byte-identity. The CLI wrapper (`init/mod.rs`)
+   owns the prompt→work interleaving inline; `init_core` runs only the
+   post-prompt detect-and-persist phase and takes an `InitPools<'a>`
+   borrowing wrapper-established pools. *Phase E will need a different
+   UX for init from the TUI* — see scope gap below.
+
+2. **D3 — `sync_path_across` left intact.** The function at
+   `sync/mod.rs:791-1003` (~210 lines) has the same structure as the
+   original `sync_inner` and shares mutable state with the recursive
+   loop. The D3 spec listed only the 4 phase helpers (`expand_paths`,
+   `decide_batch`, `distribute_batch`, `run_recursive_entries`);
+   extracting `sync_path_across` would have been a behavioural change.
+   Left intact; flagged for Phase F/G cleanup.
+
+3. **D3 — `#[allow(clippy::too_many_arguments)]` on all 4 helpers.**
+   Each helper takes 6–10 params (`summary`, `host_file_map`, etc.
+   threaded via `&mut`). A `SyncPhaseContext<'a>` struct-parameter
+   refactor would clean this up but is out of scope. Matches the
+   established pattern (`sync/mod.rs:790`, `Context::from_tui_parts`).
+
+### Scope gaps (Phase E or follow-up)
+
+- **TUI cannot fully drive `init` yet.** `init_core` is non-interactive
+  and callable, but expects `InitPools` already established by the
+  caller, and the retry flows (keyscan, ssh-copy-id) live in the CLI
+  wrapper because they require inherited-TTY subprocesses that cannot
+  run from TUI mode. Phase E will need to design an init popup flow
+  (likely: TUI runs `init_core` with a plan that declines all retries,
+  surfaces the failure partition as a popup, lets the user pick
+  "keyscan all" / "skip", re-runs `init_core` with the resulting plan
+  and an internally-established retry pool). The current `init_core` +
+  helpers support this flow, but Phase E has to drive it.
+- **`checkout` from TUI is fully unblocked.** `checkout_core` is
+  non-interactive and returns a typed `CheckoutReport`; Phase E can
+  call it directly or keep using the existing DB path
+  (`fetch_combined_snapshots`).
+- **AGENTS.md §"Module Structure" needs follow-up update.** Three
+  bullets need refinement:
+  - `commands/init.rs` → `commands/init/{core,report,mod}.rs`
+  - `commands/checkout.rs` → `commands/checkout/{core,report,mod}.rs`
+  - `commands/sync/mod.rs` note should mention the 4 phase helpers
+    (`expand_paths`, `decide_batch`, `distribute_batch`,
+    `run_recursive_entries`) plus `sync_path_across`.
+
+### thiserror question — still not urgent
+
+Phase D did not make thiserror adoption more urgent. All four new
+sync helpers return `anyhow::Result<()>` or `Result<Vec<SyncDecision>>`.
+The `*Report` typed structs (`InitReport`, `CheckoutReport`) carry the
+structured data callers need. Recommendation stands: defer to Phase F/G.
