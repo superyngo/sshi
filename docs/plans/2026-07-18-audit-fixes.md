@@ -707,3 +707,109 @@ Phase E did not make thiserror adoption more urgent. The kill ring
 returns `()`, the undo ring returns `()`, the glyph lookup returns
 `&'static str`. No place where a typed enum would have been cleaner.
 Recommendation stands: defer to Phase F/G.
+
+---
+
+## Phase F execution notes (landed 2026-07-19)
+
+Phase F shipped as 3 commits (`4903fc0` F1 + `bc4a592` F2 + `75c869f`
+F3). 307 tests pass (delta from Phase E's 306: F1 −3, F2 +11, F3 −7
+= net +1, but the count is 307 because the test arithmetic includes
+the +1 rounding into the F2 verification window; the actual final
+count is 307). Three deviations from spec + four scope gaps / future
+cleanups recorded here:
+
+1. **F1 — `parse_batch_metadata_output` deviation.** F1 spec listed
+   it for deletion (audit §2.4 MED flagged the `#[allow(dead_code)]`).
+   Live caller discovered at `collect.rs:229` (batch-metadata collect
+   path). The function is wired in and exercised by every multi-file
+   sync; the allow annotation was stale. Only the `#[allow(dead_code)]`
+   was removed; the body is preserved. **Audit evidence was wrong on
+   this one finding** — the function gained a caller after the audit
+   snapshot. Deviation recorded in F1's commit body.
+
+2. **F2 — `ShellMode` collapse deferred.** F2 spec called for
+   "Collapse `ShellMode` into `ShellType` (or derive via single
+   `From`)." `ShellMode` lives in the TUI persistence schema
+   (`persist.rs:71` inside `TargetFilterState`) and serializes via
+   serde as `"Sh"` / `"PowerShell"` / `"Cmd"` (default PascalCase
+   enum representation). `ShellType` (`config/schema.rs:171`) has
+   `#[serde(rename_all = "lowercase")]` + a `powershell` rename and
+   serializes as `"sh"` / `"powershell"` / `"cmd"`. Collapsing would
+   silently change the on-disk TOML format — existing
+   `tui_state-*.toml` files would either fail to deserialize (strict
+   mode) or silently fall back to default (the current
+   `#[serde(default)]`-everywhere policy makes this the likely path,
+   which would reset every user's shell filter to `Sh`). Per Phase F
+   brief's "STOP and report" guidance, the collapse is **deferred to
+   a dedicated behaviour-change task** that would need either a serde
+   migration layer or a state-schema major-version bump. The other 4
+   parts of F2 (`shell_label`, `chips`, `truncate`, `focus_style`,
+   group-collection) shipped.
+
+3. **F3 — option (a) taken (delete).** The `Focusable` trait had
+   zero non-test callers. Production arrow dispatch is implemented
+   per-tab. Deleted the trait + `ArrowResult` enum + 7 adapter tests
+   (`ListAdapter` + 4 tests; `RadioAdapter` + 3 tests). Kept the
+   other types in `focus.rs` (`Direction`, `Axis`, `AxisFreedom`,
+   `FocusZone`, `EscapeOutcome`, `escape_to_parent`, `FocusPath`)
+   plus their 2 surviving tests — they describe the focus model a
+   future dispatch could be rebuilt on, and the audit didn't flag
+   them. Module-level `#![allow(dead_code)]` stays.
+
+### Scope gaps (Phase G or follow-up)
+
+- **A5 scope gap (carried forward): `build_dir_expand_cmd` still
+  uses PowerShell double-quote interpolation.** `collect.rs:469-498`
+  has the same `"$path"` / `"$HOME\…"` pattern that A5 fixed
+  elsewhere. Phase A execution notes flagged it; F1 did not touch it
+  per spec. Same vulnerability class. **Phase G or a dedicated
+  security pass should close it.**
+
+- **Phase B carry-over: redundant TUI OS-thread workaround.** After
+  Phase B made `Context` `Send + Sync`, the dedicated-OS-thread
+  workaround at `app.rs:1184-1230` + 4 similar sites is no longer
+  technically necessary. Removing it is a behaviour change (per-op
+  work would run on the main multi-thread runtime instead of a
+  dedicated OS thread). Phase B execution notes flagged it for F/G
+  cleanup. **F1/F2/F3 did not remove it.** Flag for Phase G4
+  (event-driven TUI loop) — that's the natural place to revisit it.
+
+- **`host::pool` test coverage now zero.** F1 deleted the 3
+  `PoolHostResult` tests, leaving `host/pool.rs` with no test module
+  at all. Construction requires a live `RusshSessionPool` (real SSH
+  connection), so unit tests aren't really meaningful — integration
+  coverage comes from the rest of the test suite that *uses*
+  `SshPool::setup`. **Acceptable for now**; flagged for Phase H1
+  (integration tests via SessionPool trait mock).
+
+- **`focus.rs` is now mostly dead types.** F3 deleted the trait but
+  kept `Direction`/`Axis`/`AxisFreedom`/`FocusZone`/`EscapeOutcome`/
+  `FocusPath`/`escape_to_parent`. These are silenced by
+  `#![allow(dead_code)]`. Either (a) wire them into actual production
+  dispatch (the original §8.6 plan) or (b) delete the module
+  entirely. **Phase G4 (event-driven TUI loop) or a dedicated focus
+  refactor.**
+
+### Test-count delta
+
+| Phase | Tests | Delta |
+|---|---|---|
+| A | 257 | +4 (from 253 baseline) |
+| B | 257 | 0 |
+| C | 263 | +6 |
+| D | 270 | +7 |
+| E | 306 | +36 |
+| F1 | 303 | −3 |
+| F2 | 314 | +11 |
+| F3 | 307 | −7 |
+| **F total** | **307** | **+1** |
+
+### thiserror question — still not urgent
+
+Phase F did not make thiserror adoption more urgent. The `shared`
+helpers return `String` / `Style` / `Vec<String>`; the `Focusable`
+deletion removed a place that returned `()`. No place where a typed
+enum would have been cleaner. Recommendation stands: defer to Phase
+G/H and only if a typed enum is needed for caller-side matching.
+
