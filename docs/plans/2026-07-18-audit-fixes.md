@@ -423,3 +423,63 @@ Other minor notes:
   (which can be a raw IP). Matches the ssh-with-Host-alias convention.
 - A10 rewrote `host/pool.rs:1` doc-comment from 1 line to 4 lines for
   accuracy (the prior comment was inverted).
+
+---
+
+## Phase B execution notes (landed 2026-07-19)
+
+Phase B shipped as 3 commits (`356c26b` `9664882` `8bdbcae`). 257 tests
+pass (no delta from Phase A — these are behavioural refactors covered by
+existing tests). Three deviations from spec + two scope gaps recorded
+here so later phases know what was *not* done:
+
+1. **B1 — sync `with_conn` escape hatch on `DbHandle`.** Plan B1 spec
+   said "each method: `spawn_blocking`". The 5 `.prepare(...)` sites in
+   `log_core` / `fetch_latest_snapshots` / `fetch_latest_snapshots` /
+   `fetch_combined_snapshots` could not be individually `.await`-ified
+   because their helpers are sync and converting them would cascade
+   through the TUI's sync event-handler chain (`App::from_context`,
+   `maybe_reload_checkout`, `refresh_view` match arms at
+   `app.rs:1900-1995`) — explicitly out of scope per B1 guidance. A
+   sync `with_conn` method was added to `DbHandle` that just locks the
+   mutex without spawning. All 18 command-handler sites use proper
+   `spawn_blocking`. The audit's HIGH finding was about the
+   per-op current-thread runtime; that's fully addressed. Documented in
+   `state/db.rs` doc-comment. *Tighten later:* if/when TUI event
+   handlers become async, remove `with_conn` and route the 5 sites
+   through `spawn_blocking`.
+
+2. **B2 — behavior change in `check_core` write timing.** Snapshot /
+   last_seen rows are now buffered during the await drain loop and
+   flushed inside one transaction *after* the loop completes. Before,
+   each row was written as its handle resolved. Strictly better
+   atomicity. Operational change: if `check_core` errors mid-loop, no
+   rows persist at all (vs. before, where earlier hosts' rows survived).
+   The `?` propagation was already all-or-nothing in spirit.
+
+3. **B1 — `DbHandle` methods beyond the spec.** Added `transaction`
+   (anticipated by B2), `with_conn` (deviation 1 above), and a
+   `boxed_param` free function in `state::db`. All minimal, all
+   documented. No scope creep into other areas.
+
+### Scope gaps (intentionally not fixed)
+
+- **B2 — second sync drain loop untouched.** `src/commands/sync/mod.rs:862`
+  (`for decision in &decisions` inside `sync_path_across`) has the same
+  per-row DB-write pattern but was not cited in B2's spec. Left
+  untouched. Worth a follow-up cleanup task.
+- **TUI dedicated-OS-thread workaround now redundant.** Now that
+  `Context` holds `Arc<Mutex<Connection>>` (Send + Sync) instead of bare
+  `Connection`, `&Context` is `Send + Sync` and the workaround at
+  `app.rs:1184-1230` (and 4 similar sites) is no longer technically
+  necessary. Removing it is a behaviour change (per-op work would run
+  on the main multi-thread runtime instead of a dedicated OS thread).
+  Out of scope for B; flagged for Phase F or G cleanup.
+
+### thiserror question (audit §2.1 HIGH)
+
+Phase B did **not** make thiserror adoption more urgent. The `DbHandle`
+API uses `anyhow::Result<T>` throughout; no place where a typed enum
+would have been cleaner. Recommend deferring thiserror adoption to the
+security-critical modules (`host::auth`, `host::session_pool`) in
+Phase C or later.
