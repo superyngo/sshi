@@ -813,3 +813,114 @@ deletion removed a place that returned `()`. No place where a typed
 enum would have been cleaner. Recommendation stands: defer to Phase
 G/H and only if a typed enum is needed for caller-side matching.
 
+---
+
+## Phase G execution notes (landed 2026-07-20)
+
+Phase G shipped as 5 task commits (`4be3484` G1 + `b2f8a3b` G2 +
+`a3dc59e` G3 + `7102d28` G4 + `a799f49` G5) plus one flake-fix chore
+(`34977f5`). 313 tests pass (+6 from Phase F's 307). One pre-existing
+flake fixed + five deviations from spec recorded here:
+
+0. **Pre-flight flake fix.** Phase E3's env-mutating theme tests
+   (`set_var`/`remove_var` on `NO_COLOR` and `TERM`) raced under
+   cargo's parallel test runner. The 7 affected tests in
+   `src/tui/theme.rs::tests` now take a static `ENV_TEST_LOCK:
+   std::sync::Mutex<()>` returned by `clear_env()`; this serialises
+   them without introducing a new dev-dep (`serial_test` was the
+   alternative). Verified clean across 10 consecutive
+   `cargo test --features tui` runs.
+
+1. **G1 — `serde = { features = ["rc"] }` required.** Wrapping
+   `HostEntry` in `Arc` end-to-end meant `AppConfig` (which embeds
+   `Vec<Arc<HostEntry>>`) now serializes through serde's `rc`
+   primitive. Without the feature flag, serde emits a compile error.
+   The feature is transparent for existing TOML files (Arc round-trips
+   identically to the inner value).
+
+2. **G1 — mutation sites resolved via `Arc::make_mut`.** Two paths
+   mutate `HostEntry` after construction:
+   - `init/core.rs::persist_init_result` (set `.shell` from probe
+     result) — rewritten as `iter().position()` + `Arc::make_mut`.
+   - `config_tab.rs` inline field edit — `apply_host` now takes
+     `Arc::make_mut(h)`.
+   - Entry-form save path wraps the mutated `HostEntry` in `Arc::new`
+     before reassigning.
+   - `ListData.hosts` (viewer-only) deliberately kept as
+     `Vec<HostEntry>` deep-clone — it's not on the spawn path so
+     Arc-buying would not help.
+
+3. **G2 — cascaded to `Context.config`.** Spec said `App.config:
+   Arc<AppConfig>`; reality required `Context.config: Arc<AppConfig>`
+   too (the TUI hands config to operations via `Context`). All
+   mutation sites use `Arc::make_mut(&mut self.config)` (COW).
+   Reload-from-editor wraps in `Arc::new`.
+
+4. **G3 — JoinSet drop semantics differ (latent improvement).**
+   `JoinSet` aborts remaining tasks on drop; the prior `Vec<JoinHandle>`
+   left them detached. No drain loop in tree early-returns today, so
+   the difference is invisible — but if a future code path adds early
+   return on first error, JoinSet's auto-abort is the desired
+   behaviour.
+
+5. **G4 — two new TUI deps.** `crossterm = { features = ["event-stream"] }`
+   for `EventStream`, plus `futures = "0.3"` for `StreamExt`. Both are
+   TUI-only (under `[features] tui`). Banner-expiry moved from
+   `event::poll(50ms)` loop to `tokio::time::sleep_until` future
+   composed into the same `tokio::select!`. Idle CPU should drop to
+   ~0 (can't verify manually). All 5 OS-thread workaround sites
+   replaced with direct `tokio::spawn`. Compile-time test
+   `context_is_send_sync` guards the Send bound that motivated the
+   workaround.
+
+6. **G5 — `MAX_SFTP_FILE_SIZE` cap genuinely deleted.** Not just
+   hidden — the constant is gone. `upload` opens the local file via
+   `tokio::fs::File::open` and streams via
+   `tokio::io::copy(&mut local_file, &mut remote_file)`. `download`
+   symmetrically streams via
+   `tokio::io::copy(&mut remote_file, &mut local_file)`. Explicit
+   `File::shutdown().await` added so close errors surface (russh-sftp's
+   Drop is fire-and-forget). Test exercises the streaming primitive at
+   64 MiB + 1 byte to prove the legacy cap is gone. Real upload/download
+   can't be exercised from `cargo test` (need live SSH server) — Phase
+   H1 will add mock-based integration coverage.
+
+### Carry-overs now closed
+
+- **Phase B redundant TUI OS-thread workaround** — fully removed by G4.
+  All 5 spawn sites now use direct `tokio::spawn` on the main
+  multi-thread runtime. The `context_is_send_sync` compile-time test
+  guards against future regressions of the Send bound.
+
+### Carry-overs still open
+
+- **Phase A A5 carry-forward: `build_dir_expand_cmd`** PowerShell
+  double-quote interpolation. Still untouched. Same vulnerability
+  class as the sites A5 fixed. **Phase H or a dedicated security
+  pass** — it's the last open audit §2.7 MED item.
+- **Phase D `sync_path_across` (~210 lines)** — G3 didn't refactor it;
+  it's not a drain loop. Still flagged for a future cleanup pass.
+- **Phase E5 `HostEntry.id`** — G1 did not add it speculatively.
+  Still the single highest-value follow-up.
+- **Phase F `host::pool` zero tests** — Phase H1 scope.
+
+### Test-count delta
+
+| Phase | Tests | Delta |
+|---|---|---|
+| A | 257 | +4 (from 253 baseline) |
+| B | 257 | 0 |
+| C | 263 | +6 |
+| D | 270 | +7 |
+| E | 306 | +36 |
+| F | 307 | +1 |
+| **G** | **313** | **+6** (flake-fix 0, G1 +2, G2 +1, G3 +1, G4 +1, G5 +1) |
+
+### thiserror question — still not urgent
+
+Phase G introduced no place where a typed enum would read more cleanly
+than `anyhow::Result<T>` + `.context()`. `Arc::make_mut` returns
+`&mut T`, JoinSet drain returns `Option<Result<T, JoinError>>`
+(handled inline), streaming primitives return `io::Result<()>`.
+Recommendation stands: defer to Phase H or beyond.
+
