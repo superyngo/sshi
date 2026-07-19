@@ -241,6 +241,7 @@ mod tests {
             serial: false,
             skip: vec![],
             verbose: false,
+            auth_sender: None,
         };
         let rows = log_core(&ctx, 20, None, None, None, false).unwrap();
         assert!(rows.is_empty());
@@ -266,6 +267,7 @@ mod tests {
             serial: false,
             skip: vec![],
             verbose: false,
+            auth_sender: None,
         };
 
         let temp_dir = tempfile::TempDir::new().unwrap();

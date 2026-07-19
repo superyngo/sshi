@@ -48,6 +48,7 @@ pub async fn cp_core(
         ctx.concurrency(),
         ctx.per_host_concurrency(),
         true,
+        ctx.auth_sender.clone(),
     )
     .await?;
 

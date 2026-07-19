@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::TargetArgs;
 use crate::config::schema::{AppConfig, CheckEntry, HostEntry, SyncEntry};
+use crate::host::auth::SshAuthSender;
 use crate::state::db::DbHandle;
 
 /// Target mode derived from CLI flags.
@@ -43,6 +44,9 @@ pub struct Context {
     pub serial: bool,
     pub skip: Vec<String>,
     pub verbose: bool,
+    /// When `Some`, SSH credential prompts route through the TUI auth bridge
+    /// instead of blocking `rpassword`. Always `None` on the CLI path.
+    pub auth_sender: Option<SshAuthSender>,
 }
 
 impl Context {
@@ -66,6 +70,7 @@ impl Context {
             serial: target.serial,
             skip: target.skip.clone(),
             verbose,
+            auth_sender: None,
         })
     }
 
@@ -76,6 +81,7 @@ impl Context {
     /// rule). A fresh `rusqlite::Connection` is opened per call against the
     /// resolved state directory; `App.db` is never moved or shared (AD-5).
     #[cfg(feature = "tui")]
+    #[allow(clippy::too_many_arguments)]
     pub fn from_tui_parts(
         config: AppConfig,
         config_path: Option<PathBuf>,
@@ -84,6 +90,7 @@ impl Context {
         timeout: u64,
         verbose: bool,
         skip: Vec<String>,
+        auth_sender: Option<SshAuthSender>,
     ) -> Result<Self> {
         let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
         let db = DbHandle::new(conn);
@@ -96,6 +103,7 @@ impl Context {
             serial,
             skip,
             verbose,
+            auth_sender,
         })
     }
 
@@ -119,6 +127,7 @@ impl Context {
             serial: false,
             skip: Vec::new(),
             verbose,
+            auth_sender: None,
         })
     }
 

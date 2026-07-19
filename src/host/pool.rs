@@ -10,6 +10,7 @@ use anyhow::Result;
 use crate::config::schema::HostEntry;
 use crate::output::progress::SyncProgress;
 
+use super::auth::SshAuthSender;
 use super::concurrency::ConcurrencyLimiter;
 use super::session_pool::RusshSessionPool;
 
@@ -38,6 +39,7 @@ impl SshPool {
         timeout: u64,
         global_concurrency: usize,
         per_host_concurrency: usize,
+        auth_sender: Option<SshAuthSender>,
     ) -> Result<(Self, usize)> {
         Self::setup_with_options(
             hosts,
@@ -45,6 +47,7 @@ impl SshPool {
             global_concurrency,
             per_host_concurrency,
             false,
+            auth_sender,
         )
         .await
     }
@@ -58,6 +61,7 @@ impl SshPool {
         global_concurrency: usize,
         per_host_concurrency: usize,
         probe_sftp: bool,
+        auth_sender: Option<SshAuthSender>,
     ) -> Result<(Self, usize)> {
         let host_names: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
         let limiter =
@@ -65,7 +69,8 @@ impl SshPool {
         let mut progress = SyncProgress::new();
 
         progress.start_host_check(hosts.len());
-        let mut session_pool = RusshSessionPool::setup(hosts, timeout, global_concurrency).await?;
+        let mut session_pool =
+            RusshSessionPool::setup(hosts, timeout, global_concurrency, auth_sender).await?;
         let connected = session_pool.reachable_hosts().len();
 
         if probe_sftp && connected > 0 {

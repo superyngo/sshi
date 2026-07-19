@@ -51,6 +51,7 @@ pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Resul
         serial: false,
         skip: Vec::new(),
         verbose,
+        auth_sender: None,
     };
 
     // Background operations share this terminal; silence their CLI progress

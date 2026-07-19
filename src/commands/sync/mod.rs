@@ -179,6 +179,7 @@ async fn sync_inner(
         ctx.concurrency(),
         ctx.per_host_concurrency(),
         true,
+        ctx.auth_sender.clone(),
     )
     .await?;
 

@@ -313,7 +313,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
         let mut progress = SyncProgress::new();
         progress.start_host_check(entry_refs.len());
         let session_pool =
-            RusshSessionPool::setup(&entry_refs, ctx.timeout, ctx.concurrency()).await?;
+            RusshSessionPool::setup(&entry_refs, ctx.timeout, ctx.concurrency(), None).await?;
         let connected = session_pool.reachable_hosts().len();
         let failed_count = entry_refs.len() - connected;
         progress.finish_host_check(connected, failed_count);
@@ -375,9 +375,13 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
 
                         println!("\nRetrying {} host(s)...", accepted.len());
                         progress.start_host_check(retry_refs.len());
-                        let rp =
-                            RusshSessionPool::setup(&retry_refs, ctx.timeout, ctx.concurrency())
-                                .await?;
+                        let rp = RusshSessionPool::setup(
+                            &retry_refs,
+                            ctx.timeout,
+                            ctx.concurrency(),
+                            None,
+                        )
+                        .await?;
                         let retry_connected = rp.reachable_hosts().len();
                         let retry_failed = retry_refs.len() - retry_connected;
                         progress.finish_host_check(retry_connected, retry_failed);
@@ -466,8 +470,9 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
 
                     println!("\nRetrying {} host(s)...", copied.len());
                     progress.start_host_check(retry_refs.len());
-                    let rp = RusshSessionPool::setup(&retry_refs, ctx.timeout, ctx.concurrency())
-                        .await?;
+                    let rp =
+                        RusshSessionPool::setup(&retry_refs, ctx.timeout, ctx.concurrency(), None)
+                            .await?;
                     let retry_connected = rp.reachable_hosts().len();
                     let retry_failed = retry_refs.len() - retry_connected;
                     progress.finish_host_check(retry_connected, retry_failed);

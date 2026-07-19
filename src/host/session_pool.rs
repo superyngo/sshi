@@ -11,7 +11,7 @@ use russh::client::{self, Handle};
 use russh_keys::key::PublicKey;
 use russh_sftp::client::SftpSession;
 
-use super::auth::{authenticate, PassphraseCache};
+use super::auth::{authenticate, PassphraseCache, SshAuthSender};
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config::ResolvedHostConfig;
 
@@ -152,10 +152,15 @@ pub struct RusshSessionPool {
 
 impl RusshSessionPool {
     /// Connect to all hosts concurrently; unreachable hosts are recorded in `failed`.
+    ///
+    /// `auth_sender`, when `Some`, routes SSH credential prompts (passphrase
+    /// / password fallback) through the TUI auth bridge instead of blocking
+    /// `rpassword`. The CLI passes `None`.
     pub async fn setup(
         hosts: &[&HostEntry],
         timeout_secs: u64,
         concurrency: usize,
+        auth_sender: Option<SshAuthSender>,
     ) -> Result<Self> {
         let timeout = Duration::from_secs(timeout_secs);
         let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -166,11 +171,13 @@ impl RusshSessionPool {
             let alias = host.ssh_host.clone();
             let sem = sem.clone();
             let config = ssh_config.clone();
+            let auth_sender = auth_sender.clone();
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire_owned().await.unwrap();
                 let mut cache = PassphraseCache::new();
-                let result = connect_one(&alias, timeout, &mut cache, &config).await;
+                let result =
+                    connect_one(&alias, timeout, &mut cache, &config, auth_sender.as_ref()).await;
                 (alias, result)
             }));
         }
@@ -428,6 +435,7 @@ async fn connect_one(
     timeout: Duration,
     cache: &mut PassphraseCache,
     ssh_config: &crate::config::ssh_config::ParsedSshConfig,
+    auth_sender: Option<&SshAuthSender>,
 ) -> Result<(Handle<SshHandler>, Option<tokio::sync::oneshot::Sender<()>>)> {
     let resolved = crate::config::ssh_config::resolve_host_with_config(alias, ssh_config)?;
 
@@ -436,11 +444,11 @@ async fn connect_one(
             let proxy_resolved =
                 crate::config::ssh_config::resolve_host_with_config(proxy_alias, ssh_config)?;
             let (handle, cancel_tx) =
-                connect_via_proxy(&proxy_resolved, &resolved, timeout, cache).await?;
+                connect_via_proxy(&proxy_resolved, &resolved, timeout, cache, auth_sender).await?;
             Ok((handle, Some(cancel_tx)))
         }
         None => {
-            let handle = connect_direct(&resolved, timeout, cache).await?;
+            let handle = connect_direct(&resolved, timeout, cache, auth_sender).await?;
             Ok((handle, None))
         }
     }
@@ -451,6 +459,7 @@ async fn connect_direct(
     config: &ResolvedHostConfig,
     timeout: Duration,
     cache: &mut PassphraseCache,
+    auth_sender: Option<&SshAuthSender>,
 ) -> Result<Handle<SshHandler>> {
     let russh_config = Arc::new(client::Config {
         // Send keepalive packets every 30s of inactivity so aggressive
@@ -487,6 +496,7 @@ async fn connect_direct(
         &config.identity_files,
         config.identities_only,
         cache,
+        auth_sender,
     )
     .await
     .with_context(|| {
@@ -505,9 +515,10 @@ async fn connect_via_proxy(
     target: &ResolvedHostConfig,
     timeout: Duration,
     cache: &mut PassphraseCache,
+    auth_sender: Option<&SshAuthSender>,
 ) -> Result<(Handle<SshHandler>, tokio::sync::oneshot::Sender<()>)> {
     // Step 1: connect and authenticate to the proxy
-    let proxy_handle = connect_direct(proxy, timeout, cache)
+    let proxy_handle = connect_direct(proxy, timeout, cache, auth_sender)
         .await
         .with_context(|| format!("Failed to connect to proxy {}", proxy.alias))?;
 
@@ -566,6 +577,7 @@ async fn connect_via_proxy(
         &target.identity_files,
         target.identities_only,
         cache,
+        auth_sender,
     )
     .await
     .with_context(|| {

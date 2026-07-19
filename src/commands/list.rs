@@ -153,6 +153,7 @@ mod tests {
             serial: false,
             skip: vec![],
             verbose: false,
+            auth_sender: None,
         }
     }
 

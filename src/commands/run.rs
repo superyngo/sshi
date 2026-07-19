@@ -36,6 +36,7 @@ pub async fn run_core(
         ctx.timeout,
         ctx.concurrency(),
         ctx.per_host_concurrency(),
+        ctx.auth_sender.clone(),
     )
     .await?;
 

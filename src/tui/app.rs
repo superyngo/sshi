@@ -1171,7 +1171,7 @@ impl App {
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
-        let _auth_sender = self.auth_bridge_tx.clone();
+        let auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
 
@@ -1203,6 +1203,7 @@ impl App {
                         timeout,
                         verbose,
                         skip,
+                        auth_sender,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1273,7 +1274,7 @@ impl App {
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
-        let _auth_sender = self.auth_bridge_tx.clone();
+        let auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
         let sudo = self.operate.run_sudo;
@@ -1293,7 +1294,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1364,7 +1365,7 @@ impl App {
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
-        let _auth_sender = self.auth_bridge_tx.clone();
+        let auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
         let sudo = self.operate.exec_sudo;
@@ -1385,7 +1386,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1464,6 +1465,7 @@ impl App {
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
+        let auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
 
@@ -1482,7 +1484,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1549,7 +1551,7 @@ impl App {
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
         let event_tx = self.event_tx.clone();
-        let _auth_sender = self.auth_bridge_tx.clone();
+        let auth_sender = self.auth_bridge_tx.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
         let dry_run = self.operate.sync_dry_run;
@@ -1581,7 +1583,7 @@ impl App {
                 };
                 rt.block_on(async move {
                     let ctx = match Context::from_tui_parts(
-                        cfg, cfg_path, target_mode, serial, timeout, false, skip,
+                        cfg, cfg_path, target_mode, serial, timeout, false, skip, auth_sender,
                     ) {
                         Ok(c) => c,
                         Err(e) => {
@@ -1637,6 +1639,7 @@ impl App {
                     serial: false,
                     skip: Vec::new(),
                     verbose: false,
+                    auth_sender: None,
                 };
                 if let Ok(snaps) = fetch_latest_snapshots(&tmp_ctx, &host_names) {
                     self.checkout_all_snapshots = snaps;
@@ -1915,6 +1918,7 @@ impl App {
                             serial: false,
                             skip: Vec::new(),
                             verbose: false,
+                            auth_sender: None,
                         };
                         let columns = crate::commands::checkout::DisplayColumns::from_context(&ctx);
                         let host_names: Vec<&str> = self
@@ -1946,6 +1950,7 @@ impl App {
                         serial: false,
                         skip: self.target_filter.skip.clone(),
                         verbose: false,
+                        auth_sender: None,
                     };
                     self.view.list =
                         Some(crate::commands::list::list_core(&ctx).unwrap_or_default());
@@ -1964,6 +1969,7 @@ impl App {
                         serial: false,
                         skip: Vec::new(),
                         verbose: false,
+                        auth_sender: None,
                     };
                     let since = {
                         let v = self.view.log_since_input.value.trim().to_string();

@@ -53,6 +53,10 @@ pub type SshAuthSender = tokio::sync::mpsc::UnboundedSender<SshAuthRequest>;
 /// 1. For each identity file: try without passphrase (unencrypted keys)
 /// 2. For each identity file: if step 1 failed, prompt for passphrase (cached per path)
 /// 3. Prompt for password if `identities_only` is false
+///
+/// When `auth_sender` is `Some`, credential prompts are routed through the
+/// TUI auth bridge (`SshAuthRequest` over the supplied mpsc, reply via the
+/// embedded oneshot). When `None`, the CLI path uses `rpassword` directly.
 pub async fn authenticate(
     handle: &mut Handle<SshHandler>,
     user: &str,
@@ -60,6 +64,7 @@ pub async fn authenticate(
     identity_files: &[PathBuf],
     identities_only: bool,
     cache: &mut PassphraseCache,
+    auth_sender: Option<&SshAuthSender>,
 ) -> Result<()> {
     // Step 1: try each identity file without passphrase (handles unencrypted keys)
     for path in identity_files {
@@ -74,11 +79,8 @@ pub async fn authenticate(
             Some(pp) => pp.clone(),
             None => {
                 let prompt = format!("Enter passphrase for {}: ", path.display());
-                let pp =
-                    rpassword::prompt_password(&prompt).context("Failed to read passphrase")?;
-                let secret = SecretString::new(pp);
-                let for_cache = secret.clone();
-                cache.insert(path.clone(), for_cache);
+                let secret = prompt_credential(prompt, auth_sender).await?;
+                cache.insert(path.clone(), secret.clone());
                 secret
             }
         };
@@ -90,8 +92,7 @@ pub async fn authenticate(
     // Step 3: password fallback (only if IdentitiesOnly is not set)
     if !identities_only {
         let prompt = password_prompt(user, host_name);
-        let password = rpassword::prompt_password(&prompt).context("Failed to read password")?;
-        let password = SecretString::new(password);
+        let password = prompt_credential(prompt, auth_sender).await?;
         if handle
             .authenticate_password(user, password.as_str())
             .await
@@ -102,6 +103,27 @@ pub async fn authenticate(
     }
 
     anyhow::bail!("All authentication methods exhausted for user '{}'", user)
+}
+
+/// Resolve a credential prompt to a `SecretString`, either via the TUI auth
+/// bridge (when `sender` is `Some`) or via `rpassword` on the CLI path.
+async fn prompt_credential(prompt: String, sender: Option<&SshAuthSender>) -> Result<SecretString> {
+    match sender {
+        Some(tx) => {
+            let (responder, receiver) = tokio::sync::oneshot::channel::<String>();
+            tx.send(SshAuthRequest { prompt, responder })
+                .map_err(|_| anyhow::anyhow!("TUI auth bridge closed before prompt was sent"))?;
+            let credential = receiver
+                .await
+                .context("TUI auth bridge dropped responder without replying")?;
+            Ok(SecretString::new(credential))
+        }
+        None => {
+            let pw = rpassword::prompt_password(&prompt)
+                .with_context(|| format!("Failed to read credential: {prompt}"))?;
+            Ok(SecretString::new(pw))
+        }
+    }
 }
 
 fn password_prompt(user: &str, host_name: &str) -> String {
@@ -213,6 +235,52 @@ mod tests {
         assert!(
             !prompt.contains("<host>"),
             "prompt should not contain the literal placeholder: {prompt}",
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auth_sender_path_returns_tui_supplied_credential() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SshAuthRequest>();
+        let expected = "tui-supplied-passphrase";
+
+        let responder_task = tokio::spawn(async move {
+            let req = rx.recv().await.expect("auth request was sent");
+            assert!(
+                req.prompt.contains("/fake/key"),
+                "prompt should name the key path: {}",
+                req.prompt
+            );
+            req.responder
+                .send(expected.to_string())
+                .expect("responder accepted");
+        });
+
+        let secret = prompt_credential("Enter passphrase for /fake/key: ".to_string(), Some(&tx))
+            .await
+            .expect("TUI bridge path returns a SecretString");
+
+        responder_task.await.unwrap();
+        assert_eq!(secret.as_str(), expected);
+    }
+
+    #[tokio::test]
+    async fn test_auth_sender_path_returns_error_when_bridge_drops_responder() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SshAuthRequest>();
+
+        let consumer = tokio::spawn(async move {
+            // Receive the request then drop the responder without replying,
+            // simulating a TUI popup cancel (Esc).
+            let req = rx.recv().await.unwrap();
+            drop(req.responder);
+        });
+
+        let result =
+            prompt_credential("Enter passphrase for /fake/key: ".to_string(), Some(&tx)).await;
+
+        consumer.await.unwrap();
+        assert!(
+            result.is_err(),
+            "dropping the responder must surface as an error"
         );
     }
 }
