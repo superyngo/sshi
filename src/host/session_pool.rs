@@ -453,9 +453,13 @@ async fn connect_direct(
     cache: &mut PassphraseCache,
 ) -> Result<Handle<SshHandler>> {
     let russh_config = Arc::new(client::Config {
-        // No inactivity_timeout: sessions must stay alive between setup and use.
-        // Per-operation timeouts are enforced by callers via tokio::time::timeout.
+        // Send keepalive packets every 30s of inactivity so aggressive
+        // `ClientAliveInterval` / NAT idle timeouts don't silently drop the
+        // session between setup and use. `inactivity_timeout` stays `None`
+        // (we never want to proactively close an idle session); per-op
+        // timeouts are still enforced by callers via `tokio::time::timeout`.
         inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(30)),
         ..<client::Config as Default>::default()
     });
 
@@ -535,8 +539,10 @@ async fn connect_via_proxy(
     });
 
     let russh_config = Arc::new(client::Config {
-        // No inactivity_timeout: session must stay alive for the tunnel's lifetime.
+        // Same keepalive policy as the direct connection — the tunneled
+        // session is equally susceptible to idle-timeout disconnects.
         inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(30)),
         ..<client::Config as Default>::default()
     });
 
@@ -823,5 +829,23 @@ mod tests {
         assert!(err.is_err());
         assert_eq!(err.unwrap_err(), "boom");
         assert!(cache.inner.lock().await.is_empty());
+    }
+
+    #[test]
+    fn test_keepalive_config_sends_packets_every_30s() {
+        let config = client::Config {
+            inactivity_timeout: None,
+            keepalive_interval: Some(Duration::from_secs(30)),
+            ..<client::Config as Default>::default()
+        };
+        assert_eq!(
+            config.keepalive_interval,
+            Some(Duration::from_secs(30)),
+            "keepalive_interval must be set so aggressive ClientAliveInterval hosts stay connected"
+        );
+        assert_eq!(
+            config.inactivity_timeout, None,
+            "inactivity_timeout must remain None — we never proactively close idle sessions"
+        );
     }
 }
