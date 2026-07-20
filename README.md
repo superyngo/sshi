@@ -2,6 +2,34 @@
 
 SSH-config-based cross-platform remote management tool.
 
+## Recent changes
+
+Notable user-visible improvements since the 1.6.1 release (full details in
+`CHANGELOG.md` under `[Unreleased]`):
+
+- **SSH keepalives** prevent aggressive `ClientAliveInterval` servers and NAT
+  idle timers from silently dropping the session mid-operation.
+- **Streaming SFTP transfers** lift the previous 64 MB per-file cap — large
+  files now stream chunk-by-chunk instead of being buffered whole.
+- **`NO_COLOR` support**: set the `NO_COLOR` environment variable
+  (per <https://no-color.org>) to render the TUI without ANSI colour codes;
+  set `TERM=linux` for an ASCII glyph fallback (`✓ ✗ ⊘ ⚠` → `+ x o !`).
+- **Emacs-style editing** in TUI input fields: `Ctrl+A`/`Ctrl+E` (line
+  start/end), `Ctrl+K`/`Ctrl+U` (kill-to-end / kill-to-start), `Ctrl+W`
+  (delete-word-back), `Ctrl+Y` (yank last kill), `Ctrl+Left`/`Ctrl+Right`
+  (word jumps), `Ctrl+Z` (undo). Cursor moves by grapheme cluster.
+- **Scrollable popups**: Help (`?`), Info (`i`), and Export popups now accept
+  `↑↓`/`j`/`k`/`PgUp`/`PgDn`/`Home`/`End` and size content-aware — full Help
+  body reachable on a 24-row terminal.
+- **About panel** inside the `i` Info popup (cycle with `Tab`/`Shift+Tab`/`i`)
+  surfaces app name, version, description, author, license, homepage,
+  repository, and a short privacy statement.
+- **Passphrase-protected SSH keys** finally work in TUI mode — credential
+  prompts route through a popup instead of dead-locking on `rpassword`.
+- **Dry-run toggle** now persists across TUI restarts.
+- **`--release` binaries** are ~50% smaller (`lto="thin"`, `codegen-units=1`,
+  `strip="symbols"`).
+
 ## Features
 
 - **Host Discovery**: Import hosts from `~/.ssh/config` with automatic shell type detection
@@ -217,8 +245,8 @@ sshi cp --all ./app.conf --dry-run
   (copied recursively), or a quoted wildcard pattern expanded by sshi itself.
 - The **remote path** (optional, second positional) defaults to the remote home
   directory, mirroring `scp`. A leading `~` is expanded per host/shell.
-- Per-file transfers use SFTP and are capped at 64 MB each; oversized files are
-  reported and skipped.
+- Per-file transfers stream via SFTP (no size cap; the previous 64 MB limit
+  was lifted by the streaming-SFTP refactor).
 
 ### Checkout
 
