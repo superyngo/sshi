@@ -4306,14 +4306,9 @@ Config tab
     }
 
     fn render_help_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
-        let (title, body) = match self.help_section {
-            HelpSection::About => (
-                " About (?) — Tab cycle: Help / About ",
-                self.render_about_body(""),
-            ),
-            HelpSection::Help => (
-                " Keybindings (?) — Tab cycle: Help / About ",
-                "\
+        let body = match self.help_section {
+            HelpSection::About => self.render_about_body(""),
+            HelpSection::Help => "\
 Global keys
   1 / 2 / 3   Switch to Config / Operate / View
   Tab         Cycle to next tab
@@ -4377,9 +4372,21 @@ Log overlay
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
 "
-                .to_string(),
-            ),
+            .to_string(),
         };
+        let active_style = Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+        let inactive_style = Style::default();
+        let (help_style, about_style) = match self.help_section {
+            HelpSection::Help => (active_style, inactive_style),
+            HelpSection::About => (inactive_style, active_style),
+        };
+        let title = Line::from(vec![
+            Span::raw(" "),
+            Span::styled("Help", help_style),
+            Span::raw(" / "),
+            Span::styled("About", about_style),
+            Span::raw(" "),
+        ]);
         let popup_area = content_aware_popup_rect(area, 60, 90, body.len(), 24);
         frame.render_widget(Clear, popup_area);
         let block = Block::default()

@@ -44,7 +44,7 @@ Per-phase execution notes with deviations + scope gaps live in
 - **fix(tui):** restore Config-tab selection by entry `id` (not just sidebar position) after deletion; `App::do_open_editor` now mirrors save-config's capture/restore flow. Scope gap: `HostEntry` has no `id` field, so host deletions still fall back to positional clamping. (E5, b385310)
 - **fix(tui):** open the Help popup on `?` from the navbar-focused state — the navbar dispatcher trapped all keys via its `_` arm, dropping `?` before the global handler ran.
 - **fix(tui):** same navbar-dispatcher trap also dropped `i` (Info popup) and `L` (Log overlay) — both are now mirrored into the navbar dispatcher and share their toggle/cycle logic with the global handlers via `cycle_info_popup`/`toggle_log_overlay` helpers.
-- **feat(tui):** add Help/About toggle to the `?` popup — `Tab` cycles between the Keybindings body and the About section (reuses E2's About content). Header title indicates the active section and hints at the Tab toggle, matching the Info popup's title convention.
+- **feat(tui):** add Help/About toggle to the `?` popup — `Tab` cycles between the Keybindings body and the About section (reuses E2's About content). Header is a minimal `Help / About` with the active section bolded + underlined.
 
 ### Architecture / Refactor
 
