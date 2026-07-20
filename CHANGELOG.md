@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v1.7.0] - 2026-07-20
+
 Audit-fixes rollout covering 24 tasks across 8 phases (A–H) addressing
 `docs/ai-reports/AUDIT_2026-07-18.md` (116 findings: 23 HIGH, 51 MED, 42 LOW).
 Per-phase execution notes with deviations + scope gaps live in
-`docs/plans/2026-07-18-audit-fixes.md`. Test count: 344 (up from 1.6.1's 253).
+`docs/plans/2026-07-18-audit-fixes.md`. Test count: 352 (up from 1.6.1's 253).
 
 ### Security
 

@@ -4,8 +4,8 @@ SSH-config-based cross-platform remote management tool.
 
 ## Recent changes
 
-Notable user-visible improvements since the 1.6.1 release (full details in
-`CHANGELOG.md` under `[Unreleased]`):
+Notable user-visible improvements in the 1.7.0 release (full details in
+`CHANGELOG.md` under `[v1.7.0]`):
 
 - **SSH keepalives** prevent aggressive `ClientAliveInterval` servers and NAT
   idle timers from silently dropping the session mid-operation.
