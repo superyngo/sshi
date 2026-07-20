@@ -924,3 +924,146 @@ than `anyhow::Result<T>` + `.context()`. `Arc::make_mut` returns
 (handled inline), streaming primitives return `io::Result<()>`.
 Recommendation stands: defer to Phase H or beyond.
 
+---
+
+## Phase H execution notes (landed 2026-07-20)
+
+Phase H shipped as 2 commits (`d8f5564` H1 + `78d0d6f` H2). 344 tests
+pass (+31 from Phase G's 313). One design trade-off surfaced during
+H1 and was resolved per the spec's explicit "STOP and report" guidance
+— recorded here so the trait design is reproducible.
+
+1. **H1 deviation from spec step 1 — `async-trait` is a regular dep,
+   not a dev-dep.** The user's H1 scope said "Add `async-trait` as a
+   **dev-dependency**" with the rationale "It's test-only
+   infrastructure (production code keeps the concrete
+   `RusshSessionPool`)." That mental model conflicts with steps 2–5 of
+   the same scope, which refactor production sites (`shell::detect_russh`,
+   `init::InitPools`, the 4 sync phase helpers + `sync_path_across`) to
+   take `&dyn SessionPool`. Once production code takes the trait
+   object, the trait definition + `#[async_trait]` impl for
+   `RusshSessionPool` must be visible in non-test builds, so the macro
+   must be a regular dep. Used `[dependencies]` instead; flagged
+   prominently in the commit body + final report. The alternative
+   (dev-dep + cfg-gated trait) would have required either duplicating
+   every refactored function behind `#[cfg(test)]` (untenable) or
+   keeping production code 100% concrete (which would have left no
+   seam for the mock to enter — defeating H1's purpose).
+
+2. **H1 — Option C (hybrid trait refactor) chosen over Option A (full).**
+   The spec listed 10 production sites needing trait conversion; final
+   count was exactly 10 (5 in `sync/mod.rs`, 3 in `collect.rs`, 2 in
+   `distribute.rs`). No sites exploded beyond budget. The
+   `host::shell::detect_russh` and `init::core::InitPools` sites
+   converted cleanly. `SshPool` itself was NOT refactored to hold
+   `Arc<dyn SessionPool>` — doing so would require adding `shutdown` to
+   the trait (RusshSessionPool::shutdown currently consumes `self`),
+   which is a separate refactor. As a result, `SshPool` filter methods
+   still hold concrete `Arc<RusshSessionPool>` internally; only smoke
+   tests added (closes Phase F carry-over literally, but deep coverage
+   of `SshPool::filter_*` with non-empty data is deferred).
+
+3. **H1 — `sync_inner` itself kept concrete.** Per the user's
+   instruction ("NOT `sync_inner` itself — keep it concrete, just have
+   it call the helpers via the trait"), the orchestrator still calls
+   `SshPool::setup_with_options` which does real SSH. Tests cover the
+   early-return paths (no paths, single host, zero-host error) but
+   cannot drive the happy path without intercepting `SshPool::setup`.
+   The 4 phase helpers + `sync_path_across` are tested directly via
+   the mock — that's where the substantive logic lives.
+
+4. **H1 — `Arc::clone` is type-specific, can't auto-coerce.** The
+   first attempt at `let sessions: Arc<dyn SessionPool> =
+   Arc::clone(&pool.session_pool);` failed: `Arc::clone` returns
+   `Arc<RusshSessionPool>` and the compiler doesn't insert unsized
+   coercion through function return values. Fixed via two-step let
+   binding: `let concrete: Arc<RusshSessionPool> = Arc::clone(&pool.session_pool);
+   let sessions: Arc<dyn SessionPool> = concrete;` — `CoerceUnsized`
+   fires on the second assignment because the destination type is
+   inferred from the annotation.
+
+5. **H1 — InitPools Option fields needed explicit `.map()`.** Rust's
+   unsized coercion doesn't auto-propagate through `Option<&T>` →
+   `Option<&dyn Trait>`. The bare `session: &session_pool` field
+   coerced automatically; the `retry: retry_pool.as_ref()` field
+   didn't. Fixed by `.map(|p| p as &dyn SessionPool)` on each Option
+   field.
+
+6. **H2 — README `cp` section had outdated `64 MB cap` mention.** The
+   streaming-SFTP refactor (G5) lifted the cap, but the README still
+   said "Per-file transfers use SFTP and are capped at 64 MB each;
+   oversized files are reported and skipped." Fixed as part of H2
+   since the user spec for H2 included README updates.
+
+### Carry-overs now closed by Phase H
+
+- **Phase D `sync_path_across` (~210 lines) untested** — covered by
+  `sync_path_across_distributes_newest_to_older` +
+  `sync_path_across_in_sync_no_io` in `commands::sync::integration_tests`.
+- **Phase F `host::pool` zero tests** — 2 smoke tests added in
+  `host::pool::tests` (full filter-logic coverage still deferred).
+
+### Carry-overs still open after Phase H
+
+- **Phase A A5 carry-forward: `build_dir_expand_cmd`** PowerShell
+  double-quote interpolation. **NOT touched in Phase H** per the task
+  contract. Still the last open audit §2.7 MED item. Same vulnerability
+  class as the sites A5 fixed in `collect.rs::collect_file_metadata`
+  and `collect.rs::build_batch_metadata_cmd`. Recommend a dedicated
+  security follow-up.
+- **Phase E5 `HostEntry.id`** — not added speculatively. Still the
+  highest-value follow-up; once added, the E5 identity-restore path
+  will start firing for host deletions automatically.
+- **`sync_inner` happy path** — can't be driven past `SshPool::setup`
+  without intercepting a concrete static method. Deeper coverage
+  requires refactoring `sync_inner` to take a pre-built pool OR
+  refactoring `SshPool::setup_with_options` to be generic — both out
+  of H1 scope.
+- **`SshPool::filter_*` deep coverage** — `SshPool.session_pool` is
+  still concrete. Adding `shutdown` to the trait would let
+  `SshPool.session_pool` become `Arc<dyn SessionPool>` and unblock
+  mock injection. Trivial follow-up if anyone needs it.
+- **`focus.rs` dead types** — `Direction` / `Axis` / `FocusZone` /
+  `EscapeOutcome` / `FocusPath` / `escape_to_parent` still silenced by
+  `#![allow(dead_code)]` after F3. Either wire them or delete the
+  module.
+- **B1 sync `with_conn` escape hatch** — the 5 sync helpers
+  (`log_core`, `fetch_latest_snapshots`, `fetch_combined_snapshots`)
+  still use the sync `with_conn` because they're called from the TUI
+  main thread. Tightening requires the TUI event handlers to become
+  async.
+- **B2 second sync drain loop** — `sync_path_across` per-row DB writes
+  still not wrapped in a transaction. Flagged by Phase B execution
+  notes.
+- **`metrics::collector` / `host::auth` tests** — `metrics::collector`
+  still has no test for the batch metadata assembly; `host::auth` has
+  no test for the `authenticate` flow (mock would need to fake russh
+  `Handle<SshHandler>`, which is what H1's `MockSessionPool` worked
+  around by abstracting at a higher level).
+
+### Test-count delta
+
+| Phase | Tests | Delta |
+|---|---|---|
+| A | 257 | +4 |
+| B | 257 | 0 |
+| C | 263 | +6 |
+| D | 270 | +7 |
+| E | 306 | +36 |
+| F | 307 | +1 |
+| G | 313 | +6 |
+| **H** | **344** | **+31** (H1 +31: init 9, sync 13, mock 7, host::pool 2; H2 0) |
+
+### thiserror question — still not urgent
+
+Phase H introduced `SessionPool` (a trait with async methods returning
+`anyhow::Result<T>`) and `MockSessionPool` (returns `anyhow::Result`
+with `.bail!()` for unexpected calls). No place where a typed error
+enum would read more cleanly — the mock's "no canned response" error
+is a test-time assertion failure, not a recoverable production error.
+**Final recommendation:** thiserror remains not urgent. Adopt only if
+a future caller needs to `match` on error variants; for the
+ foreseeable future, `anyhow::Result<T>` + `.context()` remains the
+ right call.
+
+
