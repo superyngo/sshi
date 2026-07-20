@@ -42,6 +42,7 @@ Per-phase execution notes with deviations + scope gaps live in
 - **feat(tui):** honour `NO_COLOR` (per https://no-color.org) and `TERM=linux` independently; new `GlyphSet` carries the 4 spec'd status glyph pairs (`✓`/`+`, `✗`/`x`, `⊘`/`o`, `⚠`/`!`) routed through `theme.glyphs`. CLI output keeps Unicode glyphs unconditionally. (E3, 9183470)
 - **feat(tui):** bring `InputField` up to the editing contract — Emacs-style keys (`Ctrl+A/E/K/U/W/Y`), word jumps, per-field kill ring (cap 8) and undo ring, grapheme-cluster cursor movement via `unicode-segmentation`. Deferred: Shift+arrow selection. (E4, dcfb74f)
 - **fix(tui):** restore Config-tab selection by entry `id` (not just sidebar position) after deletion; `App::do_open_editor` now mirrors save-config's capture/restore flow. Scope gap: `HostEntry` has no `id` field, so host deletions still fall back to positional clamping. (E5, b385310)
+- **fix(tui):** open the Help popup on `?` from the navbar-focused state — the navbar dispatcher trapped all keys via its `_` arm, dropping `?` before the global handler ran.
 
 ### Architecture / Refactor
 

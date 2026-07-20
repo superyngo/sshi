@@ -2009,6 +2009,15 @@ impl App {
         }
     }
 
+    /// Open the Help popup with scroll/section state reset. Shared by the
+    /// global `?` handler and the navbar-focused `?` handler — the navbar
+    /// dispatcher traps all keys (its `_` arm returns early), so global
+    /// shortcuts must be mirrored there to remain reachable.
+    fn open_help_popup(&mut self) {
+        self.help_open = true;
+        self.help_vp = Viewport::new();
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         // Ctrl+C always quits.
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
@@ -2511,6 +2520,10 @@ impl App {
                     self.should_quit = true;
                     return Ok(true);
                 }
+                KeyCode::Char('?') => {
+                    self.open_help_popup();
+                    return Ok(true);
+                }
                 _ => return Ok(false),
             }
         }
@@ -2522,8 +2535,7 @@ impl App {
                 Ok(true)
             }
             KeyCode::Char('?') => {
-                self.help_open = true;
-                self.help_vp = Viewport::new();
+                self.open_help_popup();
                 Ok(true)
             }
             KeyCode::Char('i') => {
@@ -4771,6 +4783,58 @@ mod info_section_tests {
         // `i` opens on TabInfo (the legacy per-tab help) so the original
         // user flow is preserved.
         assert_eq!(InfoSection::default(), InfoSection::TabInfo);
+    }
+}
+
+#[cfg(test)]
+mod navbar_focus_tests {
+    use super::*;
+    use crate::commands::{Context, TargetMode};
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::Arc;
+
+    fn minimal_app() -> App {
+        let config = crate::config::schema::AppConfig::default();
+        let conn = crate::state::db::open(None).unwrap();
+        let ctx = Context {
+            config: Arc::new(config),
+            config_path: None,
+            db: crate::state::db::DbHandle::new(conn),
+            timeout: 30,
+            mode: TargetMode::All,
+            serial: false,
+            skip: vec![],
+            verbose: false,
+            auth_sender: None,
+        };
+        App::from_context(&ctx, None)
+    }
+
+    fn question_mark_key() -> KeyEvent {
+        // `?` is Shift+/ on most keyboards; the dispatcher matches on the
+        // resulting Char('?') and ignores modifiers.
+        KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
+    }
+
+    /// Regression: the navbar_focused dispatcher traps all keys via its `_`
+    /// arm; `?` must be mirrored there to reach the Help popup.
+    #[test]
+    fn question_mark_opens_help_from_navbar_focus() {
+        let mut app = minimal_app();
+        app.navbar_focused = true;
+        assert!(!app.help_open);
+        app.handle_key(question_mark_key()).unwrap();
+        assert!(app.help_open, "`?` should open Help from navbar focus");
+    }
+
+    /// Sanity: `?` still opens Help from the default (non-navbar) focus state.
+    #[test]
+    fn question_mark_opens_help_from_default_focus() {
+        let mut app = minimal_app();
+        assert!(!app.navbar_focused);
+        assert!(!app.help_open);
+        app.handle_key(question_mark_key()).unwrap();
+        assert!(app.help_open, "`?` should open Help from default focus");
     }
 }
 
