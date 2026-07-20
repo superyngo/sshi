@@ -96,6 +96,25 @@ impl InfoSection {
     }
 }
 
+/// Active section of the Help (`?`) popup. Cycles Help → About → Help via
+/// `Tab` inside the popup. Two-state mirror of `InfoSection` (the Help popup
+/// has no per-tab info section).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HelpSection {
+    #[default]
+    Help,
+    About,
+}
+
+impl HelpSection {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Help => Self::About,
+            Self::About => Self::Help,
+        }
+    }
+}
+
 pub struct App {
     pub active_tab: TabId,
     navbar_focused: bool,
@@ -130,6 +149,7 @@ pub struct App {
     help_vp: Viewport,
     info_vp: Viewport,
     info_section: InfoSection,
+    help_section: HelpSection,
 }
 
 impl App {
@@ -203,6 +223,7 @@ impl App {
             help_vp: Viewport::new(),
             info_vp: Viewport::new(),
             info_section: InfoSection::default(),
+            help_section: HelpSection::default(),
         }
     }
 
@@ -2016,6 +2037,7 @@ impl App {
     fn open_help_popup(&mut self) {
         self.help_open = true;
         self.help_vp = Viewport::new();
+        self.help_section = HelpSection::default();
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
@@ -2228,11 +2250,17 @@ impl App {
             }
         }
 
-        // Help popup intercepts: Esc/? close it; arrow/pgup/pgdn scroll.
+        // Help popup intercepts: Esc/? close it; Tab toggles Help/About;
+        // arrow/pgup/pgdn scroll.
         if self.help_open {
             match key.code {
                 KeyCode::Esc | KeyCode::Char('?') => {
                     self.help_open = false;
+                    return Ok(true);
+                }
+                KeyCode::Tab | KeyCode::BackTab => {
+                    self.help_section = self.help_section.next();
+                    self.help_vp = Viewport::new();
                     return Ok(true);
                 }
                 KeyCode::Up | KeyCode::Char('k') => {
@@ -4087,7 +4115,7 @@ impl App {
             ),
             InfoSection::About => (
                 " About (i) — Tab cycle: Tab-info / About / Help ",
-                self.render_about_body(),
+                self.render_about_body("Press Tab to cycle: Tab-info → About → Keybindings."),
             ),
             InfoSection::Help => (
                 " Keybindings (i) — Tab cycle: Tab-info / About / Help ",
@@ -4140,8 +4168,9 @@ impl App {
 
     /// About-section body sourced from compile-time Cargo env! macros so the
     /// `[package]` table in Cargo.toml remains the single source of truth
-    /// (audit §1 P18 HIGH).
-    fn render_about_body(&self) -> String {
+    /// (audit §1 P18 HIGH). `cycle_hint` is appended (preceded by a blank
+    /// line) when non-empty — each popup passes its own toggle hint.
+    fn render_about_body(&self, cycle_hint: &str) -> String {
         let name = env!("CARGO_PKG_NAME");
         let version = env!("CARGO_PKG_VERSION");
         let description = env!("CARGO_PKG_DESCRIPTION");
@@ -4149,7 +4178,7 @@ impl App {
         let license = env!("CARGO_PKG_LICENSE");
         let homepage = env!("CARGO_PKG_HOMEPAGE");
         let repository = env!("CARGO_PKG_REPOSITORY");
-        format!(
+        let mut body = format!(
             "{name} v{version}\n\n\
              {description}\n\n\
              Author:     {authors}\n\
@@ -4160,9 +4189,13 @@ impl App {
              SSH hosts you configure in ~/.config/sshi/config.toml or ~/.ssh/config.\n\
              No telemetry, analytics, or automatic update checks are performed.\n\
              Operation logs and per-host checkout snapshots are stored locally in\n\
-             the sshi state database (see `state_dir` in config.toml).\n\n\
-             Press Tab to cycle: Tab-info → About → Keybindings."
-        )
+             the sshi state database (see `state_dir` in config.toml)."
+        );
+        if !cycle_hint.is_empty() {
+            body.push_str("\n\n");
+            body.push_str(cycle_hint);
+        }
+        body
     }
 
     fn render_help_body(&self) -> String {
@@ -4249,7 +4282,14 @@ Config tab
     }
 
     fn render_help_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
-        let body = "\
+        let (title, body) = match self.help_section {
+            HelpSection::About => (
+                " About (?) — Tab cycle: Help / About ",
+                self.render_about_body(""),
+            ),
+            HelpSection::Help => (
+                " Keybindings (?) — Tab cycle: Help / About ",
+                "\
 Global keys
   1 / 2 / 3   Switch to Config / Operate / View
   Tab         Cycle to next tab
@@ -4312,18 +4352,21 @@ Log overlay
   ↑↓ / j k    Scroll
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
-";
+"
+                .to_string(),
+            ),
+        };
         let popup_area = content_aware_popup_rect(area, 60, 90, body.len(), 24);
         frame.render_widget(Clear, popup_area);
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(self.theme.border_active))
-            .title(" Keybindings (?) — ↑↓ scroll, Esc close ");
+            .title(title);
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
         let wrap_width = inner.width.max(1) as usize;
-        let lines = wrap_text_to_lines(body, wrap_width);
+        let lines = wrap_text_to_lines(&body, wrap_width);
         let visible_h = inner.height as usize;
         self.help_vp.set_dims(lines.len(), visible_h);
         let scroll = self.help_vp.scroll_y;
@@ -4835,6 +4878,26 @@ mod navbar_focus_tests {
         assert!(!app.help_open);
         app.handle_key(question_mark_key()).unwrap();
         assert!(app.help_open, "`?` should open Help from default focus");
+    }
+}
+
+#[cfg(test)]
+mod help_section_tests {
+    use super::HelpSection;
+
+    #[test]
+    fn help_section_cycle_is_two_way() {
+        // Mirror of info_section_tests: Tab cycles Help → About → Help.
+        let s = HelpSection::Help;
+        assert_eq!(s.next(), HelpSection::About);
+        assert_eq!(s.next().next(), HelpSection::Help);
+    }
+
+    #[test]
+    fn help_section_default_is_help() {
+        // `?` opens on Help (the keybindings body) so the original user
+        // flow is preserved.
+        assert_eq!(HelpSection::default(), HelpSection::Help);
     }
 }
 

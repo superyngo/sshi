@@ -43,6 +43,7 @@ Per-phase execution notes with deviations + scope gaps live in
 - **feat(tui):** bring `InputField` up to the editing contract — Emacs-style keys (`Ctrl+A/E/K/U/W/Y`), word jumps, per-field kill ring (cap 8) and undo ring, grapheme-cluster cursor movement via `unicode-segmentation`. Deferred: Shift+arrow selection. (E4, dcfb74f)
 - **fix(tui):** restore Config-tab selection by entry `id` (not just sidebar position) after deletion; `App::do_open_editor` now mirrors save-config's capture/restore flow. Scope gap: `HostEntry` has no `id` field, so host deletions still fall back to positional clamping. (E5, b385310)
 - **fix(tui):** open the Help popup on `?` from the navbar-focused state — the navbar dispatcher trapped all keys via its `_` arm, dropping `?` before the global handler ran.
+- **feat(tui):** add Help/About toggle to the `?` popup — `Tab` cycles between the Keybindings body and the About section (reuses E2's About content). Header title indicates the active section and hints at the Tab toggle, matching the Info popup's title convention.
 
 ### Architecture / Refactor
 
