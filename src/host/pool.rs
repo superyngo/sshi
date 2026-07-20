@@ -131,3 +131,40 @@ impl SshPool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::schema::HostEntry;
+
+    /// Smoke test: `SshPool::setup` with an empty host list produces an
+    /// empty pool (zero reachable, zero failed) and shuts down cleanly.
+    /// Closes the Phase F carry-over where `host::pool` had zero tests
+    /// (audit §2.8 MED — `host::pool.rs:23,89 PoolHostResult/reachable_hosts`
+    /// was deleted in F1, leaving no test module at all).
+    #[tokio::test]
+    async fn ssh_pool_setup_empty_hosts_produces_empty_pool() {
+        let (pool, connected) = SshPool::setup(&[], 5, 4, 4, None).await.unwrap();
+        assert_eq!(connected, 0);
+        assert!(pool.failed_hosts().is_empty());
+        assert!(pool.sftp_failed_hosts().is_empty());
+        assert!(pool.filter_reachable(&[]).is_empty());
+        assert!(pool.filter_sftp_capable(&[]).is_empty());
+        pool.shutdown().await;
+    }
+
+    /// `filter_reachable` / `filter_sftp_capable` on an empty pool return
+    /// empty Vecs even when given a non-empty host list (no sessions to
+    /// match against).
+    #[tokio::test]
+    async fn ssh_pool_empty_pool_filters_return_empty() {
+        let (pool, _) = SshPool::setup(&[], 5, 4, 4, None).await.unwrap();
+        let hosts = vec![
+            Arc::new(HostEntry::placeholder("a", "a")),
+            Arc::new(HostEntry::placeholder("b", "b")),
+        ];
+        assert_eq!(pool.filter_reachable(&hosts).len(), 0);
+        assert_eq!(pool.filter_sftp_capable(&hosts).len(), 0);
+        pool.shutdown().await;
+    }
+}

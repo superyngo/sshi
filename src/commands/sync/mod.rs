@@ -15,7 +15,7 @@ use tokio::sync::Semaphore;
 use crate::commands::report::{CommandReport, ProgressSink};
 use crate::config::schema::HostEntry;
 use crate::host::pool::SshPool;
-use crate::host::session_pool::RusshSessionPool;
+use crate::host::session_pool::{RusshSessionPool, SessionPool};
 use crate::output::printer;
 use crate::output::summary::SyncSummary;
 
@@ -241,13 +241,21 @@ async fn sync_inner(
     }
 
     // ── Phase 1: expand directory paths (steps 3.5 + 3.6) ──────────────────
+    // Coerce `Arc<RusshSessionPool>` → `Arc<dyn SessionPool>` once; the four
+    // phase helpers + `sync_path_across` take the trait object so test code
+    // can substitute a `MockSessionPool` (audit §2.8 HIGH ×2). The two-step
+    // binding lets `CoerceUnsized` fire on the second assignment (a direct
+    // `Arc::clone(..) as Arc<dyn _>` cast is rejected; unsized coercion
+    // requires the destination type to be inferred from context, not via `as`).
+    let concrete: Arc<RusshSessionPool> = Arc::clone(&pool.session_pool);
+    let sessions: Arc<dyn SessionPool> = concrete;
     expand_paths(
         ctx,
         &reachable_hosts,
         &mut all_paths,
         &mut path_source_map,
         &mut host_applicable_paths,
-        &pool.session_pool,
+        &sessions,
         verbose,
     )
     .await?;
@@ -259,7 +267,7 @@ async fn sync_inner(
         &all_paths,
         &path_source_map,
         &host_applicable_paths,
-        &pool.session_pool,
+        &sessions,
         cli_source,
         push_missing,
         verbose,
@@ -273,7 +281,7 @@ async fn sync_inner(
         &reachable_hosts,
         &all_decisions,
         &pool.limiter,
-        &pool.session_pool,
+        &sessions,
         dry_run,
         verbose,
         &label,
@@ -287,7 +295,7 @@ async fn sync_inner(
         ctx,
         &reachable_hosts,
         &recursive_entries,
-        &pool.session_pool,
+        &sessions,
         dry_run,
         push_missing,
         &label,
@@ -347,7 +355,7 @@ async fn expand_paths(
     all_paths: &mut Vec<String>,
     path_source_map: &mut PathSourceMap<'_>,
     host_applicable_paths: &mut Option<HostPathMap>,
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
     verbose: bool,
 ) -> Result<()> {
     // Step 3.5: Expand directory paths for entries with a fixed source.
@@ -524,7 +532,7 @@ async fn decide_batch(
     all_paths: &[String],
     path_source_map: &PathSourceMap<'_>,
     host_applicable_paths: &Option<HostPathMap>,
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
     cli_source: Option<&str>,
     push_missing: bool,
     verbose: bool,
@@ -632,7 +640,7 @@ async fn distribute_batch(
     reachable_hosts: &[Arc<HostEntry>],
     all_decisions: &[SyncDecision],
     limiter: &crate::host::concurrency::ConcurrencyLimiter,
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
     dry_run: bool,
     verbose: bool,
     label: &str,
@@ -820,7 +828,7 @@ async fn run_recursive_entries(
     ctx: &Context,
     reachable_hosts: &[Arc<HostEntry>],
     recursive_entries: &[RecursiveEntry<'_>],
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
     dry_run: bool,
     push_missing: bool,
     label: &str,
@@ -913,7 +921,7 @@ async fn sync_path_across(
     dry_run: bool,
     push_missing: bool,
     source_override: Option<&str>,
-    sessions: Arc<RusshSessionPool>,
+    sessions: Arc<dyn SessionPool>,
     summary: &mut SyncSummary,
     quiet: bool,
 ) -> Result<()> {
@@ -1121,3 +1129,6 @@ async fn sync_path_across(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod integration_tests;

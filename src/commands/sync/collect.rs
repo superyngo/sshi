@@ -5,7 +5,7 @@ use anyhow::{Context as _, Result};
 use tokio::sync::Semaphore;
 
 use crate::config::schema::{HostEntry, ShellType};
-use crate::host::session_pool::RusshSessionPool;
+use crate::host::session_pool::SessionPool;
 
 use super::super::Context;
 use super::types::{
@@ -102,7 +102,7 @@ pub(crate) async fn collect_file_metadata(
     path: &str,
     timeout: u64,
     concurrency: usize,
-    sessions: Arc<RusshSessionPool>,
+    sessions: Arc<dyn SessionPool>,
 ) -> Result<CollectResult> {
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut set = tokio::task::JoinSet::new();
@@ -209,7 +209,7 @@ pub(crate) async fn batch_collect_all_metadata(
     paths: &[String],
     timeout: u64,
     concurrency: usize,
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
 ) -> Result<BatchCollectResult> {
     let semaphore = Arc::new(Semaphore::new(concurrency));
     let mut set = tokio::task::JoinSet::new();
@@ -292,7 +292,7 @@ pub(crate) async fn expand_directory_paths(
     paths: &[String],
     recursive: bool,
     timeout: u64,
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
 ) -> Result<HashMap<String, DirExpandResult>> {
     if paths.is_empty() {
         return Ok(HashMap::new());

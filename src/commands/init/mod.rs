@@ -17,6 +17,9 @@
 pub mod core;
 pub mod report;
 
+#[cfg(test)]
+mod tests;
+
 use anyhow::Result;
 
 use std::sync::Arc;
@@ -25,6 +28,7 @@ use crate::commands::report::printer_sink_with_skip;
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config;
 use crate::host::session_pool::RusshSessionPool;
+use crate::host::session_pool::SessionPool;
 use crate::output::printer;
 use crate::output::progress::SyncProgress;
 use crate::output::summary::Summary;
@@ -342,12 +346,15 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
 
     // Shell detection + persist delegated to `init_core`. The detect phase
     // streams per-host events via the sink; the wrapper folds the typed
-    // results into its local summary afterwards.
+    // results into its local summary afterwards. `InitPools` fields are
+    // `&dyn SessionPool`; the unsized coercion from `&RusshSessionPool`
+    // happens at field assignment for the bare reference, and via `.map()`
+    // for the `Option<&_>` fields (Rust does not auto-coerce through Option).
     let sink = printer_sink_with_skip();
     let pools = InitPools {
         session: &session_pool,
-        retry: retry_pool.as_ref(),
-        auth_retry: auth_retry_pool.as_ref(),
+        retry: retry_pool.as_ref().map(|p| p as &dyn SessionPool),
+        auth_retry: auth_retry_pool.as_ref().map(|p| p as &dyn SessionPool),
     };
     let report = init_core(ctx, &ssh_hosts, pools, &plan, Some(&sink)).await?;
 

@@ -30,7 +30,7 @@ use crate::commands::report::{HostStatus, ProgressSink};
 use crate::commands::Context;
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config::SshHostEntry;
-use crate::host::session_pool::RusshSessionPool;
+use crate::host::session_pool::SessionPool;
 use crate::host::shell;
 use crate::output::summary::Summary;
 
@@ -342,10 +342,14 @@ pub(crate) fn persist_init_result(
 /// detect-shell time. `session` is always set (initial setup); `retry` and
 /// `auth_retry` are present only when the user authorised the corresponding
 /// retry path and the retry produced at least one connection.
+///
+/// Each field is a `&dyn SessionPool` so the same `init_core` entry point
+/// works against either a real `RusshSessionPool` (CLI) or a `MockSessionPool`
+/// (tests); see `host::session_pool::SessionPool` and `host::session_pool_mock`.
 pub struct InitPools<'a> {
-    pub session: &'a RusshSessionPool,
-    pub retry: Option<&'a RusshSessionPool>,
-    pub auth_retry: Option<&'a RusshSessionPool>,
+    pub session: &'a dyn SessionPool,
+    pub retry: Option<&'a dyn SessionPool>,
+    pub auth_retry: Option<&'a dyn SessionPool>,
 }
 
 /// Pure command core: runs the final shell-detection + persistence phase
@@ -461,6 +465,7 @@ pub async fn init_core(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::host::session_pool::RusshSessionPool;
 
     #[test]
     fn test_resolve_host_falls_back_to_alias() {

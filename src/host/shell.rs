@@ -1,11 +1,15 @@
 //! Remote shell type detection (sh, PowerShell, cmd).
 
+use super::session_pool::SessionPool;
 use crate::config::schema::ShellType;
 
-/// Detect shell type using an established russh session pool.
+/// Detect shell type using an established session pool.
+///
+/// Takes a `&dyn SessionPool` so that test code can supply a `MockSessionPool`
+/// with canned `exec` responses (audit §2.8 HIGH ×2 — see `host::session_pool`).
 pub async fn detect_russh(
     host: &crate::config::schema::HostEntry,
-    sessions: &super::session_pool::RusshSessionPool,
+    sessions: &dyn SessionPool,
     timeout: u64,
 ) -> anyhow::Result<crate::config::schema::ShellType> {
     let mut any_exec_ok = false;

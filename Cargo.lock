@@ -2192,6 +2192,7 @@ name = "sshi"
 version = "1.6.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "blake3",
  "chrono",
  "clap",

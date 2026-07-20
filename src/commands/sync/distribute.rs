@@ -5,7 +5,7 @@ use tokio::sync::Semaphore;
 
 use crate::config::schema::HostEntry;
 use crate::host::concurrency::ConcurrencyLimiter;
-use crate::host::session_pool::RusshSessionPool;
+use crate::host::session_pool::SessionPool;
 
 use super::types::SyncDecision;
 
@@ -14,7 +14,7 @@ pub(crate) async fn distribute(
     decision: &SyncDecision,
     timeout: u64,
     concurrency: usize,
-    sessions: Arc<RusshSessionPool>,
+    sessions: Arc<dyn SessionPool>,
 ) -> Result<(Vec<String>, Vec<(String, String)>)> {
     let source = hosts
         .iter()
@@ -71,7 +71,7 @@ pub(crate) async fn distribute_pooled(
     decision: &SyncDecision,
     timeout: u64,
     limiter: &ConcurrencyLimiter,
-    sessions: &Arc<RusshSessionPool>,
+    sessions: &Arc<dyn SessionPool>,
 ) -> Result<(Vec<String>, Vec<(String, String)>)> {
     let source = hosts
         .iter()

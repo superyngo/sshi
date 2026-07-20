@@ -3,10 +3,12 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::ToSocketAddrs;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
 use russh::client::{self, Handle};
 use russh_keys::key::PublicKey;
 use russh_sftp::client::SftpSession;
@@ -14,6 +16,53 @@ use russh_sftp::client::SftpSession;
 use super::auth::{authenticate, PassphraseCache, SshAuthSender};
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config::ResolvedHostConfig;
+
+/// Trait abstracting the operations `init::core` and the `sync` phase helpers
+/// actually invoke on a connection pool. The production implementation is
+/// [`RusshSessionPool`]; test code supplies a [`MockSessionPool`]
+/// (in `host::session_pool_mock`) that returns canned `exec` / `upload` /
+/// `download` results so `init_core` and the sync orchestrator can be driven
+/// end-to-end without a live SSH server (audit §2.8 HIGH ×2).
+///
+/// `async_trait` is used (rather than native `async fn` in traits) so the
+/// returned futures are explicitly `Send` — required because the sync phase
+/// helpers spawn tasks that hold `Arc<dyn SessionPool>` and `.await` its
+/// methods inside `tokio::task::JoinSet::spawn`.
+#[async_trait]
+pub trait SessionPool: Send + Sync {
+    /// Execute a command on the named host and return its stdout/stderr/exit.
+    async fn exec(&self, host_alias: &str, cmd: &str, timeout_secs: u64) -> Result<RemoteOutput>;
+
+    /// Upload a local file to a remote host via SFTP.
+    async fn upload(
+        &self,
+        host: &HostEntry,
+        local_path: &Path,
+        remote_path: &str,
+        timeout_secs: u64,
+    ) -> Result<()>;
+
+    /// Download a remote file to a local path via SFTP.
+    async fn download(
+        &self,
+        host: &HostEntry,
+        remote_path: &str,
+        local_path: &Path,
+        timeout_secs: u64,
+    ) -> Result<()>;
+
+    /// Names of all successfully connected hosts.
+    fn reachable_hosts(&self) -> Vec<String>;
+
+    /// Names and error messages of hosts that failed to connect.
+    fn failed_hosts(&self) -> Vec<(String, String)>;
+
+    /// Names and error messages of hosts that failed the SFTP probe.
+    fn sftp_failed_hosts(&self) -> Vec<(String, String)>;
+
+    /// Hosts that passed the SFTP probe (i.e. are reachable AND SFTP-capable).
+    fn sftp_capable_hosts(&self) -> Vec<String>;
+}
 
 /// russh client handler: verifies server host keys against ~/.ssh/known_hosts.
 pub struct SshHandler {
@@ -148,6 +197,49 @@ pub struct RusshSessionPool {
     sftp_cache: LazyCache<SftpSession>,
     /// cancel senders for proxy keepalive tasks (one per proxied connection)
     proxy_cancels: Vec<tokio::sync::oneshot::Sender<()>>,
+}
+
+#[async_trait]
+impl SessionPool for RusshSessionPool {
+    async fn exec(&self, host_alias: &str, cmd: &str, timeout_secs: u64) -> Result<RemoteOutput> {
+        RusshSessionPool::exec(self, host_alias, cmd, timeout_secs).await
+    }
+
+    async fn upload(
+        &self,
+        host: &HostEntry,
+        local_path: &Path,
+        remote_path: &str,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        RusshSessionPool::upload(self, host, local_path, remote_path, timeout_secs).await
+    }
+
+    async fn download(
+        &self,
+        host: &HostEntry,
+        remote_path: &str,
+        local_path: &Path,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        RusshSessionPool::download(self, host, remote_path, local_path, timeout_secs).await
+    }
+
+    fn reachable_hosts(&self) -> Vec<String> {
+        RusshSessionPool::reachable_hosts(self)
+    }
+
+    fn failed_hosts(&self) -> Vec<(String, String)> {
+        RusshSessionPool::failed_hosts(self)
+    }
+
+    fn sftp_failed_hosts(&self) -> Vec<(String, String)> {
+        RusshSessionPool::sftp_failed_hosts(self)
+    }
+
+    fn sftp_capable_hosts(&self) -> Vec<String> {
+        RusshSessionPool::sftp_capable_hosts(self)
+    }
 }
 
 impl RusshSessionPool {

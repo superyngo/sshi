@@ -489,7 +489,7 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
 
     use crate::commands::sync::decide_batch;
     use crate::commands::Context;
-    use crate::host::session_pool::RusshSessionPool;
+    use crate::host::session_pool::{RusshSessionPool, SessionPool};
 
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     crate::state::db::migrate_for_test(&conn);
@@ -504,11 +504,14 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
         verbose: false,
         auth_sender: None,
     };
-    let sessions = Arc::new(
+    let sessions: Arc<RusshSessionPool> = Arc::new(
         RusshSessionPool::setup(&[], ctx.timeout, ctx.concurrency(), None)
             .await
             .unwrap(),
     );
+    // Coerce to trait object — `decide_batch` takes `&Arc<dyn SessionPool>`
+    // so test code can substitute a mock without touching the helper.
+    let sessions_dyn: Arc<dyn SessionPool> = sessions;
     let reachable_hosts: Vec<std::sync::Arc<crate::config::schema::HostEntry>> = Vec::new();
     let path_source_map: HashMap<String, Option<&str>> = HashMap::new();
     let mut summary = crate::output::summary::SyncSummary::default();
@@ -519,7 +522,7 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
         &[],
         &path_source_map,
         &None,
-        &sessions,
+        &sessions_dyn,
         None,
         true,
         false,
