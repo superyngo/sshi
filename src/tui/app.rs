@@ -2040,6 +2040,37 @@ impl App {
         self.help_section = HelpSection::default();
     }
 
+    /// Toggle or cycle the Info popup. Shared by the global `i` handler
+    /// and the navbar-focused `i` handler — same trap-mirroring reason as
+    /// `open_help_popup`. If the popup is closed, open it on the TabInfo
+    /// section; if open, advance to the next section (`TabInfo` → `About`
+    /// → `Help` → `TabInfo`).
+    fn cycle_info_popup(&mut self) {
+        if self.info_open {
+            self.info_section = self.info_section.next();
+        } else {
+            self.info_open = true;
+            self.info_section = InfoSection::TabInfo;
+        }
+        self.info_vp = Viewport::new();
+    }
+
+    /// Toggle the Log overlay open/closed. Shared by the global `L` handler
+    /// and the navbar-focused `L` handler — same trap-mirroring reason as
+    /// `open_help_popup`. On open, the viewport is reset and seeded with
+    /// the current log-buffer length so scroll dims are correct.
+    fn toggle_log_overlay(&mut self) {
+        self.log_overlay_open = !self.log_overlay_open;
+        if self.log_overlay_open {
+            self.log_overlay_vp = Viewport::new();
+            let len = self
+                .log_buffer
+                .as_ref()
+                .map_or(0, |b: &LogBufferHandle| b.len());
+            self.log_overlay_vp.set_dims(len, 0);
+        }
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
         // Ctrl+C always quits.
         if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
@@ -2552,6 +2583,14 @@ impl App {
                     self.open_help_popup();
                     return Ok(true);
                 }
+                KeyCode::Char('i') => {
+                    self.cycle_info_popup();
+                    return Ok(true);
+                }
+                KeyCode::Char('L') => {
+                    self.toggle_log_overlay();
+                    return Ok(true);
+                }
                 _ => return Ok(false),
             }
         }
@@ -2567,26 +2606,11 @@ impl App {
                 Ok(true)
             }
             KeyCode::Char('i') => {
-                if self.info_open {
-                    self.info_section = self.info_section.next();
-                    self.info_vp = Viewport::new();
-                } else {
-                    self.info_open = true;
-                    self.info_section = InfoSection::TabInfo;
-                    self.info_vp = Viewport::new();
-                }
+                self.cycle_info_popup();
                 Ok(true)
             }
             KeyCode::Char('L') => {
-                self.log_overlay_open = !self.log_overlay_open;
-                if self.log_overlay_open {
-                    self.log_overlay_vp = Viewport::new();
-                    let len = self
-                        .log_buffer
-                        .as_ref()
-                        .map_or(0, |b: &LogBufferHandle| b.len());
-                    self.log_overlay_vp.set_dims(len, 0);
-                }
+                self.toggle_log_overlay();
                 Ok(true)
             }
             KeyCode::Esc => {
@@ -4878,6 +4902,58 @@ mod navbar_focus_tests {
         assert!(!app.help_open);
         app.handle_key(question_mark_key()).unwrap();
         assert!(app.help_open, "`?` should open Help from default focus");
+    }
+
+    /// Regression: same navbar-dispatcher trap also drops `i` (Info popup)
+    /// and `L` (Log overlay). Both must be mirrored there.
+    #[test]
+    fn i_opens_info_popup_from_navbar_focus() {
+        let mut app = minimal_app();
+        app.navbar_focused = true;
+        assert!(!app.info_open);
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+            .unwrap();
+        assert!(app.info_open, "`i` should open Info from navbar focus");
+        assert_eq!(
+            app.info_section,
+            super::InfoSection::TabInfo,
+            "first open should land on TabInfo section"
+        );
+    }
+
+    #[test]
+    fn i_cycles_info_section_when_already_open_from_navbar_focus() {
+        let mut app = minimal_app();
+        app.navbar_focused = true;
+        app.info_open = true;
+        app.info_section = super::InfoSection::TabInfo;
+        app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
+            .unwrap();
+        assert!(app.info_open, "`i` on an open Info popup must not close it");
+        assert_eq!(
+            app.info_section,
+            super::InfoSection::About,
+            "`i` on an open Info popup should advance the section"
+        );
+    }
+
+    #[test]
+    fn capital_l_toggles_log_overlay_from_navbar_focus() {
+        let mut app = minimal_app();
+        app.navbar_focused = true;
+        assert!(!app.log_overlay_open);
+        app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT))
+            .unwrap();
+        assert!(
+            app.log_overlay_open,
+            "`L` should open Log overlay from navbar focus"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT))
+            .unwrap();
+        assert!(
+            !app.log_overlay_open,
+            "`L` pressed again should close Log overlay"
+        );
     }
 }
 
