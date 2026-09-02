@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Unreleased Update — 2026-09-02 — Docs reorganized to wens-dev-principles layout
+- docs: adopted the fixed `docs/{reference,adr,spec,plan,debug,audit,tmp}/` layout. Added
+  root `CONTEXT.md` index and `docs/reference/` (glossary + 6 subsystem reference docs:
+  `cli.md`, `config-schema.md`, `ssh-transport.md`, `sync-algorithm.md`, `state-schema.md`,
+  `tui.md`) as the single current-behavior source of truth.
+- docs: moved and `Status:`-lined ~40 historical spec/plan/audit documents out of
+  `docs/superpowers/{specs,plans,audits}/`, `docs/plans/`, `docs/ai-reports/`, and a
+  gitignored `docs/tmp/` file into `docs/spec/`, `docs/plan/`, `docs/audit/`, each with a
+  status derived from this changelog's own release history.
+- docs: renumbered `docs/adr/ssh-auth-tui-popup.md` to `docs/adr/0001-ssh-auth-tui-popup.md`,
+  added `docs/adr/0003-docs-layout-convention.md`, and added `docs/adr/README.md`.
+- docs: trimmed `AGENTS.md` and rewrote `.github/copilot-instructions.md` to conduct-only,
+  pointing at `CONTEXT.md`/`docs/reference/` instead of restating (and drifting from) current
+  behavior; fixed stale `ssync` naming and other factual errors in the Copilot file.
 
 ## [v1.7.0] - 2026-07-20
 

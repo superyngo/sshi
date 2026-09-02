@@ -1,0 +1,347 @@
+# CLI reference
+
+Exhaustive reference for the **sshi** command-line interface. For quickstart examples, see `README.md`. Canonical terms used here are defined in [glossary.md](glossary.md).
+
+---
+
+## Invocation & TUI fallback
+
+Running `sshi` without a subcommand launches the full-screen terminal user interface (TUI) when the default `tui` feature is enabled.
+
+```bash
+sshi [GLOBAL_OPTIONS] [SUBCOMMAND]
+```
+
+### Pre-launch environment checks
+
+When invoked without a subcommand (`sshi`), the entry point performs environment checks before launching:
+
+1. **TTY verification**: Both `stdin` and `stdout` must be interactive terminals (`is_terminal()`).
+2. **Terminal capabilities**: On Unix, the `$TERM` environment variable must be present and not set to `""` or `"dumb"`.
+
+If either check fails (e.g. invoked in a non-interactive pipeline, cron job, or unsupported terminal):
+- A diagnostic message is printed to `stderr` (if `$TERM` is unsuitable).
+- The standard CLI `--help` text is printed to `stdout`.
+- The process terminates immediately with exit code `2` (following standard non-TTY CLI conventions).
+
+If the binary was compiled without the `tui` feature (`--no-default-features`), running `sshi` without a subcommand prints an error to `stderr` and exits with code `1`.
+
+---
+
+## Global options
+
+These options apply globally before subcommand dispatch:
+
+| Option | Description |
+|---|---|
+| `-c, --config <PATH>` | Explicit path to the configuration file (default: `~/.config/sshi/config.toml` or OS standard config directory). |
+| `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. |
+| `-h, --help` | Print top-level help and exit with code `0`. |
+| `-V, --version` | Print version information and exit with code `0`. |
+
+---
+
+## Target selection (`TargetArgs`)
+
+Commands that perform operations on remote hosts (`check`, `checkout`, `sync`, `cp`, `run`, `exec`, `list`) require targeting arguments.
+
+### Target mode selectors
+
+Target-operating commands require **exactly one** target mode selector. Specifying multiple mode selectors or omitting them results in a validation error:
+
+| Flag | Mode | Description |
+|---|---|---|
+| `-a, --all` | `TargetMode::All` | Target all configured **HostEntry** records in `config.toml`. |
+| `-g, --group <GROUPS>` | `TargetMode::Groups` | Target hosts belonging to any of the specified group names (comma-separated list, e.g. `-g web,db`). |
+| `-h, --host <HOSTS>` | `TargetMode::Hosts` | Target specific hosts by their configured name (comma-separated list, e.g. `-h srv1,srv2`). |
+| `-s, --shell <SHELLS>` | `TargetMode::Shell` | Target hosts matching the detected **ShellType** (`sh`, `powershell`, `cmd`, comma-separated list, e.g. `-s sh,powershell`). |
+
+### Execution & filtering modifiers
+
+These optional flags modify how targeted hosts are filtered and how connections execute:
+
+| Flag | Description |
+|---|---|
+| `--skip <HOSTS>` | Comma-separated list of host names to exclude from the resolved target list. Unknown host names in `--skip` are ignored. |
+| `--serial` | Execute operations sequentially one host at a time (sets global concurrency and per-host concurrency to `1`). Overrides `settings.max_concurrency` and `settings.max_per_host_concurrency`. |
+| `--timeout <SECS>` | Override per-host connection and execution timeout in seconds. Overrides `settings.default_timeout`. |
+| `-H, --help` | Print subcommand-specific help. Subcommands use `-H` because `-h` is reserved for `--host`. |
+
+---
+
+## Structured report output (`OutputArgs`)
+
+Commands that produce operational or inspection data (`check`, `checkout`, `sync`, `cp`, `run`, `exec`, `list`, `log`) accept the `-o, --out` flag to write structured **OperationReport** output to disk.
+
+```bash
+sshi <command> [TARGETS] --out [PATH]
+```
+
+### Path and format resolution
+
+- **`--out` (no path argument)**: Automatically generates a timestamped report file in the current working directory:
+  `sshi-<command>-<YYYYMMDD-HHmmss>.<ext>`
+  where `<ext>` is taken from `settings.default_output_format` (default: `json`).
+- **`--out <path>.json`**: Writes a formatted JSON file containing metadata, target filter info, summary statistics, and per-host results.
+- **`--out <path>.html`**: Writes a self-contained HTML report with CSS styling and interactive layout.
+- **Tilde expansion**: Paths beginning with `~` are expanded to the user's home directory.
+- **Unsupported extensions**: Any file extension other than `.json` or `.html` returns an immediate error.
+
+---
+
+## Flag matrix
+
+The following table summarizes all flags across every subcommand:
+
+| Flag | `init` | `check` | `checkout` | `sync` | `cp` | `run` | `exec` | `config` | `list` | `log` |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `-c, --config` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `-v, --verbose` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `-a, --all` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `-g, --group` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `-h, --host` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓* |
+| `-s, --shell` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `--skip` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `--serial` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `--timeout` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
+| `--dry-run` | ✓ | ✓ | — | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| `-o, --out` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓ |
+| `-n, --name` | — | ✓ | — | ✓ | — | — | — | — | — | — |
+| `-S, --sudo` | — | — | — | — | — | ✓ | ✓ | — | — | — |
+| `-S, --source` | — | — | — | ✓ | — | — | — | — | — | — |
+| `-H, --help` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+*\* Note: In `log`, `-h, --host` is a log-filtering option rather than a target selector.*
+
+---
+
+## Subcommand reference
+
+### `init`
+
+Scans `~/.ssh/config`, probes connectivity to discovered hosts, handles missing host keys and authentication setup, detects remote **ShellType**, and generates or updates `config.toml`.
+
+```bash
+sshi init [OPTIONS]
+```
+
+#### Options
+- `--update`: Re-detect shell types and probe settings for hosts already present in `config.toml`.
+- `--dry-run`: Preview imported and stale hosts without writing changes to `config.toml` or executing keyscan/key-copy retries.
+- `--skip <HOSTS>`: Skip specific hosts from connectivity testing and shell detection (comma-separated).
+- `--timeout <SECS>`: Connection timeout in seconds during host discovery.
+- `-H, --help`: Print help.
+
+#### Interactive workflow
+1. **Stale host cleanup**: Prompts to remove hosts from `config.toml` that no longer exist in `~/.ssh/config`.
+2. **Host key acceptance**: If unknown SSH host keys are encountered, prompts to run `ssh-keyscan` and append keys to `~/.ssh/known_hosts`.
+3. **Key generation & deployment**: If key authentication fails and no default private key (`~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, etc.) exists, offers to generate one via `ssh-keygen -t ed25519`. Then offers to copy the public key to remote hosts via `ssh-copy-id`.
+
+---
+
+### `check`
+
+Probes remote hosts for system health metrics (**Snapshot** records) and executes custom check paths. Records results in the `check_snapshots`, `host_last_seen`, and `operation_log` SQLite tables.
+
+```bash
+sshi check <TARGETS> [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Options
+- `-n, --name <NAMES>`: Comma-separated list of `[[check]]` entry names to apply. If omitted, applies the entry named `"default"` (if defined in `config.toml`).
+- `--dry-run`: Display which hosts and check metrics would execute without connecting or modifying the database.
+- `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+#### Retention cleanup
+After collection completes, `check` automatically triggers retention pruning (`retention::cleanup`) to remove snapshot records older than `settings.data_retention_days`.
+
+---
+
+### `checkout`
+
+Inspects historical metrics stored in SQLite and renders tabular reports or export documents.
+
+```bash
+sshi checkout <TARGETS> [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Options
+- `--history`: Query historical trend data for targeted hosts.
+- `--since <TIME>`: History query start boundary. Supports relative days (e.g. `7d`), relative hours (e.g. `24h`), or absolute dates (`YYYY-MM-DD`).
+- `--combined-view`: Per-metric combined view: displays the most recent recorded value for each metric column across all historical snapshots rather than only the single latest snapshot.
+- `-o, --out [PATH]`: Write structured report to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+---
+
+### `sync`
+
+Synchronizes files across remote hosts using the 3-stage collect-decide-distribute (**Local Relay**) model.
+
+```bash
+sshi sync <TARGETS> [PATHS...] [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Arguments & Options
+- `PATHS...`: Positional file or directory paths to synchronize across hosts.
+- `-n, --name <NAMES>`: Comma-separated list of `[[sync]]` entry names from `config.toml` to apply.
+- `-S, --source <HOST>`: Force a specific host as the authoritative file source, bypassing automatic newest-mtime/hash decision logic.
+- `--dry-run`: Preview file comparisons, conflict decisions, and planned transfers without transferring files.
+- `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+*Note: Positional `PATHS` and `-n/--name` can be combined freely. At least one path or named entry must be provided.*
+
+---
+
+### `cp`
+
+Copies local files, directories, or wildcard patterns to remote hosts using SFTP streaming (scp-style fan-out).
+
+```bash
+sshi cp <TARGETS> <LOCAL> [REMOTE] [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Arguments & Options
+- `LOCAL` (required): Local path to copy. Supports single files, directories (copied recursively), or single-level wildcard patterns (e.g. `'configs/*.toml'`). Wildcards should be quoted to allow `sshi` to expand them.
+- `REMOTE` (optional): Destination path on remote hosts. Defaults to `"~"` (the remote user's home directory). Leading `~` is expanded per host.
+- `--dry-run`: Preview planned file transfers without uploading.
+- `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+---
+
+### `run`
+
+Executes a command string on remote hosts.
+
+```bash
+sshi run <TARGETS> <COMMAND> [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Arguments & Options
+- `COMMAND` (required): Shell command string to execute on remote hosts.
+- `-S, --sudo`: Execute the command with elevated privileges using shell-specific sudo wrappers.
+- `--dry-run`: Preview the wrapped command string and targeted hosts without executing.
+- `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+---
+
+### `exec`
+
+Uploads a local script file to remote hosts and executes it via the host's native shell.
+
+```bash
+sshi exec <TARGETS> <SCRIPT> [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Arguments & Options
+- `SCRIPT` (required): Local path to the script file.
+- `-S, --sudo`: Execute the script with sudo.
+- `--keep`: Retain the temporary script file on the remote host after execution instead of deleting it.
+- `--dry-run`: Preview execution and shell compatibility without uploading or running.
+- `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+#### Shell compatibility matching
+The script file extension dictates the required remote **ShellType**:
+- `.sh` → requires `Sh`
+- `.ps1` → requires `PowerShell`
+- `.bat`, `.cmd` → requires `Cmd`
+
+Targeted hosts with mismatched shell environments are marked as `Skipped` and will not execute the script.
+
+---
+
+### `config`
+
+Resolves the active `config.toml` path and opens it in the user's preferred text editor.
+
+```bash
+sshi config [OPTIONS]
+```
+
+#### Options
+- `-c, --config <PATH>`: Custom configuration path to edit.
+- `-H, --help`: Print help.
+
+#### Editor resolution
+Resolves editor from `$EDITOR`, falling back to `$VISUAL`, then `vi` on Unix / `notepad` on Windows.
+
+---
+
+### `list`
+
+Lists configured hosts, shell types, assigned groups, and configured check and sync rules.
+
+```bash
+sshi list <TARGETS> [OPTIONS]
+```
+
+#### Target arguments
+Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
+
+#### Options
+- `-o, --out [PATH]`: Write structured host and task list report to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+---
+
+### `log`
+
+Queries and filters historical execution records from the SQLite `operation_log` table.
+
+```bash
+sshi log [OPTIONS]
+```
+
+#### Options
+- `--last <N>`: Maximum number of log entries to display (default: `20`; pass `0` for all records).
+- `--since <TIME>`: Filter entries since a given timestamp or relative duration (`YYYY-MM-DD`, `7d`, `24h`).
+- `-h, --host <HOST>`: Filter entries for a specific host name.
+- `--action <ACTION>`: Filter by command/action type (`sync`, `run`, `exec`, `check`, `cp`).
+- `--errors`: Filter for entries with status `error`.
+- `-o, --out [PATH]`: Write query results to `.json` or `.html`.
+- `-H, --help`: Print help.
+
+---
+
+## Exit codes & error handling
+
+The CLI adheres to the following exit code contract:
+
+| Exit code | Condition | Description |
+|---|---|---|
+| `0` | Success | Normal successful completion, clean TUI exit, dry-run completion, or `--help`/`--version` display. |
+| `1` | Operational failure | Fatal error during command setup or execution (e.g. configuration file unreadable, local script missing, TUI feature disabled). |
+| `2` | Usage / Non-TTY error | Command-line argument parsing error, mutually exclusive target flags, missing required arguments, or bare `sshi` invoked in a non-TTY/unsuitable terminal environment. |
+
+### Partial host failures
+
+In multi-host operations (`check`, `sync`, `cp`, `run`, `exec`), individual host connectivity failures, command errors, or probe timeouts do **not** cause the CLI process to abort or exit with a non-zero code. 
+
+Instead:
+1. Per-host progress and errors stream to `stdout` / `stderr`.
+2. A post-execution summary is printed (e.g. `2 succeeded, 1 failed, 0 skipped`).
+3. Individual failures are recorded in the SQLite database and included in `-o/--out` reports.
+4. The process exits with `0` as long as the overall orchestration completed successfully.

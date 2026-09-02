@@ -28,7 +28,7 @@ cargo fmt
 cargo fmt --check
 ```
 
-## TUI contributor rules (per docs/tui_reconstruct_plan.md §7.3)
+## TUI contributor rules (per docs/reference/tui.md)
 
 - No `eprintln!` / `println!` / `print!` / `eprint!` anywhere in `src/tui/`
   or in any code path reachable while the TUI is running. Use `tracing`
@@ -68,13 +68,6 @@ cargo fmt --check
 - Prefer explicit types over `impl Trait` in public APIs
 - Use `&str` for borrowable data, `String` for owned data
 
-### Async Concurrency
-- All command handlers are `async fn` returning `Result<()>`
-- Use `tokio::time::timeout` for SSH operations with timeout
-- Control concurrency with `tokio::sync::Semaphore` (default: 10 permits)
-- Use `tokio::process::Command` for spawning ssh/scp subprocesses
-- Parallelize host operations with `futures::future::join_all` or stream
-
 ### Testing
 - Place tests in `#[cfg(test)]` modules at file bottom
 - Write helper functions for test data setup
@@ -82,84 +75,14 @@ cargo fmt --check
 - Test public APIs, not implementation details
 - Prefix test functions with `test_`
 
-### Shell Compatibility
-- Support three shells: `Sh`, `PowerShell`, `Cmd` (from `host::shell` module)
-- Use `host::shell::ShellType` enum for shell detection
-- Commands must account for shell-specific syntax (paths, quoting, operators)
-- Use `host::shell` module for command wrapping and temp paths
-
 ### Feature Flags
 - TUI features guarded with `#[cfg(feature = "tui")]`
 - Default feature set includes `tui` (ratatui, crossterm)
 - Test builds with `--no-default-features` for TUI-less configs
-
-### SSH Transport
-- Use `russh` (with `russh-keys` and `russh-sftp`) as the SSH transport; see
-  `docs/adr/0002-russh-migration.md` for the decision, trade-offs, and
-  follow-ups.
-- `~/.ssh/config` is parsed with `ssh2-config` (not via `ssh -G`) in
-  `host::session_pool::load_ssh_config`. Niche directives (`Match exec`,
-  `CanonicalizeHostname`, out-of-tree `Include`) may not be honoured — see
-  the evaluation docs referenced in the ADR.
-- `ssh-keyscan`, `ssh-keygen`, and `ssh-copy-id` remain subprocesses in
-  `commands/init.rs` (key-management workflows outside russh's scope).
-- Live sessions are owned by `host::session_pool::RusshSessionPool`; file
-  transfer goes through `host::sftp::SftpSession`; the auth chain
-  (public-key + passphrase cache + password fallback, with a TUI popup
-  bridge) lives in `host::auth`.
-
-### Database
-- Use SQLite with `rusqlite` and `bundled` feature
-- Enable WAL mode: `PRAGMA journal_mode=WAL;`
-- Migrations are embedded via `include_str!("migrations/NXX_name.sql")`
-- Track version with `PRAGMA user_version`
-
-### Paths
-- Use `dirs` crate for cross-platform paths
-- Config: `dirs::config_dir()/sshi/`
-- State: `dirs::state_dir()/sshi/` (fallback: `dirs::data_local_dir()/sshi/`)
-- SSH config: `~/.ssh/config`
-
-### Output Formatting
-- Use `output::printer` for host-prefixed colored terminal output
-- Symbols: ✓ (green success), ✗ (red error), ⊘ (yellow skip)
-- Use `output::summary` for execution summaries
-- Use `indicatif` for progress bars
-
-### Logging
-- Use `tracing` for structured logging
-- Levels: `DEBUG` (verbose mode), `INFO` (default)
-- Set filter via `tracing_subscriber::EnvFilter::from_default_env()`
-
-### CLI Arguments
-- Use `clap` with derive macros
-- Use `-v` as `--version` short option
-- Common args: `--group`, `--host`, `--all`, `--serial`, `--timeout`
-- Flatten shared args with `#[command(flatten)]`
 
 ### Comments and Documentation
 - Document public APIs with `///` doc comments
 - Keep comments concise and purpose-focused
 - Avoid obvious comments, add for "why" not "what"
 
-## Architecture Overview
-
-sshi is a CLI tool managing remote hosts over SSH. Single binary, no embedded SSH.
-
-**Module Structure:**
-- `cli.rs` - Clap CLI definitions; pre-TUI fallback help printers
-- `commands/` - Subcommand handlers (one file each: init, check, run, exec, cp, log, config, checkout, list) plus `commands/sync/` (collect, decide, distribute, report, types submodules) and shared `commands/report.rs` (CommandReport type, ProgressSink)
-- `config/` - Config schema, file I/O, `ssh2-config` parser
-- `host/` - russh SSH transport: `session_pool.rs` (connection pool + known_hosts check), `sftp.rs` (file transfer), `auth.rs` (auth chain + `SecretString`), `concurrency.rs` (dual-level limiter), `pool.rs` (`SshPool` wrapper), `shell.rs` (shell-type detection)
-- `metrics/` - System metrics collection, parsing, shell-specific probes
-- `state/` - SQLite DB, migrations, retention cleanup
-- `output/` - Terminal printer, execution summary
-
-**Key Data Flow:**
-1. CLI args parsed → main.rs dispatches to command handler
-2. Hosts filtered by --group/--host/--all via `host::filter`
-3. Remote operations parallelized via Tokio (semaphore-limited)
-4. All operations logged to `operation_log` table
-
-**Sync Strategy:**
-3-stage: (1) collect metadata (mtime + SHA-256), (2) decide source (newest/skip), (3) distribute via local relay
+See [CONTEXT.md](CONTEXT.md) for architecture, config, transport, sync, state, and TUI reference documentation.

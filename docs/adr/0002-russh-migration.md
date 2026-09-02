@@ -14,7 +14,7 @@ This approach worked for POSIX-flavoured development but had three structural pr
 2. **File-transfer behaviour diverged across `scp` implementations.** The OpenSSH 9.0+ `scp` switched to SFTP protocol by default; older systems and PuTTY's `pscp` did not. Quoting, recursive-transfer semantics, and error reporting were inconsistent.
 3. **`ProxyJump` and `IdentityFile` resolution depended on the user's local `ssh` version.** Some users on older system-ssh builds could not use modern `~/.ssh/config` features; on Windows, the bundled OpenSSH sometimes disagreed with system `ssh`.
 
-`docs/russh-migration-evaluation.md` and `docs/openssh-migration-evaluation.md` (both in this repo) capture the full evaluation that led to this decision.
+`docs/spec/2026-04-14-russh-migration-evaluation.md` and `docs/spec/2026-04-14-openssh-migration-evaluation.md` (both in this repo) capture the full evaluation that led to this decision.
 
 ## Decision
 
@@ -46,7 +46,7 @@ Concretely:
 ## Implementation references
 
 - Migration plan (task-by-task): `docs/superpowers/plans/2026-04-27-russh-migration.md`
-- Pre-decision evaluations: `docs/russh-migration-evaluation.md`, `docs/openssh-migration-evaluation.md`
+- Pre-decision evaluations: `docs/spec/2026-04-14-russh-migration-evaluation.md`, `docs/spec/2026-04-14-openssh-migration-evaluation.md`
 - Implementation: `src/host/{session_pool.rs, sftp.rs, auth.rs}`
 - Related ADR: `docs/adr/ssh-auth-tui-popup.md` (the TUI auth popup contract)
 - Release that shipped the migration: `[v1.6.0]` family (CHANGELOG)
@@ -59,4 +59,4 @@ The 2026-07-18 audit surfaced three russh-adjacent items that should be tracked 
 2. Configure SSH keepalive (audit §3.1).
 3. Wire the TUI auth bridge end-to-end (audit §3.1) — passphrase/password auth is non-functional in TUI mode until this lands.
 
-These are scheduled in Phases C1–C3 of `docs/plans/2026-07-18-audit-fixes.md`.
+These are scheduled in Phases C1–C3 of `docs/plan/2026-07-18-audit-fixes.md`.
