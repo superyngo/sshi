@@ -1,4 +1,4 @@
-//! Target Filter popup (per docs/tui_reconstruct_plan.md §13).
+//! Target Filter popup (per docs/spec/2026-05-06-tui-reconstruct.md §13).
 //!
 //! Phase 2 scope: a working multi-mode filter editor — All / Groups / Hosts /
 //! Shell. The popup is its own focus root; only Esc dismisses, Enter on

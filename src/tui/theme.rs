@@ -1,4 +1,4 @@
-//! Canonical TUI palette (per docs/tui_reconstruct_plan.md §10).
+//! Canonical TUI palette (per docs/spec/2026-05-06-tui-reconstruct.md §10).
 //!
 //! 16-color compatible: only ratatui named `Color` variants — no Rgb / Indexed.
 //!

@@ -1,4 +1,4 @@
-//! TerminalGuard + panic hook (per docs/tui_reconstruct_plan.md §7.1, §7.2; AD-9).
+//! TerminalGuard + panic hook (per docs/spec/2026-05-06-tui-reconstruct.md §7.1, §7.2; AD-9).
 //!
 //! Mandatory: a panicked TUI MUST leave a usable terminal. The Drop impl and
 //! the panic hook are intentionally redundant.

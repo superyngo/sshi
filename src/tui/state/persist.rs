@@ -1,4 +1,4 @@
-//! Persisted TUI state schema + load/save (per docs/tui_reconstruct_plan.md
+//! Persisted TUI state schema + load/save (per docs/spec/2026-05-06-tui-reconstruct.md
 //! §16, AD-8, AD-16).
 //!
 //! - Path: `{resolved_state_dir}/tui_state-{config_hash}.toml`.

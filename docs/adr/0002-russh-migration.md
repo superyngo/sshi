@@ -41,14 +41,14 @@ Concretely:
 - `~/.ssh/config` compatibility is now bounded by what `ssh2-config` parses, not by what the user's `ssh` would have accepted. Niche directives (e.g. `Match exec`, `CanonicalizeHostname`, `Include` of files outside `~/.ssh/`) may not be honoured. The team accepted this trade-off; evaluation doc lists known gaps.
 - Known-hosts matching changed semantics. russh's `check_known_hosts` matches plain `host` / `[host]:port` tokens by string equality and does not match hashed (`|1|`) entries — `init` was updated to write unhashed entries (see CHANGELOG `[v1.6.0] - 2026-06-11` fix).
 - The russh `Handler` trait requires boxed async fns (`Pin<Box<...>>`); the `#[allow(clippy::manual_async_fn)]` annotation at `host/session_pool.rs:26` is permanent.
-- `rpassword::prompt_password` (used for passphrase and password prompts) is a blocking call. In TUI mode this is plumbed through an auth-bridge channel (`SshAuthRequest`); at time of writing the bridge is wired but not yet emitted from `host::auth` — see audit `docs/ai-reports/AUDIT_2026-07-18.md` §3.1 for the open task.
+- `rpassword::prompt_password` (used for passphrase and password prompts) is a blocking call. In TUI mode this is plumbed through an auth-bridge channel (`SshAuthRequest`); at time of writing the bridge is wired but not yet emitted from `host::auth` — see audit `docs/audit/2026-07-18-codebase-audit.md` §3.1 for the open task.
 
 ## Implementation references
 
-- Migration plan (task-by-task): `docs/superpowers/plans/2026-04-27-russh-migration.md`
+- Migration plan (task-by-task): `docs/plan/2026-04-27-russh-migration.md`
 - Pre-decision evaluations: `docs/spec/2026-04-14-russh-migration-evaluation.md`, `docs/spec/2026-04-14-openssh-migration-evaluation.md`
 - Implementation: `src/host/{session_pool.rs, sftp.rs, auth.rs}`
-- Related ADR: `docs/adr/ssh-auth-tui-popup.md` (the TUI auth popup contract)
+- Related ADR: `docs/adr/0001-ssh-auth-tui-popup.md` (the TUI auth popup contract)
 - Release that shipped the migration: `[v1.6.0]` family (CHANGELOG)
 
 ## Follow-ups

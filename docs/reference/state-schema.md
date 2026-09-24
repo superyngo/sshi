@@ -240,7 +240,7 @@ Historical data is pruned according to the time-based retention policy implement
 
 ### Execution trigger
 
-Retention cleanup is invoked automatically at the end of each `sshi check` execution (`src/commands/check.rs:301`):
+Retention cleanup is invoked automatically at the end of each `sshi check` execution (`commands::check::check_core`):
 
 ```rust
 retention::cleanup(&ctx.db, ctx.config.settings.data_retention_days).await?;

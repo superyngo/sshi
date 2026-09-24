@@ -3,7 +3,7 @@
 //! `checkout_core`) and their consumers (CLI wrapper printing to stdout,
 //! TUI bridging to a `tokio::mpsc` channel).
 //!
-//! Per docs/tui_reconstruct_plan.md AD-14 and §7.5: putting these types
+//! Per docs/spec/2026-05-06-tui-reconstruct.md AD-14 and §7.5: putting these types
 //! in `commands::report` keeps `*_core` functions independent of the
 //! output layer; `output::report` is a thin downstream consumer.
 

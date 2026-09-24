@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Unreleased Update — 2026-09-02 — Docs reorganized to wens-dev-principles layout
+### 2026-09-25
+- docs: repair dead paths left by the layout migration (ADR 0002, 2026-05-21 readme-analysis audit, v1.7.0 changelog entry, 13 `src/` doc comments citing `docs/tui_reconstruct_plan.md`); mark ADR 0003 `Implemented (2026-09-02)`; drop the false "machine-checked" claim in `docs/reference/README.md`; replace a line-number citation in `state-schema.md`; fix the `SessionPool` glossary entry format; normalize the 2026-09-02 changelog sub-heading.
+
+### 2026-09-02
 - docs: adopted the fixed `docs/{reference,adr,spec,plan,debug,audit,tmp}/` layout. Added
   root `CONTEXT.md` index and `docs/reference/` (glossary + 6 subsystem reference docs:
   `cli.md`, `config-schema.md`, `ssh-transport.md`, `sync-algorithm.md`, `state-schema.md`,
@@ -24,9 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [v1.7.0] - 2026-07-20
 
 Audit-fixes rollout covering 24 tasks across 8 phases (A–H) addressing
-`docs/ai-reports/AUDIT_2026-07-18.md` (116 findings: 23 HIGH, 51 MED, 42 LOW).
+`docs/audit/2026-07-18-codebase-audit.md` (116 findings: 23 HIGH, 51 MED, 42 LOW).
 Per-phase execution notes with deviations + scope gaps live in
-`docs/plans/2026-07-18-audit-fixes.md`. Test count: 352 (up from 1.6.1's 253).
+`docs/plan/2026-07-18-audit-fixes.md`. Test count: 352 (up from 1.6.1's 253).
 
 ### Security
 
@@ -83,7 +86,7 @@ Per-phase execution notes with deviations + scope gaps live in
 
 - **docs(agents):** align AGENTS.md with the actual russh-based transport, the single `sshi` binary, and the actual module layout. Drop the stale `thiserror` mandate. Correct sync strategy from BLAKE3 to SHA-256. Fix `host/pool.rs` doc-comment. (A10, feb3032)
 - **docs(adr):** add `docs/adr/0002-russh-migration.md` recording the russh migration decision, trade-offs, and consequences. (A11, included in feb3032)
-- Per-phase execution notes with deviations, scope gaps, and carry-overs recorded in `docs/plans/2026-07-18-audit-fixes.md` (159e2fc, 75e0788, e4328bb, 990c22b, 90c44f1, d77d1e3, de44f6a).
+- Per-phase execution notes with deviations, scope gaps, and carry-overs recorded in `docs/plan/2026-07-18-audit-fixes.md` (159e2fc, 75e0788, e4328bb, 990c22b, 90c44f1, d77d1e3, de44f6a).
 
 ## [v1.6.1] - 2026-07-08
 

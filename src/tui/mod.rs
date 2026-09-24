@@ -4,7 +4,7 @@
 //! - [`entry::run_or_fallback`] — performs §4 TTY/TERM detection and either
 //!   launches the TUI or prints help and exits 2 (clap convention for non-TTY).
 //!
-//! See `docs/tui_reconstruct_plan.md` for the design spec.
+//! See `docs/spec/2026-05-06-tui-reconstruct.md` for the design spec.
 
 pub mod app;
 pub mod app_state;

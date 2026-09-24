@@ -76,7 +76,7 @@ impl Context {
     }
 
     /// Build a `Context` for a single TUI-driven operation (per
-    /// docs/tui_reconstruct_plan.md §6.4 and AD-5/AD-6/AD-16).
+    /// docs/spec/2026-05-06-tui-reconstruct.md §6.4 and AD-5/AD-6/AD-16).
     ///
     /// The caller has already cloned `config` from `App.config` (AD-6 ownership
     /// rule). A fresh `rusqlite::Connection` is opened per call against the

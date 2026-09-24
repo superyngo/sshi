@@ -49,8 +49,8 @@ The subcommand and TUI view for querying historical **Snapshot** data and genera
 reports (`src/cli.rs`, `src/commands/checkout/mod.rs`).
 _Avoid_: dashboard, status, inspect, history_viewer.
 
-**SessionPool** (`RusshSessionPool`):
-The thread-safe cache that owns multiplexed russh SSH client handles, one per host
+**SessionPool**:
+The thread-safe cache (`RusshSessionPool`) that owns multiplexed russh SSH client handles, one per host
 (`src/host/session_pool.rs`).
 _Avoid_: ConnectionPool, SshManager, ClientCache.
 

@@ -1,4 +1,4 @@
-//! Focus model + adaptive arrow navigation (per docs/tui_reconstruct_plan.md
+//! Focus model + adaptive arrow navigation (per docs/spec/2026-05-06-tui-reconstruct.md
 //! §8.2 / §8.3 / §8.6).
 //!
 //! - Arrow keys drive cross-level transitions via `escape_to_parent`.

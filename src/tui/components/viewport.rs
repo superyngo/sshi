@@ -1,4 +1,4 @@
-//! Cursor + scroll-offset decoupling (per docs/tui_reconstruct_plan.md §11, AD-20).
+//! Cursor + scroll-offset decoupling (per docs/spec/2026-05-06-tui-reconstruct.md §11, AD-20).
 //!
 //! Invariant: `scroll_y <= selected <= scroll_y + visible_height - 1`.
 

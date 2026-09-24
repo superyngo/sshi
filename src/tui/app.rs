@@ -1,6 +1,6 @@
 //! `App` struct + main event loop + render dispatch.
 //!
-//! Phase 1a scope (per docs/tui_reconstruct_plan.md §19): tab bar,
+//! Phase 1a scope (per docs/spec/2026-05-06-tui-reconstruct.md §19): tab bar,
 //! Config/Operate placeholders, minimal Checkout host table, status bar
 //! with red `app.error`, terminal-size guard, minimal `?` help popup,
 //! signal handlers (SIGHUP/SIGTERM on Unix, ctrl_c on Windows).

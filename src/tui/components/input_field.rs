@@ -1,6 +1,6 @@
 //! Single-line text input component for the Operate tab param panel.
 //!
-//! Per docs/tui_reconstruct_plan.md §14.3: all global single-letter shortcuts
+//! Per docs/spec/2026-05-06-tui-reconstruct.md §14.3: all global single-letter shortcuts
 //! are suspended while `InputMode::Active`; callers must check the mode flag
 //! before routing any key event to the rest of the app.
 //!

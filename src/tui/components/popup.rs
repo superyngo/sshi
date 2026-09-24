@@ -1,4 +1,4 @@
-//! Centered modal overlay helper (per docs/tui_reconstruct_plan.md §6.3).
+//! Centered modal overlay helper (per docs/spec/2026-05-06-tui-reconstruct.md §6.3).
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 

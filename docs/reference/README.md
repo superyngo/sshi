@@ -11,7 +11,7 @@ investigation — lives in `../spec/`, `../plan/`, `../debug/`, or `../audit/`, 
 - **[state-schema.md](state-schema.md)** — SQLite schema, migrations, and retention policy.
 - **[tui.md](tui.md)** — TUI tab structure, keybindings, and contributor rules.
 
-Machine-checked: `cli.md`'s subcommand/flag claims by `cargo test --lib cli::tests`
-(`src/cli.rs`).
+Machine-checked: none. No test reads these files; every claim is verified by hand (see the
+latest `../audit/*-documentation-audit.md`).
 
 See also [`../adr/`](../adr/README.md) for decision records.

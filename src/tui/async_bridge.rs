@@ -1,5 +1,5 @@
 //! Async bridge between command-core operations and the TUI render loop
-//! (per docs/tui_reconstruct_plan.md §18, AD-13).
+//! (per docs/spec/2026-05-06-tui-reconstruct.md §18, AD-13).
 //!
 //! Operations run on tokio tasks. Per-host events flow through a bounded
 //! `tokio::mpsc::channel(1024)` as `TuiEvent` values. The main loop drains
