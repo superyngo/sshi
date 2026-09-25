@@ -4186,7 +4186,7 @@ impl App {
     fn render_tab_info_body(&self) -> String {
         match self.active_tab {
             TabId::Operate => format!(
-                "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\ncp    — copy a local file/dir to targets (defaults to ~).\n\nUse `f` to change the target filter; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults appear in a popup when the operation completes.",
+                "Operate tab\n\nSelect an operation with ← → on the Operation row.\n\ncheck — collect host metrics and write to DB.\nrun   — execute a shell command on all targets.\nexec  — upload and run a local script on targets.\nsync  — sync files between hosts.\ncp    — copy a local file/dir to targets (defaults to ~).\n\nUse ← → on Target mode to change filter; Enter on Members/Skip to select targets; press Enter on [Execute] to run.\nSet the Out field to write a .json/.html report (auto-named if left bare).\n`d` toggles dry-run: a preview that contacts no hosts and writes no report.\nEsc cancels a running operation (may take up to {}s per host).\n\nTab cycles fields within a section; ↑↓ move across sections.\nPgUp/PgDn/Home/End scroll the applicable-entries list and the progress popup.\n\nResults popup opens automatically upon completion; press Esc to close.",
                 self.last_timeout_secs
             ),
             TabId::View => "View tab\n\nView checkout snapshots, host/config list, or operation log.\nUse ↑↓ to move between fields; ←→ switches op (on Op row) or target mode.\nEnter on Members/Skip opens the picker; PgUp/PgDn/Home/End scroll results.\no     — export the currently viewed data to a report file.\nData refreshes automatically on op switch and after operations.".to_string(),
@@ -4256,9 +4256,10 @@ Global keys
 Operate tab
   ↑↓ / j k   Navigate zones: OpRadio → ParamPanel → TargetRow → Execute
   ← → / Tab   (OpRadio / Target row) cycle the selected option
-  f           Open Target Filter popup
-  Enter       (ParamPanel text field) activate input; (Execute) run operation
+  Enter       (ParamPanel text field) activate input; (Execute) run operation; (Members/Skip) open picker
   e           Run the current operation (from anywhere on the tab)
+  d           Toggle dry-run
+  s           Toggle serial execution
   Space       (checkbox) toggle sudo / keep / dry-run; (Source) cycle host
   Del         Clear the focused optional field (members/skip/names/source/
               out/cp-remote); on the ad-hoc input, remove the last path
@@ -4266,11 +4267,15 @@ Operate tab
   (while typing) Enter to confirm, Esc to revert
 
 View tab
-  ← → / Tab   (Show row) cycle checkout / list / log
-  ↑↓ / j k    Move row selection
+  ← → / Tab   (Show row) cycle checkout / list / log; (Target row) cycle mode
+  ↑↓ / j k    Move row selection / fields
+  Enter       (Members/Skip) open picker
+  Space       (Log row) toggle error filter / cycle shell
+  c           Toggle combined checkout view
+  e           Edit focused entry in Config (List view)
+  o           Export currently viewed data to report
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
-  f           Open Filter popup (disabled for Log)
 
 Config tab
   ↑↓ / j k    Move sidebar / field rows
@@ -4341,9 +4346,10 @@ Global keys
 Operate tab
   ↑↓ / j k   Navigate zones: OpRadio → ParamPanel → TargetRow → Execute
   ← → / Tab   (OpRadio / Target row) cycle the selected option
-  f           Open Target Filter popup
-  Enter       (ParamPanel text field) activate input; (Execute) run operation
+  Enter       (ParamPanel text field) activate input; (Execute) run operation; (Members/Skip) open picker
   e           Run the current operation (from anywhere on the tab)
+  d           Toggle dry-run
+  s           Toggle serial execution
   Space       (checkbox) toggle sudo / keep / dry-run; (Source) cycle host
   Del         Clear the focused optional field (members/skip/names/source/
               out/cp-remote); on the ad-hoc input, remove the last path
@@ -4358,17 +4364,21 @@ Sync operation (ParamPanel)
   Space on Dry-run       Toggle dry-run flag
 
 View tab
-  ← → / Tab   (Show row) cycle checkout / list / log
-  ↑↓ / j k    Move row selection
+  ← → / Tab   (Show row) cycle checkout / list / log; (Target row) cycle mode
+  ↑↓ / j k    Move row selection / fields
+  Enter       (Members/Skip) open picker
+  Space       (Log row) toggle error filter / cycle shell
+  c           Toggle combined checkout view
+  e           Edit focused entry in Config (List view)
+  o           Export currently viewed data to report
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
-  f           Open Filter popup (disabled for Log)
 
-Filter popup
-  ↑↓ / Tab    Move between fields
-  Space/Enter Toggle / select
-  Enter on [Apply]   Commit + persist filter
-  Esc                Cancel
+Member picker popup (Members / Skip)
+  ↑↓ / j k    Move selection
+  Space / x   Toggle item selection
+  Enter       Apply selection
+  Esc         Cancel
 
 Config tab
   ↑↓ / j k    Move sidebar / field rows
@@ -4876,6 +4886,18 @@ mod info_section_tests {
         // user flow is preserved.
         assert_eq!(InfoSection::default(), InfoSection::TabInfo);
     }
+    #[test]
+    fn help_and_tab_info_do_not_document_unhandled_f_filter_key() {
+        let app = super::navbar_focus_tests::minimal_app();
+        let help = app.render_help_body();
+        assert!(!help.contains("  f           Open Target Filter popup"));
+        assert!(!help.contains("  f           Open Filter popup"));
+
+        let mut app_operate = app;
+        app_operate.active_tab = crate::tui::tabs::TabId::Operate;
+        let tab_info = app_operate.render_tab_info_body();
+        assert!(!tab_info.contains("Use `f` to change the target filter"));
+    }
 }
 
 #[cfg(test)]
@@ -4947,7 +4969,7 @@ mod navbar_focus_tests {
         std::sync::LazyLock::new(|| tempfile::tempdir().expect("test tempdir"));
     static TEST_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-    fn minimal_app() -> App {
+    pub(super) fn minimal_app() -> App {
         let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let state_path = TEST_DIR.path().join(format!("tui_state_{}.toml", id));
         minimal_app_with_state_path(state_path)

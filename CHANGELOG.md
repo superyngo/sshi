@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: TUI help and tab-info text documented an `f` filter popup that has no key handler; help now lists only handled keys (inline target rows, member picker), and the never-compiled `components/target_filter.rs` is removed (B52).
 - fix: one unrecognised enum value in the saved TUI state (e.g. from a newer version) reset every saved setting; each enum field now falls back to its default on its own and the rest of the state survives (B49).
 - refactor: shell variants, the `ShellMode` labels, the check-probe catalog and the script-extension → shell mapping are each defined once (`ShellType::VARIANTS`/`as_str`, `ShellMode::as_str`/`cycle`, `DEFAULT_CHECK_ENABLED`, `exec::script_extension_to_shell`); the new-config template now lists probes from the same catalog; no behaviour change (B61).
 - fix: removed the TUI's persisted `checkout_history` toggle, which nothing read after B14; state files that still contain it load normally (B70).
