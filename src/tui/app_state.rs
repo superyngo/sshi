@@ -86,7 +86,7 @@ pub struct AuthPopup {
 
 impl AuthPopup {
     pub fn new(req: SshAuthRequest) -> Self {
-        let mut input = InputField::new("");
+        let mut input = InputField::new_secret();
         input.activate();
         Self {
             prompt: req.prompt,
@@ -96,15 +96,27 @@ impl AuthPopup {
     }
 
     pub fn submit(&mut self) {
-        let credential = std::mem::take(&mut self.input.value);
+        // Moved, not copied: the auth side wraps it in a zeroizing `SecretString`.
+        let mut credential = std::mem::take(&mut self.input.value);
         if let Some(tx) = self.responder.take() {
-            let _ = tx.send(credential);
+            if let Err(mut unsent) = tx.send(credential) {
+                zeroize::Zeroize::zeroize(&mut unsent);
+            }
+        } else {
+            zeroize::Zeroize::zeroize(&mut credential);
         }
+        self.input.wipe();
     }
 
     pub fn cancel(&mut self) {
-        self.input.value.clear();
+        self.input.wipe();
         self.responder = None;
+    }
+}
+
+impl Drop for AuthPopup {
+    fn drop(&mut self) {
+        self.input.wipe();
     }
 }
 
@@ -296,5 +308,36 @@ mod auth_queue_tests {
         s.auth.as_mut().unwrap().cancel();
         s.next_auth();
         assert!(s.auth.is_none());
+    }
+
+    #[test]
+    fn auth_popup_keeps_no_copies_and_wipes_on_close() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let key = |c, m| KeyEvent::new(c, m);
+        for submit in [false, true] {
+            let (r, mut rx) = req("p");
+            let mut p = AuthPopup::new(r);
+            let cap = p.input.value.capacity();
+            for ch in "Zq7-b2-SECRET".chars() {
+                p.input
+                    .handle_key(key(KeyCode::Char(ch), KeyModifiers::NONE));
+            }
+            assert_eq!(p.input.value.capacity(), cap, "buffer reallocated");
+            p.input
+                .handle_key(key(KeyCode::Char('w'), KeyModifiers::CONTROL)); // kill word
+            p.input
+                .handle_key(key(KeyCode::Char('y'), KeyModifiers::CONTROL)); // yank: nothing kept
+            p.input
+                .handle_key(key(KeyCode::Char('_'), KeyModifiers::CONTROL)); // undo: nothing kept
+            let dbg = format!("{:?}", p.input);
+            assert!(!dbg.contains("SECRET"), "history kept a copy: {dbg}");
+            if submit {
+                p.submit();
+                assert!(rx.try_recv().is_ok());
+            } else {
+                p.cancel();
+            }
+            assert!(p.input.value.is_empty() && p.input.saved.is_empty());
+        }
     }
 }

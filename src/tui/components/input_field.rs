@@ -39,6 +39,9 @@ pub struct InputField {
     pub mode: InputMode,
     kill_ring: Vec<String>,
     undo_ring: Vec<(String, usize)>,
+    /// Credential mode: no undo/kill history and a pre-reserved buffer, so
+    /// the typed text lives in exactly one allocation that `wipe` zeroizes.
+    secret: bool,
 }
 
 impl InputField {
@@ -50,7 +53,29 @@ impl InputField {
             mode: InputMode::Normal,
             kill_ring: Vec::new(),
             undo_ring: Vec::new(),
+            secret: false,
         }
+    }
+
+    /// Empty field for a password/passphrase (see `secret`).
+    pub fn new_secret() -> Self {
+        Self {
+            value: String::with_capacity(256),
+            secret: true,
+            ..Self::default()
+        }
+    }
+
+    /// Zeroize every buffer that may hold typed text and reset the field.
+    pub fn wipe(&mut self) {
+        use zeroize::Zeroize;
+        self.value.zeroize();
+        self.saved.zeroize();
+        self.kill_ring.iter_mut().for_each(|s| s.zeroize());
+        self.kill_ring.clear();
+        self.undo_ring.iter_mut().for_each(|(s, _)| s.zeroize());
+        self.undo_ring.clear();
+        self.cursor_pos = 0;
     }
 
     /// Activate the field, saving the current value for Esc-restore.
@@ -258,7 +283,7 @@ impl InputField {
         }
         self.snapshot_undo();
         let killed = self.value[..byte_pos].to_string();
-        self.value = self.value[byte_pos..].to_string();
+        self.value.replace_range(..byte_pos, "");
         self.cursor_pos = 0;
         self.push_kill(killed);
     }
@@ -297,13 +322,20 @@ impl InputField {
     // ------ ring helpers ------
 
     fn snapshot_undo(&mut self) {
+        if self.secret {
+            return;
+        }
         self.undo_ring.push((self.value.clone(), self.cursor_pos));
         if self.undo_ring.len() > RING_MAX {
             self.undo_ring.remove(0);
         }
     }
 
-    fn push_kill(&mut self, killed: String) {
+    fn push_kill(&mut self, mut killed: String) {
+        if self.secret {
+            zeroize::Zeroize::zeroize(&mut killed);
+            return;
+        }
         if killed.is_empty() {
             return;
         }

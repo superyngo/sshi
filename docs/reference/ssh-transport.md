@@ -187,7 +187,7 @@ Interactive prompts (`prompt_credential`) support two operating modes:
   1. Spawns a `tokio::sync::oneshot::channel::<String>()`.
   2. Sends `SshAuthRequest { prompt, responder: tx }` over an unbounded `mpsc` channel to the TUI main loop.
   3. The TUI displays a modal input popup with masked text entry. A request that arrives while a popup is open is queued (`PopupState::push_auth`) and shown when the current one is submitted or cancelled (`PopupState::next_auth`); it never replaces the open popup.
-  4. On Enter, the TUI sends the entered credential string across the oneshot channel to unblock the SSH authentication task. If the user cancels (Escape), the responder is dropped, surfacing an error to the auth task.
+  4. On Enter, the TUI moves (not copies) the entered credential string across the oneshot channel to unblock the SSH authentication task. If the user cancels (Escape), the responder is dropped, surfacing an error to the auth task.
   5. Architecture and lifecycle decisions are documented in [ADR 0001: SSH Auth TUI Popup](../adr/0001-ssh-auth-tui-popup.md).
 
 ---
