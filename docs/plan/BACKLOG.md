@@ -73,7 +73,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B40 | Windows path probes: cmd `dir` output unparsed (0, success); PowerShell empty dir `MISSING` | HASH-B40 — `---SIZE:` marker in `powershell::batch_path_command`; `parse_path_size` parses cmd `dir /s /-c` totals; cmd/PowerShell fixtures incl. empty dir and missing path (not run on a real Windows host) |
+| B40 | Windows path probes: cmd `dir` output unparsed (0, success); PowerShell empty dir `MISSING` | `144de58` — `---SIZE:` marker in `powershell::batch_path_command`; `parse_path_size` parses cmd `dir /s /-c` totals; cmd/PowerShell fixtures incl. empty dir and missing path (not run on a real Windows host) |
 | B39 | sh probes misread macOS/BSD output: load shifted, paths `MISSING`, disk ×1024, memory/battery empty | `c4cb461` — `sh::command_for` memory fallback (`sysctl hw.memsize` + `vm_stat`), `batch_path_command` `du -sk` fallback; BSD-aware parsers; fixtures `tests/fixtures/probes/{linux,macos}_*`; real binary: `checkout -a` load/memory/disk/path sane on macOS rig |
 | B52 | Help documented an `f` filter popup with no handler; `components/target_filter.rs` never compiled | `df702a9` — help/tab-info audited against `handle_key`; orphan file removed; test `help_and_tab_info_do_not_document_unhandled_f_filter_key` |
 | B49 | One unknown enum value reset all persisted TUI state | `de3859f` — `persist::deserialize_enum_or_default` on the six enum fields; test `unknown_enum_value_falls_back_per_field_while_other_fields_survive` |
