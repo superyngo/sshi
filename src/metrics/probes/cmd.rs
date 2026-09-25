@@ -38,16 +38,15 @@ pub fn batch_command(metrics: &[String]) -> String {
 }
 
 /// Build a single CMD command that measures all path sizes with `---PATH:` markers.
-pub fn batch_path_command(paths: &[(String, String)]) -> String {
-    if paths.is_empty() {
-        return String::new();
-    }
+pub fn batch_path_command(paths: &[(String, String)]) -> anyhow::Result<String> {
+    use crate::host::quote::{cmd_echo_arg, quote_path};
     let mut parts = Vec::new();
     for (path, label) in paths {
         parts.push(format!(
-            "echo ---PATH:{} & dir /s /a \"{}\" 2>nul",
-            label, path
+            "echo ---PATH:{} & dir /s /a {} 2>nul",
+            cmd_echo_arg(label)?,
+            quote_path(crate::config::schema::ShellType::Cmd, path)?
         ));
     }
-    parts.join(" & ")
+    Ok(parts.join(" & "))
 }

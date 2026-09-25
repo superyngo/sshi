@@ -16,7 +16,9 @@ pub fn batch_command(shell: ShellType, metrics: &[String]) -> String {
 }
 
 /// Build a single batched command that measures all path sizes with `---PATH:` markers.
-pub fn batch_path_command(shell: ShellType, paths: &[(String, String)]) -> String {
+/// Paths and labels are quoted via `host::quote`; errors if a value cannot be
+/// passed safely to the shell (cmd.exe only). Empty `paths` → empty string.
+pub fn batch_path_command(shell: ShellType, paths: &[(String, String)]) -> anyhow::Result<String> {
     match shell {
         ShellType::Sh => sh::batch_path_command(paths),
         ShellType::PowerShell => powershell::batch_path_command(paths),
@@ -64,13 +66,13 @@ mod tests {
             ("~/docs".into(), "docs".into()),
             ("/var".into(), "var".into()),
         ];
-        let cmd = batch_path_command(ShellType::Sh, &paths);
+        let cmd = batch_path_command(ShellType::Sh, &paths).unwrap();
         assert!(cmd.contains("---PATH:docs"));
         assert!(cmd.contains("---PATH:var"));
     }
 
     #[test]
     fn test_batch_path_command_empty() {
-        assert!(batch_path_command(ShellType::Sh, &[]).is_empty());
+        assert!(batch_path_command(ShellType::Sh, &[]).unwrap().is_empty());
     }
 }

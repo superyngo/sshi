@@ -16,7 +16,6 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
-| B1 | 2026-07-18 | 2026-09-25 | P1 | PowerShell directory expansion interpolates remote paths inside double quotes, so `$(...)` subexpressions in a path execute | `src/commands/sync/collect.rs` `build_dir_expand_cmd` | S | Paths single-quoted with `''` escaping; a path containing `$(echo PWNED)` is not evaluated |
 | B2 | 2026-07-18 | 2026-09-25 | P1 | TUI auth popup holds the typed credential in a plain `String`, not zeroized after submit/cancel (ADR 0001 §d) | `src/tui/app_state.rs` `AuthPopup` | S | Buffer zeroized via `zeroize` on submit and cancel |
 | B3 | 2026-05-21 | 2026-09-25 | P2 | Config tab breadcrumb indexes `config.host/check/sync[*i]` directly in the FieldTable branch; stale index panics | `src/tui/tabs/config_tab.rs` `breadcrumb` | S | Uses `.get(*i)` with fallback; stale index renders without panic |
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
@@ -36,7 +35,6 @@ this file existed are recorded in those source documents, not here.
 | B18 | 2026-09-25 | 2026-09-25 | P2 | `distribute_pooled` acquires the global permit before the per-host one, opposite to `ConcurrencyLimiter::acquire` | `src/commands/sync/distribute.rs` `distribute_pooled` | S | Uses `ConcurrencyLimiter::acquire` (per-host first) |
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B24 | 2026-09-25 | 2026-09-25 | P1 | SFTP upload/download write in place; drop/timeout/cancel leaves a truncated file; whole transfer bounded by `default_timeout`; close errors discarded | `src/host/sftp.rs` `upload`, `download` | M | Interrupted transfer leaves the original destination intact (temp + rename); close error surfaces; timeout scales with progress, not total size |
-| B26 | 2026-09-25 | 2026-09-25 | P1 | No shared remote-quoting layer; unquoted or wrongly quoted interpolation in sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`. Closes B1 | `src/commands/sync/collect.rs` `build_batch_metadata_cmd`, `build_dir_expand_cmd`; `src/metrics/probes/*` `batch_path_command`; `src/commands/exec.rs` `exec_on_host_pooled`; `src/host/shell.rs` `sudo_wrap` | M | One per-`ShellType` quote helper; parity test loops every `ShellType` over paths with space, quote, `$(...)` |
 | B27 | 2026-09-25 | 2026-09-25 | P2 | Auth, `open_sftp` and DNS resolution escape the connect timeout; DNS blocks a worker thread | `src/host/session_pool.rs` `connect_direct`, `connect_via_proxy`, `RusshSessionPool::sftp_session`, `run_sftp_probe` | S | Each step bounded by `timeout_secs`; `tokio::net::lookup_host` inside the bound |
 | B28 | 2026-09-25 | 2026-09-25 | P2 | Credential prompts: per-host `PassphraseCache`; concurrent blocking `rpassword` prompts on CLI; TUI replaces an open `AuthPopup`, failing the first host; passphrase asked for rejected unencrypted keys | `src/host/session_pool.rs` `RusshSessionPool::setup`; `src/host/auth.rs` `authenticate`, `try_pubkey`; `src/tui/app.rs` `App::handle_tui_event` | M | Three hosts sharing an encrypted key prompt once; prompts serialized on CLI and queued in TUI |
 | B29 | 2026-09-25 | 2026-09-25 | P2 | `SecretString` derives `Debug`, printing the secret | `src/host/auth.rs` `SecretString` | S | `format!("{:?}")` prints a redacted placeholder; test asserts the secret is absent |
@@ -106,6 +104,8 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B26 | No shared remote-quoting layer (sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`) | HASH-B26 — `host::quote` used at every site; parity tests per `ShellType` |
+| B1 | PowerShell directory expansion interpolated paths in double quotes, so `$(...)` executed | HASH-B26 — closed by B26 |
 | B20 | Auth tried neither ssh-agent nor default keys; one `IdentityFile` kept; `IdentitiesOnly` ignored | `0bc35f2` — OpenSSH order in `auth::authenticate`; `ssh_config` keeps all `IdentityFile`s, parses `IdentitiesOnly` |
 | B57 | `cargo audit`: russh 0.44 advisories (RUSTSEC-2026-0153/0154), yanked spin | `27422dc` — russh 0.63 (russh-keys folded into `russh::keys`); remaining advisories moved to B64 |
 | B44 | `XDG_CONFIG_HOME`/`XDG_STATE_HOME` ignored; macOS used hard-coded `~/.config` / `~/.local/state` | `684a99d` — `util::app_dir`: XDG → platform default; legacy dirs copied forward once |

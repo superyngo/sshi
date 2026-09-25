@@ -93,7 +93,7 @@ Directory expansion queries remote files using `build_dir_expand_cmd`:
   *(Note: Appends `-Recurse` when recursive mode is enabled).*
 
 - **Windows Cmd (`Cmd`)**:
-  Wraps the PowerShell `Get-ChildItem -File` logic inside a `powershell -NoProfile -Command "..."` invocation.
+  Runs the PowerShell `Get-ChildItem -File` logic via `powershell -NoProfile -EncodedCommand <base64>` (`host::quote::ps_in_cmd`), so paths never pass through a cmd quoting layer.
 
 ---
 
@@ -102,6 +102,8 @@ Directory expansion queries remote files using `build_dir_expand_cmd`:
 The collection phase queries file metadata across all reachable hosts in parallel (`batch_collect_all_metadata` in `src/commands/sync/collect.rs`).
 
 To minimize SSH channel round-trips, `sshi` executes a single batched remote command per host querying all required paths, formatted using `---FILE:<path>` block delimiters.
+
+`<files>` in both command sets is each path quoted by `host::quote::quote_path` (see [ssh-transport.md](ssh-transport.md#remote-quoting)): sh `"$HOME"/'rest'` / `'path'`, PowerShell `($HOME + '\rest')` / `'path'`.
 
 ### Remote Commands (`build_batch_metadata_cmd`)
 
@@ -125,7 +127,7 @@ To minimize SSH channel round-trips, `sshi` executes a single batched remote com
   }
   ```
 - **Windows Cmd (`Cmd`)**:
-  Invokes the PowerShell script snippet via `powershell -NoProfile -Command "..."`.
+  Invokes the PowerShell script snippet via `powershell -NoProfile -EncodedCommand <base64>` (`host::quote::ps_in_cmd`).
 
 ### Hash Algorithm Confirmation: SHA-256 vs BLAKE3
 

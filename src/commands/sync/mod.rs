@@ -1,4 +1,4 @@
-mod collect;
+pub(crate) mod collect;
 mod decide;
 mod distribute;
 mod report;

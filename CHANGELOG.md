@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix(security): remote paths, check labels and `exec` script names are quoted by one shared layer (`host::quote`) for every shell, so spaces, quotes and `$(...)` can no longer split arguments or run commands on the remote host; Cmd hosts run PowerShell via `-EncodedCommand`, and values cmd.exe cannot quote safely are refused. sh verified end to end; PowerShell/Cmd verified by unit parity tests only (B26, B1).
 - fix: SSH login follows OpenSSH order — ssh-agent keys, every `IdentityFile` (not just the last), default `~/.ssh/id_*` keys when none is listed, passphrase prompts only for encrypted keys, and `IdentitiesOnly yes` now honoured (no password prompt) (B20).
 - fix(deps): upgrade russh 0.44 → 0.63 (russh-keys now `russh::keys`), clearing RUSTSEC-2026-0153/0154; RSA keys now sign with `rsa-sha2-*`, and SSH-certificate host keys are refused explicitly (B57).
 - feat!: config and state directories follow `XDG_CONFIG_HOME`/`XDG_STATE_HOME`, then the platform default (macOS now `~/Library/Application Support/sshi`); on first run the old `~/.config/sshi` and `~/.local/state/sshi` are copied forward (originals kept) along with saved TUI state (B44).

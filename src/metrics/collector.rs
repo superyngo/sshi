@@ -90,7 +90,14 @@ pub async fn collect_pooled(
 
     // Batch all path checks into a single SSH call
     if !check_paths.is_empty() {
-        let batch_cmd = probes::batch_path_command(host.shell, check_paths);
+        let batch_cmd = match probes::batch_path_command(host.shell, check_paths) {
+            Ok(c) => c,
+            Err(e) => {
+                failed += check_paths.len();
+                errors.push(format!("path checks: {e}"));
+                String::new()
+            }
+        };
         if !batch_cmd.is_empty() {
             match sessions
                 .exec(&host.ssh_host, &batch_cmd, timeout_secs)

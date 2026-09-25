@@ -309,18 +309,16 @@ async fn exec_on_host_pooled(
         path
     };
 
-    let remote_path_quoted = if host.shell == ShellType::PowerShell {
-        format!("'{}'", remote_path)
-    } else {
-        remote_path.clone()
-    };
+    // One literal argument for the remote shell (B26): the path embeds the
+    // local script's file name, which may contain spaces or shell syntax.
+    let remote_path_quoted = crate::host::quote::quote_path(host.shell, &remote_path)?;
 
     // Make executable (sh only)
     if host.shell == ShellType::Sh {
         sessions
             .exec(
                 &host.ssh_host,
-                &format!("chmod +x {}", remote_path),
+                &format!("chmod +x {}", remote_path_quoted),
                 timeout,
             )
             .await?;
@@ -328,9 +326,8 @@ async fn exec_on_host_pooled(
 
     // Execute
     let exec_cmd = match host.shell {
-        ShellType::Sh => remote_path.clone(),
+        ShellType::Sh | ShellType::Cmd => remote_path_quoted.clone(),
         ShellType::PowerShell => format!("powershell -File {}", remote_path_quoted),
-        ShellType::Cmd => remote_path.clone(),
     };
 
     let exec_cmd = if sudo {
@@ -344,9 +341,9 @@ async fn exec_on_host_pooled(
     // Cleanup (unless --keep)
     if !keep {
         let rm_cmd = match host.shell {
-            ShellType::Sh => format!("rm -f {}", remote_path),
+            ShellType::Sh => format!("rm -f {}", remote_path_quoted),
             ShellType::PowerShell => format!("Remove-Item -Force {}", remote_path_quoted),
-            ShellType::Cmd => format!("del /f \"{}\"", remote_path),
+            ShellType::Cmd => format!("del /f {}", remote_path_quoted),
         };
         let _ = sessions.exec(&host.ssh_host, &rm_cmd, timeout).await;
     }

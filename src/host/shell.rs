@@ -65,12 +65,11 @@ pub fn temp_dir(shell: ShellType) -> &'static str {
 pub fn sudo_wrap(shell: ShellType, command: &str) -> String {
     match shell {
         ShellType::Sh => format!("sudo {}", command),
-        ShellType::PowerShell => {
-            format!(
-                "Start-Process powershell -ArgumentList '-Command {}' -Verb RunAs",
-                command
-            )
-        }
+        // Base64 (-EncodedCommand) keeps `command` out of any quoting layer (B26).
+        ShellType::PowerShell => format!(
+            "Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','{}' -Verb RunAs",
+            crate::host::quote::encode_ps(command)
+        ),
         ShellType::Cmd => format!("runas /user:Administrator \"{}\"", command),
     }
 }
@@ -105,7 +104,10 @@ mod tests {
     fn test_sudo_wrap_powershell() {
         let wrapped = sudo_wrap(ShellType::PowerShell, "Install-Module Foo");
         assert!(wrapped.contains("Start-Process powershell"));
-        assert!(wrapped.contains("Install-Module Foo"));
+        assert!(wrapped.contains(&crate::host::quote::encode_ps("Install-Module Foo")));
+        // A quote in the command cannot break out of the -ArgumentList literal.
+        let q = sudo_wrap(ShellType::PowerShell, "echo 'x'; Remove-Item C:\\");
+        assert_eq!(q.matches('\'').count(), 6, "{q}");
         assert!(wrapped.contains("-Verb RunAs"));
     }
 

@@ -5,6 +5,7 @@ use anyhow::{Context as _, Result};
 use tokio::sync::Semaphore;
 
 use crate::config::schema::{HostEntry, ShellType};
+use crate::host::quote::ps_in_cmd;
 use crate::host::session_pool::SessionPool;
 
 use super::super::Context;
@@ -317,20 +318,22 @@ pub(crate) async fn expand_directory_paths(
     Ok(parse_dir_expand_output(&output.stdout, paths))
 }
 
+/// sh-quoted remote path via the shared quoting layer (`host::quote`).
+fn sh_quote_path(p: &str) -> String {
+    crate::host::quote::quote_path(ShellType::Sh, p).expect("sh quoting is infallible")
+}
+
+/// PowerShell-quoted remote path via the shared quoting layer (`host::quote`).
+/// Also used inside the `-EncodedCommand` script of the Cmd branches.
+fn ps_quote_path(p: &str) -> String {
+    crate::host::quote::quote_path(ShellType::PowerShell, p)
+        .expect("PowerShell quoting is infallible")
+}
+
 pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> String {
     match shell {
         ShellType::PowerShell => {
-            let expanded: Vec<String> = paths
-                .iter()
-                .map(|p| {
-                    if let Some(stripped) = p.strip_prefix("~/") {
-                        let rest = stripped.replace('/', "\\").replace('\'', "''");
-                        format!("(\"$HOME\" + '\\{}')", rest)
-                    } else {
-                        format!("'{}'", p.replace('\'', "''"))
-                    }
-                })
-                .collect();
+            let expanded: Vec<String> = paths.iter().map(|p| ps_quote_path(p)).collect();
             format!(
                 "foreach ($f in @({files})) {{ \
                  \"---FILE:$f\"; \
@@ -344,16 +347,7 @@ pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> St
             )
         }
         ShellType::Sh => {
-            let expanded: Vec<String> = paths
-                .iter()
-                .map(|p| {
-                    if let Some(stripped) = p.strip_prefix("~/") {
-                        format!("$HOME/'{}'", stripped.replace('\'', "'\\''"))
-                    } else {
-                        format!("'{}'", p.replace('\'', "'\\''"))
-                    }
-                })
-                .collect();
+            let expanded: Vec<String> = paths.iter().map(|p| sh_quote_path(p)).collect();
             format!(
                 "for f in {files}; do \
                  echo \"---FILE:$f\"; \
@@ -366,23 +360,19 @@ pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> St
         ShellType::Cmd => {
             let expanded: Vec<String> = paths
                 .iter()
-                .map(|p| {
-                    let p = p.replace('/', "\\").replace('"', "`\"");
-                    format!("\"{}\"", p)
-                })
+                .map(|p| ps_quote_path(&p.replace('/', "\\")))
                 .collect();
-            format!(
-                "powershell -NoProfile -Command \"\
-                 foreach ($f in @({files})){{ \
+            ps_in_cmd(&format!(
+                "foreach ($f in @({files})){{ \
                    '---FILE:' + $f; \
                    $i=Get-Item $f -ErrorAction SilentlyContinue; \
                    if ($i) {{ \
                      [int64](($i.LastWriteTimeUtc-[datetime]'1970-01-01').TotalSeconds), $i.Length -join ' '; \
                      (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() \
                    }} else {{ 'MISSING' }} \
-                 }}\"",
+                 }}",
                 files = expanded.join(",")
-            )
+            ))
         }
     }
 }
@@ -468,16 +458,7 @@ pub(crate) fn parse_batch_metadata_output(
 pub(crate) fn build_dir_expand_cmd(paths: &[String], recursive: bool, shell: ShellType) -> String {
     match shell {
         ShellType::PowerShell => {
-            let expanded: Vec<String> = paths
-                .iter()
-                .map(|p| {
-                    if let Some(stripped) = p.strip_prefix("~/") {
-                        format!("\"$HOME\\{}\"", stripped.replace('/', "\\"))
-                    } else {
-                        format!("\"{}\"", p)
-                    }
-                })
-                .collect();
+            let expanded: Vec<String> = paths.iter().map(|p| ps_quote_path(p)).collect();
             let recurse_flag = if recursive { " -Recurse" } else { "" };
             format!(
                 "$h=$HOME; \
@@ -497,16 +478,7 @@ pub(crate) fn build_dir_expand_cmd(paths: &[String], recursive: bool, shell: She
             )
         }
         ShellType::Sh => {
-            let expanded: Vec<String> = paths
-                .iter()
-                .map(|p| {
-                    if let Some(stripped) = p.strip_prefix("~/") {
-                        format!("$HOME/'{}'", stripped.replace('\'', "'\\''"))
-                    } else {
-                        format!("'{}'", p.replace('\'', "'\\''"))
-                    }
-                })
-                .collect();
+            let expanded: Vec<String> = paths.iter().map(|p| sh_quote_path(p)).collect();
             let depth_flag = if recursive { "" } else { " -maxdepth 1" };
             format!(
                 "for p in {files}; do \
@@ -528,25 +500,21 @@ pub(crate) fn build_dir_expand_cmd(paths: &[String], recursive: bool, shell: She
         ShellType::Cmd => {
             let expanded: Vec<String> = paths
                 .iter()
-                .map(|p| {
-                    let p = p.replace('/', "\\").replace('"', "`\"");
-                    format!("\"{}\"", p)
-                })
+                .map(|p| ps_quote_path(&p.replace('/', "\\")))
                 .collect();
             let recurse_flag = if recursive { " -Recurse" } else { "" };
-            format!(
-                "powershell -NoProfile -Command \"\
-                 foreach ($p in @({files})) {{ \
+            ps_in_cmd(&format!(
+                "foreach ($p in @({files})) {{ \
                    '---PATH:' + $p; \
                    if (Test-Path $p -PathType Container) {{ \
                      'DIR'; \
                      Get-ChildItem $p -File{recurse} | ForEach-Object {{ $_.FullName }} \
                    }} elseif (Test-Path $p) {{ 'FILE' }} \
                    else {{ 'MISSING' }} \
-                 }}\"",
+                 }}",
                 files = expanded.join(","),
                 recurse = recurse_flag
-            )
+            ))
         }
     }
 }

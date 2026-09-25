@@ -42,16 +42,16 @@ pub fn batch_command(metrics: &[String]) -> String {
 }
 
 /// Build a single sh command that measures all path sizes with `---PATH:` markers.
-pub fn batch_path_command(paths: &[(String, String)]) -> String {
-    if paths.is_empty() {
-        return String::new();
-    }
+pub fn batch_path_command(paths: &[(String, String)]) -> anyhow::Result<String> {
+    use crate::host::quote::{quote_arg, quote_path};
+    let sh = crate::config::schema::ShellType::Sh;
     let mut parts = Vec::new();
     for (path, label) in paths {
         parts.push(format!(
-            "echo '---PATH:{}'; du -sb {} 2>/dev/null || echo MISSING",
-            label, path
+            "echo {}; du -sb {} 2>/dev/null || echo MISSING",
+            quote_arg(sh, &format!("---PATH:{label}"))?,
+            quote_path(sh, path)?
         ));
     }
-    parts.join("; ")
+    Ok(parts.join("; "))
 }

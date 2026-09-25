@@ -196,7 +196,21 @@ Remote shell detection (`src/host/shell.rs::detect_russh`) executes probe comman
 3. **POSIX Sh**: Runs `echo ok`. If exit status is successful, returns `ShellType::Sh`.
 4. **Fallback**: If all command attempts return errors, bails. If commands succeed without matching specific markers, defaults to `ShellType::Sh`.
 
-The detected `ShellType` controls temporary directory paths (`temp_dir`: `/tmp`, `$env:TEMP`, `%TEMP%`) and privilege elevation wrapping (`sudo_wrap`: `sudo <cmd>`, `Start-Process powershell -ArgumentList '-Command <cmd>' -Verb RunAs`, `runas /user:Administrator "<cmd>"`).
+The detected `ShellType` controls temporary directory paths (`temp_dir`: `/tmp`, `$env:TEMP`, `%TEMP%`) and privilege elevation wrapping (`sudo_wrap`: `sudo <cmd>`, `Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','<base64>' -Verb RunAs`, `runas /user:Administrator "<cmd>"`).
+
+## Remote Quoting
+
+Every value interpolated into a remote command string — sync paths, `[[check]]` path probes and labels, the `exec` script path, `sudo_wrap` — goes through `src/host/quote.rs`:
+
+| Function | sh | PowerShell | Cmd |
+|---|---|---|---|
+| `quote_arg` (literal) | `'…'`, `'` → `'\''` | `'…'`, `'` → `''` | `"…"`; refuses `"` `%` `!` CR LF |
+| `quote_path` (leading `~`/`~/` → home) | `"$HOME"/'rest'` | `($HOME + '\rest')` | `"%USERPROFILE%\rest"` |
+| `cmd_echo_arg` (unquoted `echo`) | — | — | `^` before `^&\|<>()`; same refusals |
+
+- PowerShell run from a cmd.exe host (sync Cmd branches) and elevated PowerShell (`sudo_wrap`) use `-EncodedCommand` with base64 UTF-16LE (`ps_in_cmd`, `encode_ps`), so the script never passes through a second quoting layer.
+- A value cmd.exe cannot quote safely fails that operation with `… cannot be passed safely to a cmd.exe host` instead of running.
+- Parity tests (`host::quote::tests`) loop every `ShellType` over values containing spaces, quotes, `$(...)`, backticks, `;`, `&`, `%`; generated sh commands run in a real `sh` and must not execute the payload.
 
 ---
 

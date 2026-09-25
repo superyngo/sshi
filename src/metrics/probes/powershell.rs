@@ -42,16 +42,16 @@ pub fn batch_command(metrics: &[String]) -> String {
 }
 
 /// Build a single PowerShell command that measures all path sizes with `---PATH:` markers.
-pub fn batch_path_command(paths: &[(String, String)]) -> String {
-    if paths.is_empty() {
-        return String::new();
-    }
+pub fn batch_path_command(paths: &[(String, String)]) -> anyhow::Result<String> {
+    use crate::host::quote::{quote_arg, quote_path};
+    let ps = crate::config::schema::ShellType::PowerShell;
     let mut parts = Vec::new();
     for (path, label) in paths {
         parts.push(format!(
-            "\"---PATH:{}\"; try {{ (Get-ChildItem -Recurse -File '{}' | Measure-Object -Property Length -Sum).Sum }} catch {{ \"MISSING\" }}",
-            label, path
+            "{}; try {{ (Get-ChildItem -Recurse -File {} | Measure-Object -Property Length -Sum).Sum }} catch {{ \"MISSING\" }}",
+            quote_arg(ps, &format!("---PATH:{label}"))?,
+            quote_path(ps, path)?
         ));
     }
-    parts.join("; ")
+    Ok(parts.join("; "))
 }
