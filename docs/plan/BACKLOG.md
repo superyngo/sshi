@@ -107,7 +107,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B57 | `cargo audit`: russh 0.44 advisories (RUSTSEC-2026-0153/0154), yanked spin | HASH-B57 — russh 0.63 (russh-keys folded into `russh::keys`); remaining advisories moved to B64 |
+| B57 | `cargo audit`: russh 0.44 advisories (RUSTSEC-2026-0153/0154), yanked spin | `27422dc` — russh 0.63 (russh-keys folded into `russh::keys`); remaining advisories moved to B64 |
 | B44 | `XDG_CONFIG_HOME`/`XDG_STATE_HOME` ignored; macOS used hard-coded `~/.config` / `~/.local/state` | `684a99d` — `util::app_dir`: XDG → platform default; legacy dirs copied forward once |
 | B63 | Sync report marked a failed host `online` when its `name` differed from `ssh_host` (pool keys failures by `ssh_host`) | `a2072e4` — `sync::by_host_name` re-keys failures by config name |
 | B35 | Exit status was 0 when every host failed | `dae7226` — ADR 0004: `3` some hosts failed, `4` all failed |
