@@ -54,10 +54,12 @@ pub trait SessionPool: Send + Sync {
     /// Names of all successfully connected hosts.
     fn reachable_hosts(&self) -> Vec<String>;
 
-    /// Names and error messages of hosts that failed to connect.
+    /// `ssh_host` keys (not config names) and error messages of hosts that
+    /// failed to connect.
     fn failed_hosts(&self) -> Vec<(String, String)>;
 
-    /// Names and error messages of hosts that failed the SFTP probe.
+    /// `ssh_host` keys (not config names) and error messages of hosts that
+    /// failed the SFTP probe.
     fn sftp_failed_hosts(&self) -> Vec<(String, String)>;
 
     /// Hosts that passed the SFTP probe (i.e. are reachable AND SFTP-capable).

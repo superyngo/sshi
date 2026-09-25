@@ -558,3 +558,29 @@ fn test_skip_conflict_hosts_reports_conflict() {
         None
     );
 }
+
+/// B63: pool failures keyed by `ssh_host` are reported under the config name.
+#[test]
+fn test_by_host_name_maps_ssh_host_to_name() {
+    use super::by_host_name;
+    use crate::config::schema::HostEntry;
+    use std::sync::Arc;
+    let hosts = vec![
+        Arc::new(HostEntry::placeholder("dead", "127.0.0.1:1")),
+        Arc::new(HostEntry::placeholder("h1", "h1")),
+    ];
+    let out = by_host_name(
+        &hosts,
+        vec![
+            ("127.0.0.1:1".into(), "refused".into()),
+            ("ghost".into(), "x".into()),
+        ],
+    );
+    assert_eq!(
+        out,
+        vec![
+            ("dead".to_string(), "refused".to_string()),
+            ("ghost".to_string(), "x".to_string())
+        ]
+    );
+}

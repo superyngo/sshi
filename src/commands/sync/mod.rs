@@ -182,7 +182,7 @@ async fn sync_inner(
     )
     .await?;
 
-    for (name, err) in pool.failed_hosts() {
+    for (name, err) in by_host_name(&hosts, pool.failed_hosts()) {
         if verbose {
             printer::print_host_line("unreachable", "error", &format!("{}: {}", name, err));
         } else {
@@ -191,7 +191,7 @@ async fn sync_inner(
         summary.add_host_failure(&name, &err);
     }
 
-    for (name, err) in pool.sftp_failed_hosts() {
+    for (name, err) in by_host_name(&hosts, pool.sftp_failed_hosts()) {
         if verbose {
             printer::print_host_line("sftp-failed", "error", &format!("{}: {}", name, err));
         } else {
@@ -224,7 +224,11 @@ async fn sync_inner(
             .failed_hosts()
             .into_iter()
             .map(|(n, _)| n)
-            .chain(pool.sftp_failed_hosts().into_iter().map(|(n, _)| n))
+            .chain(
+                by_host_name(&hosts, pool.sftp_failed_hosts())
+                    .into_iter()
+                    .map(|(n, _)| n),
+            )
             .collect();
         pool.shutdown().await;
         let report = build_sync_report(
@@ -306,10 +310,10 @@ async fn sync_inner(
 
     let failed_host_names: Vec<String> = {
         let mut names = Vec::new();
-        for (name, _) in pool.failed_hosts() {
+        for (name, _) in by_host_name(&hosts, pool.failed_hosts()) {
             names.push(name);
         }
-        for (name, _) in pool.sftp_failed_hosts() {
+        for (name, _) in by_host_name(&hosts, pool.sftp_failed_hosts()) {
             names.push(name);
         }
         names
@@ -1162,4 +1166,24 @@ fn record_conflict_skip(summary: &mut SyncSummary, path: &str, hosts: &[String],
         &hosts,
         "contents differ between hosts (conflict_strategy = skip)",
     );
+}
+
+/// Re-key pool failures (keyed by `ssh_host`) by config host `name`, so the
+/// summary and report match hosts by name (B63). Every host sharing an
+/// `ssh_host` gets the error; an unmatched key is kept as-is.
+pub(crate) fn by_host_name(
+    hosts: &[Arc<HostEntry>],
+    failures: Vec<(String, String)>,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (ssh_host, err) in failures {
+        let before = out.len();
+        for h in hosts.iter().filter(|h| h.ssh_host == ssh_host) {
+            out.push((h.name.clone(), err.clone()));
+        }
+        if out.len() == before {
+            out.push((ssh_host, err));
+        }
+    }
+    out
 }

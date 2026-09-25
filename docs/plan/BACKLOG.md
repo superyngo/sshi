@@ -73,7 +73,6 @@ this file existed are recorded in those source documents, not here.
 | B60 | 2026-09-25 | 2026-09-25 | P3 | `output::printer` writes ANSI colours with no TTY/`NO_COLOR` gate | `src/output/printer.rs` `print_host_line` | S | Piped output has no escape codes; `NO_COLOR` honoured |
 | B61 | 2026-09-25 | 2026-09-25 | P3 | Enums/catalogs re-spelled: shell strings in Config tab, `ShellMode` label ×3, check catalog ×2, script-extension mapping ×2 | `src/tui/tabs/config_tab.rs` `SHELL_VARIANTS`; `src/tui/tabs/config_schema.rs` `CHECK_ENABLED_OPTIONS`; `src/config/schema.rs` `AppConfig::default`; `src/commands/exec.rs` | S | Each derived from one source |
 | B62 | 2026-09-25 | 2026-09-25 | P3 | Sync "source does not have path" lines call `printer::print_host_line("skip", &source, …)` with host and status swapped, so the host lands in the status slot and renders as a `·` with no name (found while fixing B25) | `src/commands/sync/mod.rs` fixed-source skip branches | S | Source-skip lines render `⊘` and name the source host |
-| B63 | 2026-09-25 | 2026-09-25 | P2 | Sync report marks a failed host `online` when its config `name` differs from `ssh_host`: the pool keys failures by `ssh_host`, `build_sync_report` matches by name. Wrong `--out` status and, since ADR 0004, a wrong exit code (reproduced: host `dead` → `127.0.0.1:1`, `sync -a` exits 0 instead of 3) | `src/commands/sync/mod.rs` failed-host collection; `src/commands/sync/report.rs` `build_sync_report` | S | Unreachable host with name ≠ `ssh_host` reported `unreachable`; `sync -a` exits 3 |
 
 ## Pending verification
 
@@ -109,6 +108,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B63 | Sync report marked a failed host `online` when its `name` differed from `ssh_host` (pool keys failures by `ssh_host`) | HASH-B63 — `sync::by_host_name` re-keys failures by config name |
 | B35 | Exit status was 0 when every host failed | `dae7226` — ADR 0004: `3` some hosts failed, `4` all failed |
 | B25 | Sync with `conflict_strategy = skip` counted conflicting files as in sync | `2ae1102` — `skip_conflict_hosts` + skip summary entry |
 | B23 | TUI Config tab stripped trailing `s`/`d`/`%` from every text field on edit (`prod` → `pro`) | `fa9ee9d` — `strip_unit` limited to U64 fields |
