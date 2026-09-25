@@ -139,9 +139,10 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
   - `groups` (`FieldKind::VecString`): Opens `DirectGroupPickerState` showing all known groups across the config with toggle checkboxes.
   - `enabled` (`FieldKind::CheckEnabled`): Opens `DirectGroupPickerState` over fixed probe options (`online`, `system_info`, `cpu_arch`, `memory`, `swap`, `disk`, `cpu_load`, `network`, `battery`, `ip_address`).
   - Vector fields / custom lists: Opens `DirectVecEditorState` for list item management (`a` or `Enter` to add, `d` to delete selected, `s` to save, `Esc` to cancel).
+  - The same editors open inside the Add/Edit entry form (`VecEditorState`, `GroupPickerState`) with the same keys: both paths run one key map (`list_editor_key`, `picker_key`), so `Esc` always discards the pending list change and `s` (or `Enter` in pickers) applies it; `Esc` while typing a new item cancels just that item.
 
 #### Entry Management
-- **Add Entry (`a`)**: Press `a` while an entry or section is selected to open `EntryFormState` pre-populated with required and default fields for that type.
+- **Add Entry (`a`)**: Press `a` while an entry or section is selected to open `EntryFormState` pre-populated with required and default fields for that type. A form taller than its popup scrolls: the field list gets the popup height minus its two hint rows, and the cursor stays put while moving inside the visible window.
 - **Delete Entry (`d`)**: Press `d` to request deletion of the selected `host`, `check`, or `sync` entry. A confirmation popup (`ConfirmState`) prompts before deletion.
 
 #### External Editor & Comment Preservation

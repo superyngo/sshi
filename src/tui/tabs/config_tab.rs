@@ -90,11 +90,6 @@ pub struct VecEditorState {
     pub vp: Viewport,
     pub input: InputField,
     pub input_active: bool,
-    /// Set by the handler when 's'/Esc commits — the caller (which holds the
-    /// taken-out instance) checks this and drops it instead of restoring.
-    /// Without this flag the vec editor cannot close because the caller
-    /// always restores `form.vec_editor = Some(ve)` after handling the key.
-    pub closing: bool,
 }
 
 #[derive(Debug)]
@@ -103,7 +98,6 @@ pub struct GroupPickerState {
     pub available: Vec<String>,
     pub checked: Vec<bool>,
     pub vp: Viewport,
-    pub closing: bool,
     pub descriptions: Vec<String>, // empty = no descriptions shown
     pub allow_add: bool,
     pub add_input: InputField,
@@ -239,6 +233,11 @@ pub struct ConfigTabState {
     /// re-capturing in `save_config`) is the only way to survive the
     /// commit→reload pipeline, which wipes viewports.
     pub pending_restore_snapshot: Option<ConfigSelectionSnapshot>,
+    /// Rows the entry form's field list got on the last frame (the popup
+    /// minus its hint rows), so key handling scrolls with the real height.
+    form_list_height: std::cell::Cell<usize>,
+    /// Rows the open list editor / picker got on the last frame.
+    editor_list_height: std::cell::Cell<usize>,
     // direct popups
     pub direct_vec_editor: Option<DirectVecEditorState>,
     pub direct_group_picker: Option<DirectGroupPickerState>,
@@ -316,6 +315,8 @@ impl ConfigTabState {
             pending_save: false,
             pending_error: None,
             pending_restore_snapshot: None,
+            form_list_height: std::cell::Cell::new(0),
+            editor_list_height: std::cell::Cell::new(0),
             direct_vec_editor: None,
             direct_group_picker: None,
         }
@@ -1081,51 +1082,46 @@ impl ConfigTabState {
             return self.handle_confirm_key(key);
         }
 
-        if self
-            .entry_form
-            .as_ref()
-            .map(|f| f.vec_editor.is_some())
-            .unwrap_or(false)
-        {
-            let mut ve = self.entry_form.as_mut().unwrap().vec_editor.take().unwrap();
-            let handled = self.handle_vec_editor_key(key, &mut ve);
-            if !ve.closing {
-                if let Some(form) = self.entry_form.as_mut() {
-                    form.vec_editor = Some(ve);
+        // Sub-editors inside the form share their key map and Esc rule with
+        // the direct popups (`list_editor_key` / `picker_key`, B46).
+        let height = self.editor_list_height.get();
+        if let Some(mut ve) = self.entry_form.as_mut().and_then(|f| f.vec_editor.take()) {
+            let outcome = list_editor_key(&mut ve, key, height);
+            if let Some(form) = self.entry_form.as_mut() {
+                match outcome {
+                    EditorOutcome::Continue => form.vec_editor = Some(ve),
+                    EditorOutcome::Commit(display) => {
+                        form.fields[ve.field_index].display_value = display;
+                        form.dirty = true;
+                    }
+                    EditorOutcome::Cancel => {}
                 }
             }
-            return handled;
+            return true;
         }
-
-        if self
-            .entry_form
-            .as_ref()
-            .map(|f| f.group_picker.is_some())
-            .unwrap_or(false)
-        {
-            let mut gp = self
-                .entry_form
-                .as_mut()
-                .unwrap()
-                .group_picker
-                .take()
-                .unwrap();
-            let handled = self.handle_group_picker_key(key, &mut gp);
-            if !gp.closing {
-                if let Some(form) = self.entry_form.as_mut() {
-                    form.group_picker = Some(gp);
+        if let Some(mut gp) = self.entry_form.as_mut().and_then(|f| f.group_picker.take()) {
+            let outcome = picker_key(&mut gp, key, height);
+            if let Some(form) = self.entry_form.as_mut() {
+                match outcome {
+                    EditorOutcome::Continue => form.group_picker = Some(gp),
+                    EditorOutcome::Commit(display) => {
+                        form.fields[gp.field_index].display_value = display;
+                        form.dirty = true;
+                    }
+                    EditorOutcome::Cancel => {}
                 }
             }
-            return handled;
+            return true;
         }
 
-        let form = self.entry_form.as_mut().unwrap();
+        let Some(form) = self.entry_form.as_mut() else {
+            return false;
+        };
 
-        if form.active_input.is_some() {
+        if let Some(idx) = form.active_input {
             let is_cancel = key.code == KeyCode::Esc;
             form.input.handle_key(key);
             if form.input.mode == InputMode::Normal {
-                let idx = form.active_input.unwrap();
                 form.fields[idx].display_value = form.input.value.clone();
                 if !is_cancel {
                     form.dirty = true;
@@ -1135,6 +1131,10 @@ impl ConfigTabState {
             return true;
         }
 
+        // The field list's real on-screen height (set by `render_entry_form`)
+        // so the cursor scrolls with the list instead of pinning to the top.
+        let rows = form.fields.len();
+        form.field_vp.set_dims(rows, self.form_list_height.get());
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 form.field_vp.move_up();
@@ -1186,7 +1186,6 @@ impl ConfigTabState {
                                     available,
                                     checked,
                                     vp,
-                                    closing: false,
                                     descriptions: CHECK_ENABLED_OPTIONS
                                         .iter()
                                         .map(|(_, d)| d.to_string())
@@ -1209,7 +1208,6 @@ impl ConfigTabState {
                                         available,
                                         checked,
                                         vp,
-                                        closing: false,
                                         descriptions: vec![],
                                         allow_add: true,
                                         add_input: InputField::new(""),
@@ -1223,7 +1221,6 @@ impl ConfigTabState {
                                         vp: Viewport::new(),
                                         input: InputField::new(""),
                                         input_active: false,
-                                        closing: false,
                                     };
                                     ve.vp.set_dims(ve.items.len(), 0);
                                     form.vec_editor = Some(ve);
@@ -1262,178 +1259,12 @@ impl ConfigTabState {
         }
     }
 
-    fn handle_vec_editor_key(&mut self, key: KeyEvent, ve: &mut VecEditorState) -> bool {
-        if ve.input_active {
-            ve.input.handle_key(key);
-            if ve.input.mode == InputMode::Normal {
-                if !ve.input.value.is_empty() {
-                    ve.items.push(std::mem::take(&mut ve.input.value));
-                    ve.vp.set_dims(ve.items.len(), 0);
-                }
-                ve.input_active = false;
-            }
-            return true;
-        }
-
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                ve.vp.move_up();
-                true
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                ve.vp.move_down();
-                true
-            }
-            KeyCode::PageUp => {
-                ve.vp.page_up();
-                true
-            }
-            KeyCode::PageDown => {
-                ve.vp.page_down();
-                true
-            }
-            KeyCode::Home => {
-                ve.vp.home();
-                true
-            }
-            KeyCode::End => {
-                ve.vp.end();
-                true
-            }
-            KeyCode::Char('a') | KeyCode::Enter => {
-                ve.input = InputField::new("");
-                ve.input.activate();
-                ve.input_active = true;
-                true
-            }
-            KeyCode::Char('d') => {
-                let idx = ve.vp.selected;
-                if idx < ve.items.len() {
-                    ve.items.remove(idx);
-                    ve.vp.set_dims(ve.items.len(), 0);
-                    if ve.vp.selected >= ve.items.len() && ve.vp.selected > 0 {
-                        ve.vp.move_up();
-                    }
-                }
-                true
-            }
-            KeyCode::Char('s') | KeyCode::Esc => {
-                // Both 's' and Esc commit the vec_editor back to the form field.
-                let display = if ve.items.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    format!("[{}]", ve.items.join(", "))
-                };
-                let idx = ve.field_index;
-                let form = self.entry_form.as_mut().unwrap();
-                form.fields[idx].display_value = display;
-                form.dirty = true;
-                // Setting form.vec_editor = None here is a no-op because the
-                // caller already `take()`d it; flag closing so the caller
-                // drops the local instead of restoring it.
-                ve.closing = true;
-                true
-            }
-            _ => true, // swallow — prevent global keys (q, ?) from firing
-        }
-    }
-
-    fn handle_group_picker_key(&mut self, key: KeyEvent, gp: &mut GroupPickerState) -> bool {
-        // If add-input is active, route keys to it first
-        if gp.add_input_active {
-            // If the add-input is active, handle Esc as an explicit cancel before
-            // routing the key to the input field. This avoids treating Esc the
-            // same as Enter (both flip mode -> Normal) and accidentally applying
-            // the pending value when the user intended to cancel.
-            if key.code == KeyCode::Esc {
-                gp.add_input = InputField::new("");
-                gp.add_input_active = false;
-                return true;
-            }
-            gp.add_input.handle_key(key);
-            if gp.add_input.mode == InputMode::Normal {
-                apply_add_input_to_picker(
-                    &gp.add_input.value,
-                    &mut gp.available,
-                    &mut gp.checked,
-                    &mut gp.vp,
-                );
-                gp.add_input = InputField::new("");
-                gp.add_input_active = false;
-            }
-            return true;
-        }
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                gp.vp.move_up();
-                true
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                gp.vp.move_down();
-                true
-            }
-            KeyCode::PageUp => {
-                gp.vp.page_up();
-                true
-            }
-            KeyCode::PageDown => {
-                gp.vp.page_down();
-                true
-            }
-            KeyCode::Home => {
-                gp.vp.home();
-                true
-            }
-            KeyCode::End => {
-                gp.vp.end();
-                true
-            }
-            KeyCode::Char(' ') => {
-                let idx = gp.vp.selected;
-                if idx < gp.checked.len() {
-                    gp.checked[idx] = !gp.checked[idx];
-                }
-                true
-            }
-            KeyCode::Char('a') if gp.allow_add => {
-                gp.add_input = InputField::new("");
-                gp.add_input.activate();
-                gp.add_input_active = true;
-                true
-            }
-            KeyCode::Enter | KeyCode::Char('s') => {
-                let selected: Vec<String> = gp
-                    .available
-                    .iter()
-                    .zip(gp.checked.iter())
-                    .filter(|(_, &c)| c)
-                    .map(|(g, _)| g.clone())
-                    .collect();
-                let display = if selected.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    format!("[{}]", selected.join(", "))
-                };
-                let fi = gp.field_index;
-                if let Some(form) = self.entry_form.as_mut() {
-                    form.fields[fi].display_value = display;
-                    form.dirty = true;
-                }
-                gp.closing = true;
-                true
-            }
-            KeyCode::Esc => {
-                gp.closing = true;
-                true
-            }
-            _ => true, // swallow — prevent global keys (q, ?) from firing
-        }
-    }
-
     fn handle_confirm_key(&mut self, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Char('y') | KeyCode::Enter => {
-                let confirm = self.confirm.take().unwrap();
+                let Some(confirm) = self.confirm.take() else {
+                    return false;
+                };
                 match confirm.action {
                     ConfirmAction::DeleteEntry { kind, index } => {
                         // Delete is handled by execute_delete which is called from App
@@ -1509,8 +1340,13 @@ impl ConfigTabState {
         // Snapshot BEFORE any state mutation. After this point the entry form
         // closes and the sidebar/field viewports get rebuilt; capturing later
         // would lose the user's cursor position.
+        if self.entry_form.is_none() {
+            return;
+        }
         self.mark_dirty(config);
-        let form = self.entry_form.take().unwrap();
+        let Some(form) = self.entry_form.take() else {
+            return;
+        };
         // Single dispatch: feed every form field through the unified apply().
         // Same code path as right-panel inline edits.
         match form.kind {
@@ -1880,9 +1716,13 @@ impl ConfigTabState {
         frame.render_widget(block, popup_area);
 
         let visible_h = inner.height as usize;
+        // The field list shares the popup with a blank + hint row at the
+        // bottom; key handling reads this height back (B46).
+        let list_h = visible_h.saturating_sub(2);
+        self.form_list_height.set(list_h);
         let count = form.fields.len();
         let mut vp = form.field_vp.clone();
-        vp.set_dims(count, visible_h);
+        vp.set_dims(count, list_h);
 
         let (start, end) = vp.visible_range();
 
@@ -1904,6 +1744,7 @@ impl ConfigTabState {
             lines.push(Line::from(""));
 
             let gp_visible_h = visible_h.saturating_sub(5);
+            self.editor_list_height.set(gp_visible_h);
             let mut gp_vp = gp.vp.clone();
             gp_vp.set_dims(gp.available.len(), gp_visible_h);
             if gp.available.is_empty() {
@@ -1951,7 +1792,7 @@ impl ConfigTabState {
         } else if let Some(ref ve) = form.vec_editor {
             lines.push(Line::from(Span::styled(
                 format!(
-                    "  Editing: {} (a:add d:del s/Esc:done)",
+                    "  Editing: {} (a:add d:del s:save Esc:cancel)",
                     form.fields[ve.field_index].key
                 ),
                 Style::default().fg(theme.warning),
@@ -1959,6 +1800,7 @@ impl ConfigTabState {
             lines.push(Line::from(""));
 
             let ve_visible_h = visible_h.saturating_sub(6);
+            self.editor_list_height.set(ve_visible_h);
             let mut ve_vp = ve.vp.clone();
             ve_vp.set_dims(ve.items.len(), ve_visible_h);
             let scroll_y = ve_vp.scroll_y;
@@ -2326,187 +2168,31 @@ impl ConfigTabState {
     }
 
     fn handle_direct_vec_editor_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
-        let input_active = self.direct_vec_editor.as_ref().unwrap().input_active;
-        if input_active {
-            if key.code == KeyCode::Esc {
-                let ve = self.direct_vec_editor.as_mut().unwrap();
-                ve.input = InputField::new("");
-                ve.input_active = false;
-                return true;
+        let Some(mut ve) = self.direct_vec_editor.take() else {
+            return false;
+        };
+        match list_editor_key(&mut ve, key, self.editor_list_height.get()) {
+            EditorOutcome::Continue => self.direct_vec_editor = Some(ve),
+            EditorOutcome::Commit(display) => {
+                self.commit_direct_popup_field(ve.sidebar_item, ve.field_index, &display, config)
             }
-            let ve = self.direct_vec_editor.as_mut().unwrap();
-            ve.input.handle_key(key);
-            if ve.input.mode == InputMode::Normal {
-                if !ve.input.value.is_empty() {
-                    let val = std::mem::take(&mut ve.input.value);
-                    ve.items.push(val);
-                    ve.vp.set_dims(ve.items.len(), 0);
-                }
-                ve.input_active = false;
-            }
-            return true;
+            EditorOutcome::Cancel => {}
         }
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.direct_vec_editor.as_mut().unwrap().vp.move_up();
-                true
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.direct_vec_editor.as_mut().unwrap().vp.move_down();
-                true
-            }
-            KeyCode::PageUp => {
-                self.direct_vec_editor.as_mut().unwrap().vp.page_up();
-                true
-            }
-            KeyCode::PageDown => {
-                self.direct_vec_editor.as_mut().unwrap().vp.page_down();
-                true
-            }
-            KeyCode::Home => {
-                self.direct_vec_editor.as_mut().unwrap().vp.home();
-                true
-            }
-            KeyCode::End => {
-                self.direct_vec_editor.as_mut().unwrap().vp.end();
-                true
-            }
-            KeyCode::Char('a') | KeyCode::Enter => {
-                let ve = self.direct_vec_editor.as_mut().unwrap();
-                ve.input = InputField::new("");
-                ve.input.activate();
-                ve.input_active = true;
-                true
-            }
-            KeyCode::Char('d') => {
-                let ve = self.direct_vec_editor.as_mut().unwrap();
-                let idx = ve.vp.selected;
-                if idx < ve.items.len() {
-                    ve.items.remove(idx);
-                    ve.vp.set_dims(ve.items.len(), 0);
-                    if ve.vp.selected >= ve.items.len() && ve.vp.selected > 0 {
-                        ve.vp.move_up();
-                    }
-                }
-                true
-            }
-            KeyCode::Char('s') => {
-                let (sidebar_item, field_index, display) = {
-                    let ve = self.direct_vec_editor.as_ref().unwrap();
-                    (
-                        ve.sidebar_item.clone(),
-                        ve.field_index,
-                        if ve.items.is_empty() {
-                            "(none)".to_string()
-                        } else {
-                            format!("[{}]", ve.items.join(", "))
-                        },
-                    )
-                };
-                self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
-                self.direct_vec_editor = None;
-                true
-            }
-            KeyCode::Esc => {
-                self.direct_vec_editor = None;
-                true
-            }
-            _ => true,
-        }
+        true
     }
 
     fn handle_direct_group_picker_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
-        let add_input_active = self.direct_group_picker.as_ref().unwrap().add_input_active;
-        if add_input_active {
-            if key.code == KeyCode::Esc {
-                let gp = self.direct_group_picker.as_mut().unwrap();
-                gp.add_input = InputField::new("");
-                gp.add_input_active = false;
-                return true;
+        let Some(mut gp) = self.direct_group_picker.take() else {
+            return false;
+        };
+        match picker_key(&mut gp, key, self.editor_list_height.get()) {
+            EditorOutcome::Continue => self.direct_group_picker = Some(gp),
+            EditorOutcome::Commit(display) => {
+                self.commit_direct_popup_field(gp.sidebar_item, gp.field_index, &display, config)
             }
-            let gp = self.direct_group_picker.as_mut().unwrap();
-            gp.add_input.handle_key(key);
-            if gp.add_input.mode == InputMode::Normal {
-                apply_add_input_to_picker(
-                    &gp.add_input.value,
-                    &mut gp.available,
-                    &mut gp.checked,
-                    &mut gp.vp,
-                );
-                gp.add_input = InputField::new("");
-                gp.add_input_active = false;
-            }
-            return true;
+            EditorOutcome::Cancel => {}
         }
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                self.direct_group_picker.as_mut().unwrap().vp.move_up();
-                true
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                self.direct_group_picker.as_mut().unwrap().vp.move_down();
-                true
-            }
-            KeyCode::PageUp => {
-                self.direct_group_picker.as_mut().unwrap().vp.page_up();
-                true
-            }
-            KeyCode::PageDown => {
-                self.direct_group_picker.as_mut().unwrap().vp.page_down();
-                true
-            }
-            KeyCode::Home => {
-                self.direct_group_picker.as_mut().unwrap().vp.home();
-                true
-            }
-            KeyCode::End => {
-                self.direct_group_picker.as_mut().unwrap().vp.end();
-                true
-            }
-            KeyCode::Char(' ') => {
-                let gp = self.direct_group_picker.as_mut().unwrap();
-                let idx = gp.vp.selected;
-                if idx < gp.checked.len() {
-                    gp.checked[idx] = !gp.checked[idx];
-                }
-                true
-            }
-            KeyCode::Char('a') => {
-                let gp = self.direct_group_picker.as_mut().unwrap();
-                if gp.allow_add {
-                    gp.add_input = InputField::new("");
-                    gp.add_input.activate();
-                    gp.add_input_active = true;
-                }
-                true
-            }
-            KeyCode::Enter | KeyCode::Char('s') => {
-                let (sidebar_item, field_index, display) = {
-                    let gp = self.direct_group_picker.as_ref().unwrap();
-                    let selected: Vec<String> = gp
-                        .available
-                        .iter()
-                        .zip(gp.checked.iter())
-                        .filter(|(_, &c)| c)
-                        .map(|(g, _)| g.clone())
-                        .collect();
-                    let display = if selected.is_empty() {
-                        "(none)".to_string()
-                    } else {
-                        format!("[{}]", selected.join(", "))
-                    };
-                    (gp.sidebar_item.clone(), gp.field_index, display)
-                };
-                self.commit_direct_popup_field(sidebar_item, field_index, &display, config);
-                self.direct_group_picker = None;
-                true
-            }
-            KeyCode::Esc => {
-                self.direct_group_picker = None;
-                true
-            }
-            _ => true,
-        }
+        true
     }
 
     // --- Rendering helpers for direct popups (Step 12)
@@ -2530,8 +2216,10 @@ impl ConfigTabState {
         frame.render_widget(block, popup_area);
 
         let visible_h = inner.height as usize;
+        let list_h = visible_h.saturating_sub(3);
+        self.editor_list_height.set(list_h);
         let mut vp = dve.vp.clone();
-        vp.set_dims(dve.items.len(), visible_h.saturating_sub(3));
+        vp.set_dims(dve.items.len(), list_h);
         let mut lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 "  (a:add  d:del  s:save  Esc:cancel)",
@@ -2594,7 +2282,9 @@ impl ConfigTabState {
         let visible_h = inner.height as usize;
         let mut vp = dgp.vp.clone();
         let extra = if dgp.add_input_active { 4 } else { 2 };
-        vp.set_dims(dgp.available.len(), visible_h.saturating_sub(extra + 2));
+        let list_h = visible_h.saturating_sub(extra + 2);
+        self.editor_list_height.set(list_h);
+        vp.set_dims(dgp.available.len(), list_h);
         let hints = if dgp.allow_add {
             "  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)"
         } else {
@@ -2718,6 +2408,195 @@ pub fn entry_label_sync(config: &AppConfig, i: usize) -> String {
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
+
+/// What a key did in a list editor or picker. The entry-form and the
+/// direct-popup variants share one key map and one Esc rule (B46): `Esc`
+/// discards the pending changes, `s` saves (Enter too, in pickers).
+enum EditorOutcome {
+    Continue,
+    /// Close and apply this display value (`(none)` or `[a, b]`).
+    Commit(String),
+    /// Close without applying anything.
+    Cancel,
+}
+
+fn list_display(items: &[String]) -> String {
+    if items.is_empty() {
+        "(none)".to_string()
+    } else {
+        format!("[{}]", items.join(", "))
+    }
+}
+
+/// The editable parts of a list editor (form `VecEditorState` or popup
+/// `DirectVecEditorState`).
+trait ListEditorParts {
+    fn parts(&mut self) -> (&mut Vec<String>, &mut Viewport, &mut InputField, &mut bool);
+}
+
+impl ListEditorParts for VecEditorState {
+    fn parts(&mut self) -> (&mut Vec<String>, &mut Viewport, &mut InputField, &mut bool) {
+        (
+            &mut self.items,
+            &mut self.vp,
+            &mut self.input,
+            &mut self.input_active,
+        )
+    }
+}
+
+impl ListEditorParts for DirectVecEditorState {
+    fn parts(&mut self) -> (&mut Vec<String>, &mut Viewport, &mut InputField, &mut bool) {
+        (
+            &mut self.items,
+            &mut self.vp,
+            &mut self.input,
+            &mut self.input_active,
+        )
+    }
+}
+
+/// Keys of a list editor: move, `a`/Enter add, `d` delete, `s` save, Esc
+/// cancel (Esc while adding cancels only the new item). `height` is the
+/// list's on-screen row count.
+fn list_editor_key(ed: &mut impl ListEditorParts, key: KeyEvent, height: usize) -> EditorOutcome {
+    let (items, vp, input, input_active) = ed.parts();
+    vp.set_dims(items.len(), height);
+    if *input_active {
+        if key.code == KeyCode::Esc {
+            *input = InputField::new("");
+            *input_active = false;
+            return EditorOutcome::Continue;
+        }
+        input.handle_key(key);
+        if input.mode == InputMode::Normal {
+            if !input.value.is_empty() {
+                items.push(std::mem::take(&mut input.value));
+                vp.set_dims(items.len(), height);
+            }
+            *input_active = false;
+        }
+        return EditorOutcome::Continue;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => vp.move_up(),
+        KeyCode::Down | KeyCode::Char('j') => vp.move_down(),
+        KeyCode::PageUp => vp.page_up(),
+        KeyCode::PageDown => vp.page_down(),
+        KeyCode::Home => vp.home(),
+        KeyCode::End => vp.end(),
+        KeyCode::Char('a') | KeyCode::Enter => {
+            *input = InputField::new("");
+            input.activate();
+            *input_active = true;
+        }
+        KeyCode::Char('d') => {
+            if vp.selected < items.len() {
+                items.remove(vp.selected);
+                // `set_dims` clamps the selection onto the new last row.
+                vp.set_dims(items.len(), height);
+            }
+        }
+        KeyCode::Char('s') => return EditorOutcome::Commit(list_display(items)),
+        KeyCode::Esc => return EditorOutcome::Cancel,
+        // Swallow everything else so global keys (q, ?) don't fire.
+        _ => {}
+    }
+    EditorOutcome::Continue
+}
+
+/// The editable parts of a checklist picker (form `GroupPickerState` or
+/// popup `DirectGroupPickerState`).
+struct PickerParts<'a> {
+    available: &'a mut Vec<String>,
+    checked: &'a mut Vec<bool>,
+    vp: &'a mut Viewport,
+    add_input: &'a mut InputField,
+    add_input_active: &'a mut bool,
+    allow_add: bool,
+}
+
+trait PickerFields {
+    fn parts(&mut self) -> PickerParts<'_>;
+}
+
+impl PickerFields for GroupPickerState {
+    fn parts(&mut self) -> PickerParts<'_> {
+        PickerParts {
+            available: &mut self.available,
+            checked: &mut self.checked,
+            vp: &mut self.vp,
+            add_input: &mut self.add_input,
+            add_input_active: &mut self.add_input_active,
+            allow_add: self.allow_add,
+        }
+    }
+}
+
+impl PickerFields for DirectGroupPickerState {
+    fn parts(&mut self) -> PickerParts<'_> {
+        PickerParts {
+            available: &mut self.available,
+            checked: &mut self.checked,
+            vp: &mut self.vp,
+            add_input: &mut self.add_input,
+            add_input_active: &mut self.add_input_active,
+            allow_add: self.allow_add,
+        }
+    }
+}
+
+/// Keys of a checklist picker: move, Space toggle, `a` add (when allowed),
+/// Enter/`s` apply, Esc cancel (Esc while adding cancels only the new entry).
+fn picker_key(picker: &mut impl PickerFields, key: KeyEvent, height: usize) -> EditorOutcome {
+    let p = picker.parts();
+    p.vp.set_dims(p.available.len(), height);
+    if *p.add_input_active {
+        if key.code == KeyCode::Esc {
+            *p.add_input = InputField::new("");
+            *p.add_input_active = false;
+            return EditorOutcome::Continue;
+        }
+        p.add_input.handle_key(key);
+        if p.add_input.mode == InputMode::Normal {
+            apply_add_input_to_picker(&p.add_input.value, p.available, p.checked, p.vp);
+            *p.add_input = InputField::new("");
+            *p.add_input_active = false;
+        }
+        return EditorOutcome::Continue;
+    }
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => p.vp.move_up(),
+        KeyCode::Down | KeyCode::Char('j') => p.vp.move_down(),
+        KeyCode::PageUp => p.vp.page_up(),
+        KeyCode::PageDown => p.vp.page_down(),
+        KeyCode::Home => p.vp.home(),
+        KeyCode::End => p.vp.end(),
+        KeyCode::Char(' ') => {
+            if let Some(c) = p.checked.get_mut(p.vp.selected) {
+                *c = !*c;
+            }
+        }
+        KeyCode::Char('a') if p.allow_add => {
+            *p.add_input = InputField::new("");
+            p.add_input.activate();
+            *p.add_input_active = true;
+        }
+        KeyCode::Enter | KeyCode::Char('s') => {
+            let selected: Vec<String> = p
+                .available
+                .iter()
+                .zip(p.checked.iter())
+                .filter(|(_, &c)| c)
+                .map(|(g, _)| g.clone())
+                .collect();
+            return EditorOutcome::Commit(list_display(&selected));
+        }
+        KeyCode::Esc => return EditorOutcome::Cancel,
+        _ => {}
+    }
+    EditorOutcome::Continue
+}
 
 fn apply_add_input_to_picker(
     value: &str,
@@ -3022,7 +2901,6 @@ mod tests {
                 vp: Viewport::new(),
                 input: InputField::new(""),
                 input_active: false,
-                closing: false,
             });
         } else {
             panic!("entry_form not set");
@@ -3344,7 +3222,6 @@ mod tests {
                 vp: Viewport::new(),
                 input_active: false,
                 input: InputField::new(""),
-                closing: false,
             };
             ve.vp.set_dims(3, 0);
             ve.vp.move_down();
@@ -3416,7 +3293,6 @@ mod tests {
                 vp: Viewport::new(),
                 input_active: false,
                 input: InputField::new(""),
-                closing: false,
             };
             ve.vp.set_dims(2, 0);
             ve.vp.move_down();
@@ -3431,7 +3307,6 @@ mod tests {
                 vp: Viewport::new(),
                 input_active: false,
                 input: InputField::new(""),
-                closing: false,
             });
         }
         state.restore_selection(snap, &config);
@@ -3852,5 +3727,136 @@ mod tests {
         );
         assert!(state.pending_error.is_some());
         assert_eq!(config.settings.default_timeout, orig_timeout);
+    }
+
+    fn press(state: &mut ConfigTabState, config: &mut AppConfig, code: KeyCode) {
+        state.handle_key(
+            KeyEvent::new(code, crossterm::event::KeyModifiers::NONE),
+            config,
+        );
+    }
+
+    /// B46: the entry-form vec editor and the direct popup obey one rule —
+    /// Esc discards the edit, `s` saves it.
+    #[test]
+    fn vec_editors_share_esc_discards_s_saves() {
+        // Entry form (sync `paths`).
+        let mut config = AppConfig::default();
+        config.sync.push(crate::config::schema::SyncEntry {
+            name: Some("t".to_string()),
+            id: "sync-t".to_string(),
+            paths: vec!["a".to_string()],
+            recursive: false,
+            mode: None,
+            propagate_deletes: None,
+            source: None,
+        });
+        let open_form = |state: &mut ConfigTabState, config: &AppConfig| {
+            let mut form = EntryFormState::new_sync(&config.sync[0]);
+            let idx = form.fields.iter().position(|f| f.key == "paths").unwrap();
+            form.vec_editor = Some(VecEditorState {
+                field_index: idx,
+                items: vec!["a".to_string()],
+                vp: Viewport::new(),
+                input: InputField::new(""),
+                input_active: false,
+            });
+            state.entry_form = Some(form);
+            idx
+        };
+        let mut state = ConfigTabState::new(&config, None);
+        let idx = open_form(&mut state, &config);
+        press(&mut state, &mut config, KeyCode::Char('d'));
+        press(&mut state, &mut config, KeyCode::Esc);
+        let form = state.entry_form.as_ref().unwrap();
+        assert!(form.vec_editor.is_none(), "Esc closes the editor");
+        assert_eq!(form.fields[idx].display_value, "[a]", "Esc discards");
+        assert!(!form.dirty);
+
+        let idx = open_form(&mut state, &config);
+        press(&mut state, &mut config, KeyCode::Char('d'));
+        press(&mut state, &mut config, KeyCode::Char('s'));
+        let form = state.entry_form.as_ref().unwrap();
+        assert!(form.vec_editor.is_none());
+        assert_eq!(form.fields[idx].display_value, "(none)", "s saves");
+        assert!(form.dirty);
+
+        // Direct popup (settings `skipped_hosts`).
+        let mut config = AppConfig::default();
+        config.settings.skipped_hosts = vec!["x".to_string()];
+        let mut state = ConfigTabState::new(&config, None);
+        let skipped_idx = settings_fields(&config.settings)
+            .iter()
+            .position(|f| f.key == "skipped_hosts")
+            .unwrap();
+        let open_direct = |state: &mut ConfigTabState| {
+            state.direct_vec_editor = Some(DirectVecEditorState {
+                field_index: skipped_idx,
+                sidebar_item: SidebarItem::SectionSettings,
+                field_key: "skipped_hosts".to_string(),
+                items: vec!["x".to_string()],
+                vp: Viewport::new(),
+                input: InputField::new(""),
+                input_active: false,
+            });
+        };
+        open_direct(&mut state);
+        press(&mut state, &mut config, KeyCode::Char('d'));
+        press(&mut state, &mut config, KeyCode::Esc);
+        assert!(state.direct_vec_editor.is_none());
+        assert_eq!(
+            config.settings.skipped_hosts,
+            vec!["x".to_string()],
+            "Esc discards"
+        );
+        open_direct(&mut state);
+        press(&mut state, &mut config, KeyCode::Char('d'));
+        press(&mut state, &mut config, KeyCode::Char('s'));
+        assert!(state.direct_vec_editor.is_none());
+        assert!(config.settings.skipped_hosts.is_empty(), "s saves");
+    }
+
+    /// B46: a form taller than the popup scrolls with a sticky cursor instead
+    /// of pinning the selected row to the top.
+    #[test]
+    fn entry_form_scrolls_with_sticky_cursor() {
+        let mut config = AppConfig::default();
+        let mut state = ConfigTabState::new(&config, None);
+        state.entry_form = Some(EntryFormState::new_sync(
+            &crate::config::schema::SyncEntry {
+                name: Some("t".to_string()),
+                id: "sync-t".to_string(),
+                paths: vec![],
+                recursive: false,
+                mode: None,
+                propagate_deletes: None,
+                source: None,
+            },
+        ));
+        let fields = state.entry_form.as_ref().unwrap().fields.len();
+        // A terminal so short the form's list gets fewer rows than fields.
+        let mut term = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let theme = Theme::default_palette();
+        term.draw(|f| state.render(Rect::new(0, 0, 80, 12), f, &theme, &config, None, false))
+            .unwrap();
+        let rows = state.form_list_height.get();
+        assert!(rows > 0 && rows < fields, "rows={rows} fields={fields}");
+        for _ in 0..fields {
+            press(&mut state, &mut config, KeyCode::Down);
+        }
+        let vp = &state.entry_form.as_ref().unwrap().field_vp;
+        assert_eq!(vp.selected, fields - 1);
+        assert_eq!(
+            vp.scroll_y,
+            fields - rows,
+            "cursor sticks to the last visible row"
+        );
+        press(&mut state, &mut config, KeyCode::Up);
+        let vp = &state.entry_form.as_ref().unwrap().field_vp;
+        assert_eq!(
+            vp.scroll_y,
+            fields - rows,
+            "moving up inside the window does not scroll"
+        );
     }
 }
