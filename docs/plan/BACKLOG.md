@@ -80,7 +80,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B38 | Recursive `cp` silently skipped symlinks and unreadable entries | HASH-B38 — `walk_files` warns on symlinks/special files, errors on unreadable entries; `plan_transfers` checks single files; tests; real binary: symlink warned, chmod 000 file → exit 1 |
+| B38 | Recursive `cp` silently skipped symlinks and unreadable entries | `fe2d12e` — `walk_files` warns on symlinks/special files, errors on unreadable entries; `plan_transfers` checks single files; tests; real binary: symlink warned, chmod 000 file → exit 1 |
 | B59 | PowerShell swap collected but never displayable | `19c79a7` — `parser::parse_ps_swap` + shared `ps_swap_totals` used by `extract_metric_value` (legacy raw snapshots too); tests |
 | B68 | TUI tests resolved the real state dir via `App::new` and could run the legacy migration | `aa6cbcd` — `App::from_context_with_state_path`; `minimal_app` uses a per-process temp dir; test asserts the explicit path is used |
 | B51 | `maybe_reload_checkout` cleared `db_stale` when the snapshot fetch failed | `7019a32` — `db_stale = false` only on `Ok`; test `checkout_reload_keeps_db_stale_on_fetch_error` |
