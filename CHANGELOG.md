@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- docs: add the living backlog `docs/plan/BACKLOG.md` (19 open items consolidated from frozen records plus code defects found by this audit) and the audit record `docs/audit/2026-09-25-documentation-audit.md`; index both.
 - docs: correct reference docs, README, and AGENTS.md against the code — TUI is built by default (headless is `--no-default-features`); fix invented TUI fields/keys/probe catalog/operation order, CLI exit codes and flag matrix, transport/sync/state claims, and README config example; add nine glossary terms; contributor rules live only in `AGENTS.md`; `.github/copilot-instructions.md` is now a pointer.
 - docs: repair dead paths left by the layout migration (ADR 0002, 2026-05-21 readme-analysis audit, v1.7.0 changelog entry, 13 `src/` doc comments citing `docs/tui_reconstruct_plan.md`); mark ADR 0003 `Implemented (2026-09-02)`; drop the false "machine-checked" claim in `docs/reference/README.md`; replace a line-number citation in `state-schema.md`; fix the `SessionPool` glossary entry format; normalize the 2026-09-02 changelog sub-heading.
 

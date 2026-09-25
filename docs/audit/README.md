@@ -20,3 +20,4 @@ None.
 | 2026-05-21 | [2026-05-21-readme-analysis.md](2026-05-21-readme-analysis.md) | Superseded by [../reference/README.md](../reference/README.md) |
 | 2026-05-26 | [2026-05-26-project-outline.md](2026-05-26-project-outline.md) | Superseded by [../reference/README.md](../reference/README.md) |
 | 2026-07-18 | [2026-07-18-codebase-audit.md](2026-07-18-codebase-audit.md) | Resolved (2026-07-20) |
+| 2026-09-25 | [2026-09-25-documentation-audit.md](2026-09-25-documentation-audit.md) | Resolved (2026-09-25) |
