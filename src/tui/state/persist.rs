@@ -20,6 +20,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::schema::{AppConfig, ShellType};
 
+/// Deserialize an enum field, falling back to its `Default` value if the persisted
+/// value is not a recognized variant. This prevents one unknown enum value from
+/// invalidating the entire state file (B49).
+fn deserialize_enum_or_default<'de, D, T>(deserializer: D) -> std::result::Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let v = toml::Value::deserialize(deserializer)?;
+    Ok(v.try_into::<T>().unwrap_or_default())
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TuiPersistedState {
@@ -31,6 +43,7 @@ pub struct TuiPersistedState {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TuiSection {
+    #[serde(default, deserialize_with = "deserialize_enum_or_default")]
     pub active_tab: ActiveTab,
 }
 
@@ -64,10 +77,12 @@ impl ActiveTab {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TargetFilterState {
+    #[serde(default, deserialize_with = "deserialize_enum_or_default")]
     pub mode: TargetFilterMode,
     pub groups: Vec<String>,
     pub hosts: Vec<String>,
     pub skip: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_enum_or_default")]
     pub shell: ShellMode,
     pub serial: bool,
     pub timeout: u64,
@@ -159,6 +174,7 @@ impl std::fmt::Display for ShellMode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OperateState {
+    #[serde(default, deserialize_with = "deserialize_enum_or_default")]
     pub operation: OperationKind,
     /// Whether to use sudo when running remote commands (Run/Exec operations).
     pub run_sudo: bool,
@@ -168,6 +184,7 @@ pub struct OperateState {
     /// Deprecated: the Sync tab no longer has a config/ad-hoc mode toggle
     /// (config entries and ad-hoc paths are now used together). Retained so
     /// older state files still deserialize; no longer read.
+    #[serde(default, deserialize_with = "deserialize_enum_or_default")]
     pub sync_mode: SyncMode,
     /// Operate tab: shared dry-run toggle (applies to Check/Run/Exec/Sync).
     pub dry_run: bool,
@@ -180,6 +197,7 @@ pub struct OperateState {
     /// Exec tab: whether to do a dry run.
     pub exec_dry_run: bool,
     /// View tab: selected view operation (checkout/list/log).
+    #[serde(default, deserialize_with = "deserialize_enum_or_default")]
     pub view_operation: ViewOperationKind,
     /// View tab: show combined (per-metric latest) instead of single-snapshot checkout.
     pub checkout_combined: bool,
@@ -531,6 +549,55 @@ log_last = 42
         let state: TuiPersistedState = toml::from_str(toml_str).unwrap();
         assert!(state.operate.checkout_combined);
         assert_eq!(state.operate.log_last, 42);
+    }
+
+    #[test]
+    fn unknown_enum_value_falls_back_per_field_while_other_fields_survive() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("state.toml");
+        let content = r#"
+[tui_state]
+active_tab = "FutureTabDoesNotExist"
+
+[target_filter]
+mode = "NoSuchTargetMode"
+groups = ["web", "db"]
+hosts = ["srv1"]
+skip = ["srv2"]
+shell = "fish"
+serial = true
+timeout = 75
+
+[operate]
+operation = "RebootFleet"
+run_sudo = true
+exec_keep = true
+sync_mode = "CloudSync"
+view_operation = "ClusterView"
+log_last = 99
+run_command = "uptime -p"
+"#;
+        std::fs::write(&state_path, content).unwrap();
+        let loaded = load(&state_path);
+
+        // Unknown enums fall back to their default values:
+        assert_eq!(loaded.tui_state.active_tab, ActiveTab::View);
+        assert_eq!(loaded.target_filter.mode, TargetFilterMode::All);
+        assert_eq!(loaded.target_filter.shell, ShellMode::Sh);
+        assert_eq!(loaded.operate.operation, OperationKind::Check);
+        assert_eq!(loaded.operate.sync_mode, SyncMode::ConfigEntries);
+        assert_eq!(loaded.operate.view_operation, ViewOperationKind::Checkout);
+
+        // Crucially: ALL other fields survived intact instead of being wiped!
+        assert_eq!(loaded.target_filter.groups, vec!["web", "db"]);
+        assert_eq!(loaded.target_filter.hosts, vec!["srv1"]);
+        assert_eq!(loaded.target_filter.skip, vec!["srv2"]);
+        assert!(loaded.target_filter.serial);
+        assert_eq!(loaded.target_filter.timeout, 75);
+        assert!(loaded.operate.run_sudo);
+        assert!(loaded.operate.exec_keep);
+        assert_eq!(loaded.operate.log_last, 99);
+        assert_eq!(loaded.operate.run_command, "uptime -p");
     }
 
     #[test]
