@@ -50,8 +50,7 @@ anyhow = "1"
 async-trait = "0.1"
 
 # SSH (russh migration)
-russh = "0.44"
-russh-keys = "0.44"
+russh = "0.63"
 russh-sftp = "2.1"
 
 # Output

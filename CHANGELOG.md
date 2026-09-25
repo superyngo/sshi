@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix(deps): upgrade russh 0.44 → 0.63 (russh-keys now `russh::keys`), clearing RUSTSEC-2026-0153/0154; RSA keys now sign with `rsa-sha2-*`, and SSH-certificate host keys are refused explicitly (B57).
 - feat!: config and state directories follow `XDG_CONFIG_HOME`/`XDG_STATE_HOME`, then the platform default (macOS now `~/Library/Application Support/sshi`); on first run the old `~/.config/sshi` and `~/.local/state/sshi` are copied forward (originals kept) along with saved TUI state (B44).
 - fix: `sync` reports an unreachable host under its config name and marks it failed in `--out` reports and the exit code, even when `name` differs from `ssh_host` (previously reported as online, exit 0) (B63).
 - feat!: `check`, `run`, `exec`, `cp` and `sync` exit `3` when some hosts fail and `4` when all fail (previously always `0`); decided in ADR 0004 (B35). Scripts that relied on exit `0` after host failures must now handle `3`/`4`.

@@ -42,10 +42,11 @@ pub struct RusshSessionPool {
 
 Server public key verification is implemented in `SshHandler::check_server_key` (`src/host/session_pool.rs`), which implements `russh::client::Handler`:
 
-- Verification checks the host key against `~/.ssh/known_hosts` using `russh_keys::check_known_hosts_path(&self.hostname, self.port, server_public_key, &known_hosts_path)`.
+- Verification checks the host key against `~/.ssh/known_hosts` using `russh::keys::check_known_hosts_path(&self.hostname, self.port, server_public_key, &known_hosts_path)`.
 - **Missing File**: If `~/.ssh/known_hosts` does not exist, connection bails: `Unknown host key for <host>:<port> — run sshi init to add the host to known_hosts`.
 - **Unknown Key**: If the key is not present in `known_hosts` (`Ok(false)`), connection bails: `Unknown host key for <host>:<port> — run sshi init to accept the key first`.
-- **Key Mismatch / MITM Protection**: If the key differs from the stored record (`Err(russh_keys::Error::KeyChanged { line })`), connection bails with a high-visibility warning: `HOST KEY MISMATCH for <host>:<port> at line <line> — possible man-in-the-middle attack`.
+- **Certificates**: `check_server_key` receives a `PublicKeyOrCertificate`; a host that presents an SSH certificate is refused (`certificate host keys are not supported`).
+- **Key Mismatch / MITM Protection**: If the key differs from the stored record (`Err(russh::keys::Error::KeyChanged { line })`), connection bails with a high-visibility warning: `HOST KEY MISMATCH for <host>:<port> at line <line> — possible man-in-the-middle attack`.
 - **Unhashed Entries Requirement**: `russh` matches host keys by plain string comparison (`host` or `[host]:port`). Hashed entries (`|1|...`) produced by `ssh-keyscan -H` are not matched; `sshi init` writes unhashed entries specifically to maintain compatibility with `russh`.
 
 ### Command Execution (`exec_on_handle`)
@@ -157,11 +158,11 @@ Authentication is orchestrated by `authenticate()` in `src/host/auth.rs`.
 
 For each connection, credentials are evaluated in the following sequence:
 
-1. **Unencrypted Public Keys**: Iterates over all configured `identity_files` in order, attempting `russh_keys::load_secret_key(path, None)` and `handle.authenticate_publickey`. Unencrypted keys authenticate immediately without prompting.
+1. **Unencrypted Public Keys**: Iterates over all configured `identity_files` in order, attempting `russh::keys::load_secret_key(path, None)` and `handle.authenticate_publickey` (wrapped in `PrivateKeyWithHashAlg` with the server's `best_supported_rsa_hash`, so RSA keys sign with `rsa-sha2-*`). Unencrypted keys authenticate immediately without prompting.
 2. **Encrypted Public Keys with Passphrase**: For keys that failed unencrypted loading, attempts authentication using passphrases:
    - Checks `PassphraseCache` (`HashMap<PathBuf, SecretString>`), an in-memory process-scoped cache.
    - If uncached, prompts the user for the passphrase and caches the resulting `SecretString`.
-   - Calls `russh_keys::load_secret_key(path, Some(passphrase))` and `handle.authenticate_publickey`.
+   - Calls `russh::keys::load_secret_key(path, Some(passphrase))` and `handle.authenticate_publickey`.
 3. **Password Fallback**: If all identity files fail and `IdentitiesOnly` is not enabled in SSH config (`!identities_only`), prompts the user with `<user>@<host> password: ` and calls `handle.authenticate_password`.
 
 If all available methods are exhausted without success, authentication fails with `All authentication methods exhausted for user '<user>'`.
@@ -204,8 +205,8 @@ The detected `ShellType` controls temporary directory paths (`temp_dir`: `/tmp`,
 | Subsystem / Operation | Implementation Type | Component | Description |
 |---|---|---|---|
 | **Session & Connection Multiplexing** | Pure-Rust (`russh`) | `src/host/session_pool.rs` | TCP connect, session caching, keepalive, and ProxyJump tunnel stream |
-| **Server Host Key Verification** | Pure-Rust (`russh_keys`) | `src/host/session_pool.rs` | `known_hosts` checking and MITM mismatch detection |
-| **Authentication Chain** | Pure-Rust (`russh`, `russh_keys`) | `src/host/auth.rs` | Public key, passphrase caching, and password fallback |
+| **Server Host Key Verification** | Pure-Rust (`russh::keys`) | `src/host/session_pool.rs` | `known_hosts` checking and MITM mismatch detection |
+| **Authentication Chain** | Pure-Rust (`russh`, `russh::keys`) | `src/host/auth.rs` | Public key, passphrase caching, and password fallback |
 | **Command Execution (`check`, `run`, `exec`)** | Pure-Rust (`russh`) | `src/host/session_pool.rs` | Channel session open, command exec, stdout/stderr/exit code capture |
 | **File Transfer (`sync`, `cp`)** | Pure-Rust (`russh-sftp`) | `src/host/sftp.rs` | SFTP subsystem session, directory creation, streaming file I/O |
 | **Shell Detection** | Pure-Rust (`russh`) | `src/host/shell.rs` | Remote probe execution via session channel |

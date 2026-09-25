@@ -66,12 +66,12 @@ this file existed are recorded in those source documents, not here.
 | B54 | 2026-09-25 | 2026-09-25 | P3 | Parallel implementations: TUI export vs CLI report builders (checkout `task` differs), `resolve_target_names` vs `Context::resolve_hosts`, `Summary`/`SyncSummary` printing, Operate/View target rows, `parse_ssh_config`/`load_ssh_config` | `src/tui/app.rs`; `src/output/summary.rs`; `src/tui/tabs/{operate_tab,view_tab}.rs`; `src/config/ssh_config.rs` | M | Each pair reduced to one implementation; TUI and CLI checkout exports byte-identical |
 | B55 | 2026-09-25 | 2026-09-25 | P3 | Dead code and misleading comments (list in the 2026-09-25 code audit) | `src/tui/tabs/operate_schema.rs`; `src/commands/sync/collect.rs`; `src/tui/event.rs`; `src/commands/init/report.rs`; `src/tui/async_bridge.rs`; `src/host/sftp.rs`; `src/config/app.rs` | S | Items removed or comments match code |
 | B56 | 2026-09-25 | 2026-09-25 | P2 | No CI since `83aea4d`; headless build warns (unused imports in `commands::checkout`) | `.github/workflows/`; `src/commands/checkout/mod.rs` | S | CI runs fmt, clippy `-D warnings` and tests for default and `--no-default-features` |
-| B57 | 2026-09-25 | 2026-09-25 | P2 | `cargo audit`: russh 0.44 (RUSTSEC-2026-0153/0154), rsa Marvin, unsound anyhow/lru, unmaintained paste/number_prefix, yanked spin | `Cargo.toml`, `Cargo.lock` | L | **Decided 2026-09-25: schedule anytime.** `cargo audit` clean or each remaining advisory recorded as accepted |
 | B58 | 2026-09-25 | 2026-09-25 | P3 | `migrate` rewrites `user_version` downward under an older binary | `src/state/db.rs` `migrate` | S | Newer schema version refused or left untouched |
 | B59 | 2026-09-25 | 2026-09-25 | P3 | PowerShell swap collected but never displayable | `src/commands/checkout/mod.rs` `extract_metric_value`; `src/metrics/parser.rs` | S | Swap shows for a PowerShell host |
 | B60 | 2026-09-25 | 2026-09-25 | P3 | `output::printer` writes ANSI colours with no TTY/`NO_COLOR` gate | `src/output/printer.rs` `print_host_line` | S | Piped output has no escape codes; `NO_COLOR` honoured |
 | B61 | 2026-09-25 | 2026-09-25 | P3 | Enums/catalogs re-spelled: shell strings in Config tab, `ShellMode` label ×3, check catalog ×2, script-extension mapping ×2 | `src/tui/tabs/config_tab.rs` `SHELL_VARIANTS`; `src/tui/tabs/config_schema.rs` `CHECK_ENABLED_OPTIONS`; `src/config/schema.rs` `AppConfig::default`; `src/commands/exec.rs` | S | Each derived from one source |
 | B62 | 2026-09-25 | 2026-09-25 | P3 | Sync "source does not have path" lines call `printer::print_host_line("skip", &source, …)` with host and status swapped, so the host lands in the status slot and renders as a `·` with no name (found while fixing B25) | `src/commands/sync/mod.rs` fixed-source skip branches | S | Source-skip lines render `⊘` and name the source host |
+| B64 | 2026-09-25 | 2026-09-25 | P3 | `cargo audit` after B57: rsa Marvin RUSTSEC-2023-0071 (no upstream fix; via russh/ssh-key), anyhow 1.0.102 unsound `downcast_mut` RUSTSEC-2026-0190 (not called by sshi), lru RUSTSEC-2026-0002/0253 + paste RUSTSEC-2024-0436 (via ratatui 0.29), number_prefix RUSTSEC-2025-0119 (via indicatif 0.17) | `Cargo.toml` ratatui, indicatif | M | ratatui and indicatif upgraded; rsa and anyhow recorded as accepted until upstream fixes |
 
 ## Pending verification
 
@@ -107,6 +107,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B57 | `cargo audit`: russh 0.44 advisories (RUSTSEC-2026-0153/0154), yanked spin | HASH-B57 — russh 0.63 (russh-keys folded into `russh::keys`); remaining advisories moved to B64 |
 | B44 | `XDG_CONFIG_HOME`/`XDG_STATE_HOME` ignored; macOS used hard-coded `~/.config` / `~/.local/state` | `684a99d` — `util::app_dir`: XDG → platform default; legacy dirs copied forward once |
 | B63 | Sync report marked a failed host `online` when its `name` differed from `ssh_host` (pool keys failures by `ssh_host`) | `a2072e4` — `sync::by_host_name` re-keys failures by config name |
 | B35 | Exit status was 0 when every host failed | `dae7226` — ADR 0004: `3` some hosts failed, `4` all failed |

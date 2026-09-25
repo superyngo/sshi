@@ -44,7 +44,7 @@ fn init_tracing(verbose: bool, silent: bool) -> Option<sshi::tui::log_layer::Log
     } else if verbose {
         EnvFilter::new("debug")
     } else {
-        EnvFilter::new("russh=error,russh_keys=error,ssh_key=error,zeroize=error,info")
+        EnvFilter::new("russh=error,ssh_key=error,zeroize=error,info")
     };
 
     if silent {
@@ -77,7 +77,7 @@ fn init_tracing(verbose: bool, _silent: bool) {
     } else if verbose {
         EnvFilter::new("debug")
     } else {
-        EnvFilter::new("russh=error,russh_keys=error,ssh_key=error,zeroize=error,info")
+        EnvFilter::new("russh=error,ssh_key=error,zeroize=error,info")
     };
 
     fmt().with_env_filter(filter).with_target(false).init();
@@ -233,6 +233,6 @@ mod tests {
     #[test]
     fn test_tracing_filter_builds() {
         use tracing_subscriber::EnvFilter;
-        let _ = EnvFilter::new("russh=error,russh_keys=error,ssh_key=error,zeroize=error,info");
+        let _ = EnvFilter::new("russh=error,ssh_key=error,zeroize=error,info");
     }
 }

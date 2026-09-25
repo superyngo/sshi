@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use russh::client::Handle;
-use russh_keys::key::KeyPair;
+use russh::keys::{PrivateKey, PrivateKeyWithHashAlg};
 use zeroize::Zeroize;
 
 use super::session_pool::SshHandler;
@@ -97,6 +97,7 @@ pub async fn authenticate(
             .authenticate_password(user, password.as_str())
             .await
             .context("Password authentication failed")?
+            .success()
         {
             return Ok(());
         }
@@ -137,24 +138,33 @@ async fn try_pubkey(
     key_path: &Path,
     passphrase: Option<&str>,
 ) -> Result<bool> {
-    let key_pair: KeyPair = match passphrase {
-        Some(pp) if !pp.is_empty() => match russh_keys::load_secret_key(key_path, Some(pp)) {
+    let key_pair: PrivateKey = match passphrase {
+        Some(pp) if !pp.is_empty() => match russh::keys::load_secret_key(key_path, Some(pp)) {
             Ok(kp) => kp,
             Err(_) => return Ok(false),
         },
         _ => {
-            match russh_keys::load_secret_key(key_path, None) {
+            match russh::keys::load_secret_key(key_path, None) {
                 Ok(kp) => kp,
                 Err(_) => return Ok(false), // encrypted key; will retry with passphrase in step 2
             }
         }
     };
 
+    // RSA keys need the server's preferred SHA-2 signature hash (rsa-sha2-*).
+    let hash_alg = handle
+        .best_supported_rsa_hash()
+        .await
+        .context("Public key authentication error")?
+        .flatten();
     let authed = handle
-        .authenticate_publickey(user, Arc::new(key_pair))
+        .authenticate_publickey(
+            user,
+            PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
+        )
         .await
         .context("Public key authentication error")?;
-    Ok(authed)
+    Ok(authed.success())
 }
 
 #[cfg(test)]

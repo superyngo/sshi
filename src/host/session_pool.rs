@@ -10,7 +10,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
 use russh::client::{self, Handle};
-use russh_keys::key::PublicKey;
+use russh::keys::PublicKeyOrCertificate;
 use russh_sftp::client::SftpSession;
 
 use super::auth::{authenticate, PassphraseCache, SshAuthSender};
@@ -76,23 +76,19 @@ pub struct SshHandler {
 impl client::Handler for SshHandler {
     type Error = anyhow::Error;
 
-    #[allow(clippy::manual_async_fn)]
-    fn check_server_key<'life0, 'life1, 'async_trait>(
-        &'life0 mut self,
-        server_public_key: &'life1 PublicKey,
-    ) -> ::core::pin::Pin<
-        Box<
-            dyn ::core::future::Future<Output = Result<bool, Self::Error>>
-                + ::core::marker::Send
-                + 'async_trait,
-        >,
-    >
-    where
-        'life0: 'async_trait,
-        'life1: 'async_trait,
-        Self: 'async_trait,
-    {
-        Box::pin(async move {
+    async fn check_server_key(
+        &mut self,
+        server_key: &PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        {
+            let server_public_key = match server_key {
+                PublicKeyOrCertificate::PublicKey { key, .. } => key,
+                PublicKeyOrCertificate::Certificate(_) => bail!(
+                    "Host {}:{} presented an SSH certificate; certificate host keys are not supported",
+                    self.hostname,
+                    self.port
+                ),
+            };
             let known_hosts_path = dirs::home_dir()
                 .context("Cannot determine home directory")?
                 .join(".ssh")
@@ -106,7 +102,7 @@ impl client::Handler for SshHandler {
                 );
             }
 
-            match russh_keys::check_known_hosts_path(
+            match russh::keys::check_known_hosts_path(
                 &self.hostname,
                 self.port,
                 server_public_key,
@@ -118,7 +114,7 @@ impl client::Handler for SshHandler {
                     self.hostname,
                     self.port
                 ),
-                Err(russh_keys::Error::KeyChanged { line }) => bail!(
+                Err(russh::keys::Error::KeyChanged { line }) => bail!(
                     "HOST KEY MISMATCH for {}:{} at line {} — possible man-in-the-middle attack",
                     self.hostname,
                     self.port,
@@ -126,7 +122,7 @@ impl client::Handler for SshHandler {
                 ),
                 Err(e) => Err(e.into()),
             }
-        })
+        }
     }
 }
 
