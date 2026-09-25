@@ -434,6 +434,68 @@ async fn run_recursive_entries_empty_returns_noop() {
     assert_eq!(summary.files_synced, 0);
 }
 
+/// B66: a recursive entry with no `source` is expanded on every scoped host
+/// and the file lists are unioned — the directory itself is never synced as
+/// a file, and files present on only one host reach the other.
+#[tokio::test]
+async fn run_recursive_entries_without_source_unions_expansions() {
+    let ctx = build_ctx();
+    let hosts = vec![sh_host("host-a"), sh_host("host-b")];
+    let ok = |stdout: &str| RemoteOutput {
+        stdout: stdout.to_string(),
+        stderr: String::new(),
+        exit_code: Some(0),
+        success: true,
+    };
+    let mock = Arc::new(
+        MockSessionPool::new(vec!["host-a".into(), "host-b".into()])
+            .with_exec("host-a", "---PATH:", ok("---PATH:~/tree\nDIR\n~/tree/a\n"))
+            .with_exec("host-b", "---PATH:", ok("---PATH:~/tree\nDIR\n~/tree/b\n"))
+            .with_exec("host-a", "'tree/a'", ok("100 1\naaaa\n"))
+            .with_exec("host-a", "'tree/b'", ok(""))
+            .with_exec("host-b", "'tree/a'", ok(""))
+            .with_exec("host-b", "'tree/b'", ok("200 1\nbbbb\n")),
+    );
+    let sessions: Arc<dyn SessionPool> = mock.clone();
+    let entry = crate::config::schema::SyncEntry {
+        name: Some("tree".into()),
+        id: String::new(),
+        paths: vec!["~/tree".into()],
+        recursive: true,
+        mode: None,
+        propagate_deletes: None,
+        source: None,
+    };
+    let scope = ["host-a".to_string(), "host-b".to_string()].into();
+    let mut summary = SyncSummary::default();
+
+    run_recursive_entries(
+        &ctx,
+        &hosts,
+        &[(&entry, scope, None)],
+        &sessions,
+        false,
+        true,
+        "test-group",
+        false,
+        &mut summary,
+    )
+    .await
+    .unwrap();
+
+    let mut uploads: Vec<(String, String)> =
+        mock.uploads().into_iter().map(|(h, _, p)| (h, p)).collect();
+    uploads.sort();
+    assert_eq!(
+        uploads,
+        vec![
+            ("host-a".to_string(), "~/tree/b".to_string()),
+            ("host-b".to_string(), "~/tree/a".to_string()),
+        ]
+    );
+    assert_eq!(summary.files_synced, 2);
+}
+
 /// `sync_inner` early-return: 2 hosts in config but NO paths/names supplied
 /// → "No sync paths resolved" branch (no SSH attempted).
 #[tokio::test]

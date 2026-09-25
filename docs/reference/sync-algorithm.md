@@ -229,6 +229,6 @@ After successful distribution:
 
 Entries configured with `recursive = true` bypass the batched collect/decide/distribute pipeline. In Phase 4 (`commands::sync::run_recursive_entries`):
 
-1. **Directory Expansion**: Expands directory contents on the source host (or computes the union of expanded paths across reachable hosts when no fixed source is specified).
+1. **Directory Expansion**: Expands directory contents on the source host (or, when no fixed source is specified, expands on every host in the entry's scope in parallel and takes the union via `union_dir_expansions`, so a file present on any host is synced; a directory empty on every host is skipped, and a path that is a directory nowhere is synced as a single file).
 2. **Per-File Synchronization**: Executes `sync_path_across` sequentially for each expanded file path, collecting metadata (`collect_file_metadata`), making individual `SyncDecision` evaluations, and executing `distribute_pooled`.
 3. **Recording**: Each synchronized file adds its `sync_state` / `operation_log` rows to a `SyncRows` buffer; `flush_sync_rows` writes them in one transaction after the last recursive entry (or before returning an error, so completed transfers are still recorded). The batch path uses the same helper. Progress updates still go to the caller's `ProgressSink` per file.

@@ -881,7 +881,43 @@ async fn run_recursive_entries(
                 entry.paths.clone()
             }
         } else {
-            entry.paths.clone()
+            // B66: no fixed source — expand on every scoped host and union the
+            // file lists (same as the non-recursive `expand_paths` path).
+            let semaphore = Arc::new(Semaphore::new(ctx.concurrency()));
+            let mut set = tokio::task::JoinSet::new();
+            for host in &scoped_hosts {
+                let host = Arc::clone(host);
+                let paths = entry.paths.clone();
+                let sessions = Arc::clone(sessions);
+                let timeout = ctx.timeout;
+                let sem = semaphore.clone();
+                set.spawn(async move {
+                    let _permit = sem.acquire().await.unwrap();
+                    expand_directory_paths(&host, &paths, true, timeout, &sessions).await
+                });
+            }
+            let mut host_results: Vec<HashMap<String, DirExpandResult>> = Vec::new();
+            while let Some(joined) = set.join_next().await {
+                match joined {
+                    Ok(Ok(expansions)) => host_results.push(expansions),
+                    Ok(Err(e)) => tracing::warn!(error = %e, "Failed to expand directories"),
+                    Err(e) => tracing::warn!(error = %e, "Directory expand task panicked"),
+                }
+            }
+            let dirs_expanded = union_dir_expansions(host_results);
+            let mut paths = Vec::new();
+            for p in &entry.paths {
+                match dirs_expanded.get(p) {
+                    Some(files) if files.is_empty() => {
+                        if verbose {
+                            println!("  {} (empty directory on all hosts, skipping)", p);
+                        }
+                    }
+                    Some(files) => paths.extend(files.iter().cloned()),
+                    None => paths.push(p.clone()),
+                }
+            }
+            paths
         };
 
         for path in &expanded_paths {
