@@ -197,7 +197,7 @@ SSH host aliases and connection parameters are parsed directly from `~/.ssh/conf
 
 ### Parser implementation
 
-- **Hand-rolled parser**: `sshi` uses a custom, self-contained parser (`parse_ssh_config_content`) implemented in `src/config/ssh_config.rs`.
+- **Hand-rolled parser**: `sshi` uses a custom, self-contained parser (`load_ssh_config` → `parse_ssh_config_content_with_dir`) implemented in `src/config/ssh_config.rs`.
 - **No external parser crate**: The `ssh2-config` crate was removed to avoid a transitive C library dependency (`openssl-sys` via `git2`/`libgit2-sys`). No external SSH configuration parsing dependency is used.
 
 ### Supported directives
@@ -206,16 +206,21 @@ The parser matches directives case-insensitively and supports both space-delimit
 
 | Directive | Behavior | Default / Fallback |
 |---|---|---|
-| `Host` | Defines a host block. Supports multiple whitespace-separated aliases (e.g. `Host s1 s2`). Names containing `*` or `?` are treated as wildcard default blocks. | — |
+| `Host` | Starts a block for one or more whitespace-separated patterns (`Host s1 s2`). `*` and `?` are wildcards, `!pattern` excludes; matching is case-insensitive. | — |
+| `Match` | Only `Match all` is honoured (it applies to every host). Other `Match` blocks are skipped with a warning, so their directives never leak into the preceding `Host`. | — |
+| `Include` | Reads the named file(s); relative paths resolve against `~/.ssh`, a glob in the file name is expanded in sorted order, nesting is limited to 5 levels. Missing or unreadable files are warned about. An `Include` inside a `Host` block applies to that host; the block continues after it. | — |
 | `HostName` | Target DNS hostname or IP address. | Host alias name |
 | `User` | Remote SSH login username. | Current system username (`whoami::username`) |
 | `Port` | Remote SSH port number (`u16`). | `22` |
-| `IdentityFile` | Path to a private key. Supports `~` tilde expansion. Repeatable: every line is kept, host block first, then `Host *`, duplicates dropped. | The existing ones of `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` (`ssh_config::default_identity_files`) |
-| `IdentitiesOnly` | `yes` limits ssh-agent keys to those matching a listed `IdentityFile`'s `.pub` and disables the password fallback. Host block wins over `Host *`. | `no` |
+| `IdentityFile` | Path to a private key. Supports `~` tilde expansion. Repeatable: every matching line is kept in file order, duplicates dropped. | The existing ones of `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` (`ssh_config::default_identity_files`) |
+| `IdentitiesOnly` | `yes` limits ssh-agent keys to those matching a listed `IdentityFile`'s `.pub` and disables the password fallback. | `no` |
 | `ProxyJump` | Jump host proxy alias. Comma-separated multi-hop chains are parsed to extract the first hop. | `None` (direct connection) |
 
 ### Parsing and inheritance rules
 
-1. **Wildcard inheritance (`Host *`)**: Directives defined in wildcard blocks (e.g. `Host *`) are accumulated into `wildcard_defaults`. When resolving a host alias with `query(alias)`, any field not explicitly set in the host-specific block inherits from the wildcard defaults.
-2. **Multi-alias expansion**: `Host alias1 alias2` creates distinct lookup entries for each alias sharing the block's parameters.
-3. **Comments and unknown directives**: Lines starting with `#` and empty lines are ignored. Directives not recognized by `sshi` (such as `ServerAliveInterval`, `ForwardAgent`, `Match`, or `Include`) are ignored without error.
+These follow OpenSSH for the directives above (`ParsedSshConfig::query`):
+
+1. **First obtained value wins**: every block whose patterns match the alias is applied in file order, and each directive keeps the first value it gets. Put host-specific blocks before general ones (`Host *`), as with OpenSSH. Duplicate `Host` blocks for the same alias therefore merge.
+2. **Options before the first `Host`** apply to every host (as an implicit `Host *` at the top of the file); options at the top of a file `Include`d inside a `Host` block apply to that host only (B75).
+3. **Multi-alias expansion**: `Host alias1 alias2` creates distinct lookup entries for each alias sharing the block's parameters (used by `sshi init`).
+4. **Comments and unknown directives**: Lines starting with `#` and empty lines are ignored. Directives not recognized by `sshi` (such as `ServerAliveInterval` or `ForwardAgent`) are ignored without error.

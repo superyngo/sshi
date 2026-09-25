@@ -16,7 +16,6 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
-| B75 | 2026-09-25 | 2026-09-25 | P2 | `~/.ssh/config` options written before the first `Host` line (OpenSSH applies them to every host, e.g. a global `User` or `IdentityFile`) are silently dropped, and so are options at the top of a file `Include`d inside a `Host` block (OpenSSH applies them under that Host) (found while fixing B42) | `src/config/ssh_config.rs` `parse_ssh_config_content_with_dir`, `include_blocks` | S | Top-of-file options apply to every host; an included file's leading options apply under the including `Host`; tests for both |
 
 ## Pending verification
 
@@ -53,6 +52,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B75 | `~/.ssh/config` options before the first `Host` (and at the top of an `Include`d file inside a `Host`) were dropped | HASH-B75 — `parse_ssh_config_content_with_dir(…, scope)`: `*` for the main file, the including `Host`'s patterns for `include_blocks`; test `top_level_and_included_leading_options_apply`; real binary: host whose only port/key come from top-level lines connects (old: tried port 22); `config-schema.md` ssh_config section rewritten |
 | — | One cached SFTP channel per host across many files (was pending verification) | `cce33f7` — verified 2026-09-25: a 120-file `cp -a` shows, per host in the rig's sshd VERBOSE log, one command session and two `sftp` subsystem sessions (the data channel plus B65's rename channel), independent of file count |
 | B53 | Operation scaffolding duplicated (five `App::execute_*`, four command cores); `*_core` returned an enum callers `unreachable!`d; `App::handle_key` 1,010+ lines | `13ccb55` — commits `6a265eb` (typed `*_core` returns, `From<…> for CommandReport`), `b0562ee` (`FanOut`), `98506ce` (`launch_operation`) and this one (`handle_key` → `handle_popup_key` with seven layer handlers, `handle_navbar_key`, `handle_global_key`, `handle_{config,operate,view}_key`); 456/293 tests unchanged; real binary: run/exec/cp/check via CLI and TUI (launch, list `e`, form Esc, yank, help/info) behave as before |
 | B54 | Parallel implementations: TUI export vs CLI report builders (checkout), `resolve_target_names` vs `Context::resolve_hosts`, `Summary`/`SyncSummary` printing, Operate/View target rows, `parse_ssh_config`/`load_ssh_config` | `b079076` — each pair reduced to one function (see changelog); tests `checkout_operation_report_rows_and_summary`, `detail_lines_dedupe_and_cluster`; real binary: `checkout -a --out` and the TUI View export of the same rows produce identical JSON apart from `executed_at` |

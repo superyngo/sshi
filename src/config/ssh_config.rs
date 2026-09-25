@@ -166,7 +166,7 @@ pub fn parse_ssh_config() -> Result<Vec<SshHostEntry>> {
 #[cfg(test)]
 pub(crate) fn parse_ssh_config_content(content: &str) -> Result<ParsedSshConfig> {
     let base = dirs::home_dir().map(|h| h.join(".ssh"));
-    parse_ssh_config_content_with_dir(content, base.as_deref(), 0)
+    parse_ssh_config_content_with_dir(content, base.as_deref(), 0, Some(vec!["*".to_string()]))
 }
 
 /// `Include` nesting limit (OpenSSH uses 16; a small cap is enough here).
@@ -175,7 +175,12 @@ const MAX_INCLUDE_DEPTH: usize = 5;
 /// Blocks from the file(s) an `Include` value names. Relative paths resolve
 /// against `base_dir` (`~/.ssh`), as OpenSSH does for user configs; a glob in
 /// the file name is expanded in sorted order. Problems are warned, not fatal.
-fn include_blocks(value: &str, base_dir: Option<&std::path::Path>, depth: usize) -> Vec<Block> {
+fn include_blocks(
+    value: &str,
+    base_dir: Option<&std::path::Path>,
+    depth: usize,
+    scope: Option<Vec<String>>,
+) -> Vec<Block> {
     if depth >= MAX_INCLUDE_DEPTH {
         tracing::warn!("ssh_config Include nested too deeply at '{value}'; ignored");
         return Vec::new();
@@ -195,7 +200,12 @@ fn include_blocks(value: &str, base_dir: Option<&std::path::Path>, depth: usize)
     let mut blocks = Vec::new();
     for file in files {
         match std::fs::read_to_string(&file) {
-            Ok(content) => match parse_ssh_config_content_with_dir(&content, base_dir, depth + 1) {
+            Ok(content) => match parse_ssh_config_content_with_dir(
+                &content,
+                base_dir,
+                depth + 1,
+                scope.clone(),
+            ) {
                 Ok(sub) => blocks.extend(sub.blocks),
                 Err(e) => tracing::warn!("Failed to parse included {}: {e}", file.display()),
             },
@@ -242,13 +252,20 @@ fn include_files(resolved: &std::path::Path) -> Vec<std::path::PathBuf> {
     files
 }
 
+/// `scope`: the host patterns lines before the first `Host`/`Match` apply to —
+/// `*` for the main file (OpenSSH applies them to every host), the including
+/// `Host`'s patterns for an `Include`d file (B75).
 fn parse_ssh_config_content_with_dir(
     content: &str,
     base_dir: Option<&std::path::Path>,
     depth: usize,
+    scope: Option<Vec<String>>,
 ) -> Result<ParsedSshConfig> {
     let mut blocks: Vec<Block> = Vec::new();
-    let mut current: Option<Block> = None;
+    let mut current: Option<Block> = scope.map(|patterns| Block {
+        patterns,
+        ..Default::default()
+    });
 
     for line in content.lines() {
         let trimmed_line = line.trim();
@@ -314,7 +331,7 @@ fn parse_ssh_config_content_with_dir(
                 if let Some(b) = current.take() {
                     blocks.push(b);
                 }
-                blocks.extend(include_blocks(value, base_dir, depth));
+                blocks.extend(include_blocks(value, base_dir, depth, continuation.clone()));
                 current = continuation.map(|patterns| Block {
                     patterns,
                     ..Default::default()
@@ -430,7 +447,12 @@ pub fn load_ssh_config() -> Result<ParsedSshConfig> {
     let content = std::fs::read_to_string(&config_path)
         .with_context(|| format!("Failed to read {}", config_path.display()))?;
 
-    parse_ssh_config_content_with_dir(&content, config_path.parent(), 0)
+    parse_ssh_config_content_with_dir(
+        &content,
+        config_path.parent(),
+        0,
+        Some(vec!["*".to_string()]),
+    )
 }
 
 /// Resolve a host alias using a pre-loaded `ParsedSshConfig`.
@@ -749,5 +771,33 @@ Host myhost
         assert_eq!(res.user, "alice");
         assert_eq!(res.hostname, "10.1.2.3");
         assert_eq!(res.port, 2200);
+    }
+
+    /// B75: options before the first `Host` apply to every host (OpenSSH),
+    /// and an included file's leading options apply under the including Host.
+    #[test]
+    fn top_level_and_included_leading_options_apply() {
+        let config = parse_ssh_config_content(
+            "User everyone\nPort 2222\n\nHost web1\n    HostName 10.0.0.1\n    Port 22\n",
+        )
+        .unwrap();
+        let web1 = config.query("web1");
+        assert_eq!(web1.user, "everyone");
+        assert_eq!(
+            web1.port, 2222,
+            "first obtained value wins, even over Host web1"
+        );
+        assert_eq!(config.query("other").port, 2222);
+
+        let dir = tempfile::tempdir().unwrap();
+        let inc = dir.path().join("inc.conf");
+        std::fs::write(&inc, "User incuser\n").unwrap();
+        let main = format!(
+            "Host db1\n    Include {}\n    HostName 10.0.0.2\n",
+            inc.display()
+        );
+        let config = parse_ssh_config_content(&main).unwrap();
+        assert_eq!(config.query("db1").user, "incuser");
+        assert_ne!(config.query("web9").user, "incuser", "scoped to the Host");
     }
 }
