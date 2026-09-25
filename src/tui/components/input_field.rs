@@ -213,22 +213,12 @@ impl InputField {
                 Style::default().add_modifier(Modifier::BOLD),
             ));
 
-        // Build the visible line with a cursor marker when active.
+        // Build the visible line with a cursor marker when active, scrolled
+        // horizontally so the cursor stays inside the borders (B48).
         let display = if self.mode == InputMode::Active {
-            let (before, after) = self.split_at_cursor();
-            let cursor_char = after.chars().next().unwrap_or(' ');
-            let after_cursor: String = after.chars().skip(1).collect();
-            Line::from(vec![
-                Span::raw(before),
-                Span::styled(
-                    cursor_char.to_string(),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(after_cursor),
-            ])
+            Line::from(
+                self.cursor_spans(usize::from(area.width.saturating_sub(2)), Style::default()),
+            )
         } else {
             Line::from(Span::raw(self.value.clone()))
         };
@@ -243,7 +233,10 @@ impl InputField {
         self.snapshot_undo();
         let byte_pos = self.grapheme_to_byte(self.cursor_pos);
         self.value.insert(byte_pos, c);
-        self.cursor_pos += 1;
+        // A combining mark or ZWJ joins the previous grapheme, so recount
+        // instead of assuming one new grapheme (B48).
+        let end = byte_pos + c.len_utf8();
+        self.cursor_pos = self.value[..end].graphemes(true).count();
     }
 
     fn delete_grapheme_back(&mut self) {
@@ -252,8 +245,7 @@ impl InputField {
         }
         self.snapshot_undo();
         self.cursor_pos -= 1;
-        let byte_pos = self.grapheme_to_byte(self.cursor_pos);
-        self.value.remove(byte_pos);
+        self.remove_grapheme_at_cursor();
     }
 
     fn delete_grapheme_forward(&mut self) {
@@ -261,8 +253,15 @@ impl InputField {
             return;
         }
         self.snapshot_undo();
-        let byte_pos = self.grapheme_to_byte(self.cursor_pos);
-        self.value.remove(byte_pos);
+        self.remove_grapheme_at_cursor();
+    }
+
+    /// Remove the whole grapheme cluster under the cursor (every code point
+    /// of a ZWJ emoji or accented letter, B48).
+    fn remove_grapheme_at_cursor(&mut self) {
+        let start = self.grapheme_to_byte(self.cursor_pos);
+        let end = self.grapheme_to_byte(self.cursor_pos + 1);
+        self.value.replace_range(start..end, "");
     }
 
     fn kill_to_end(&mut self) {
@@ -359,9 +358,53 @@ impl InputField {
             .unwrap_or(self.value.len())
     }
 
-    pub(crate) fn split_at_cursor(&self) -> (&str, &str) {
-        let byte_pos = self.grapheme_to_byte(self.cursor_pos);
-        self.value.split_at(byte_pos)
+    /// Spans for drawing the active field in `width` columns: the text in
+    /// `style` around a highlighted cursor cell, scrolled so the cursor stays
+    /// visible ([`visible_parts`](Self::visible_parts)). Shared by every
+    /// renderer of an active field (B48).
+    pub(crate) fn cursor_spans(&self, width: usize, style: Style) -> Vec<Span<'static>> {
+        let (before, cursor, after) = self.visible_parts(width);
+        vec![
+            Span::styled(before, style),
+            Span::styled(
+                cursor,
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(after, style),
+        ]
+    }
+
+    /// The part of the value to draw in `width` terminal columns, scrolled
+    /// so the cursor stays visible: `(before, cursor, after)`, where `cursor`
+    /// is the grapheme under the cursor (or `" "` at the end). Graphemes are
+    /// never split; at least the cursor cell is always returned (B48).
+    pub(crate) fn visible_parts(&self, width: usize) -> (String, String, String) {
+        use unicode_width::UnicodeWidthStr;
+        let graphemes: Vec<&str> = self.value.graphemes(true).collect();
+        let cursor = self.cursor_pos.min(graphemes.len());
+        let cols = |g: &str| g.width().max(1);
+        let cursor_text = graphemes.get(cursor).copied().unwrap_or(" ");
+        let mut used = cols(cursor_text);
+        // Walk left from the cursor while the graphemes still fit.
+        let mut start = cursor;
+        while start > 0 && used + cols(graphemes[start - 1]) <= width {
+            start -= 1;
+            used += cols(graphemes[start]);
+        }
+        // Fill the remaining columns to the right.
+        let mut end = (cursor + 1).min(graphemes.len());
+        while end < graphemes.len() && used + cols(graphemes[end]) <= width {
+            used += cols(graphemes[end]);
+            end += 1;
+        }
+        (
+            graphemes[start..cursor].concat(),
+            cursor_text.to_string(),
+            graphemes[(cursor + 1).min(end)..end].concat(),
+        )
     }
 
     #[cfg(test)]
@@ -627,5 +670,73 @@ mod tests {
         f.handle_key(plain('X'));
         assert_eq!(f.value, "Xcafé");
         assert_eq!(f.cursor_pos_for_test(), 1);
+    }
+
+    /// B48: Backspace/Delete remove a whole grapheme cluster.
+    #[test]
+    fn delete_removes_whole_grapheme_clusters() {
+        let family = "\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}";
+        let mut f = InputField::new(&format!("x{family}"));
+        f.activate();
+        f.handle_key(key(KeyCode::Backspace));
+        assert_eq!(f.value, "x");
+
+        let mut f = InputField::new("e\u{301}x");
+        f.activate();
+        f.handle_key(key(KeyCode::Home));
+        f.handle_key(key(KeyCode::Delete));
+        assert_eq!(f.value, "x");
+    }
+
+    /// B48: typing a combining mark joins the previous grapheme; the cursor
+    /// stays a grapheme index.
+    #[test]
+    fn typing_combining_mark_keeps_cursor_in_range() {
+        let mut f = InputField::new("");
+        f.activate();
+        f.handle_key(plain('e'));
+        f.handle_key(plain('\u{301}'));
+        assert_eq!(f.value, "e\u{301}");
+        assert_eq!(f.cursor_pos_for_test(), f.grapheme_count_for_test());
+        f.handle_key(plain('x'));
+        assert_eq!(f.value, "e\u{301}x");
+    }
+
+    /// B48: a value wider than the field scrolls so the cursor stays visible.
+    #[test]
+    fn long_value_scrolls_to_keep_cursor_visible() {
+        let long: String = ('a'..='z').cycle().take(100).collect();
+        let mut f = InputField::new(&long);
+        f.activate(); // cursor at end
+        let (before, cursor, after) = f.visible_parts(20);
+        assert_eq!(cursor, " ");
+        assert!(after.is_empty());
+        assert_eq!(before.chars().count(), 19);
+        assert!(long.ends_with(&before));
+
+        f.handle_key(key(KeyCode::Home));
+        let (before, cursor, after) = f.visible_parts(20);
+        assert_eq!((before.as_str(), cursor.as_str()), ("", "a"));
+        assert_eq!(after.chars().count(), 19);
+
+        // Rendered: the character before the cursor is on screen.
+        let mut f = InputField::new(&long);
+        f.activate();
+        let backend = ratatui::backend::TestBackend::new(22, 3);
+        let mut term = ratatui::Terminal::new(backend).unwrap();
+        term.draw(|fr| f.render(fr, fr.area(), "x", true)).unwrap();
+        let row: String = (0..22)
+            .map(|x| term.backend().buffer()[(x, 1)].symbol().to_string())
+            .collect();
+        assert!(row.contains(&long[long.len() - 19..]), "{row}");
+    }
+
+    /// B48: a double-width grapheme is never cut in half by the scroll window.
+    #[test]
+    fn visible_parts_keep_wide_graphemes_whole() {
+        let mut f = InputField::new("\u{4e2d}\u{6587}\u{5b57}");
+        f.activate();
+        let (before, cursor, _) = f.visible_parts(4);
+        assert_eq!((before.as_str(), cursor.as_str()), ("\u{5b57}", " "));
     }
 }

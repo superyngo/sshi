@@ -10,7 +10,7 @@ use std::time::Instant;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     Frame,
@@ -1945,6 +1945,7 @@ impl ConfigTabState {
                     &gp.add_input,
                     Span::styled("  New group: ", accent),
                     accent,
+                    inner.width,
                 ));
             }
         } else if let Some(ref ve) = form.vec_editor {
@@ -1991,6 +1992,7 @@ impl ConfigTabState {
                     &ve.input,
                     Span::styled("  New: ", accent),
                     accent,
+                    inner.width,
                 ));
             }
         } else {
@@ -2261,20 +2263,9 @@ impl ConfigTabState {
                             .fg(theme.accent_config)
                             .add_modifier(Modifier::BOLD);
                         let val_cell = if input.mode == InputMode::Active {
-                            let (before, after) = input.split_at_cursor();
-                            let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-                            let after_cursor: String = after.chars().skip(1).collect();
-                            Cell::from(Line::from(vec![
-                                Span::styled(before, accent),
-                                Span::styled(
-                                    cursor_ch,
-                                    Style::default()
-                                        .fg(Color::Black)
-                                        .bg(Color::Yellow)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(after_cursor, accent),
-                            ]))
+                            // Value column = table width − key column − " = ".
+                            let value_w = inner.width.saturating_sub(key_w + 3);
+                            Cell::from(Line::from(input.cursor_spans(usize::from(value_w), accent)))
                         } else {
                             Cell::from(input.value.clone()).style(accent)
                         };
@@ -2576,6 +2567,7 @@ impl ConfigTabState {
                 &dve.input,
                 Span::styled("  New: ", accent),
                 accent,
+                inner.width,
             ));
         }
         frame.render_widget(Paragraph::new(lines), inner);
@@ -2646,6 +2638,7 @@ impl ConfigTabState {
                 &dgp.add_input,
                 Span::styled("  New group: ", accent),
                 accent,
+                inner.width,
             ));
         }
         frame.render_widget(Paragraph::new(lines), inner);
@@ -2829,22 +2822,17 @@ fn collect_known_groups(config: &AppConfig, current: &[String]) -> (Vec<String>,
 }
 
 // input cursor helper for rendering (Step 10)
-fn input_cursor_line<'a>(input: &'a InputField, prefix: Span<'a>, style: Style) -> Line<'a> {
-    let (before, after) = input.split_at_cursor();
-    let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-    let after_cursor: String = after.chars().skip(1).collect();
-    Line::from(vec![
-        prefix,
-        Span::styled(before, style),
-        Span::styled(
-            cursor_ch,
-            Style::default()
-                .fg(Color::Black)
-                .bg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(after_cursor, style),
-    ])
+/// `prefix` then the active field, scrolled to fit `width` columns (B48).
+fn input_cursor_line<'a>(
+    input: &InputField,
+    prefix: Span<'a>,
+    style: Style,
+    width: u16,
+) -> Line<'a> {
+    let avail = usize::from(width).saturating_sub(prefix.width());
+    let mut spans = vec![prefix];
+    spans.extend(input.cursor_spans(avail, style));
+    Line::from(spans)
 }
 
 use super::super::components::popup::centered_rect;

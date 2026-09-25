@@ -327,7 +327,7 @@ fn render_log_specific_params(data: &ViewRenderData, area: Rect, frame: &mut Fra
 
     let f = |i: usize| data.specific_focused == Some(i);
     let lines = [
-        log_input_line("last", data.log_last_input, f(0), data.theme),
+        log_input_line("last", data.log_last_input, f(0), data.theme, area.width),
         log_value_line(
             "errors",
             if data.log_errors { "[x]" } else { "[ ]" },
@@ -335,8 +335,8 @@ fn render_log_specific_params(data: &ViewRenderData, area: Rect, frame: &mut Fra
             data.theme,
         ),
         log_value_line("action", data.log_action, f(2), data.theme),
-        log_input_line("since", data.log_since_input, f(3), data.theme),
-        log_input_line("host", data.log_host_input, f(4), data.theme),
+        log_input_line("since", data.log_since_input, f(3), data.theme, area.width),
+        log_input_line("host", data.log_host_input, f(4), data.theme, area.width),
     ];
     for (i, line) in lines.into_iter().enumerate() {
         frame.render_widget(Paragraph::new(line), rows[i]);
@@ -361,27 +361,17 @@ fn log_input_line<'a>(
     input: &'a InputField,
     focused: bool,
     theme: &Theme,
+    width: u16,
 ) -> Line<'a> {
     let label_span = Span::styled(
         format!(" {label}: "),
         Style::default().add_modifier(Modifier::BOLD),
     );
     if input.mode == crate::tui::components::input_field::InputMode::Active {
-        let (before, after) = input.split_at_cursor();
-        let cursor_ch = after.chars().next().unwrap_or(' ').to_string();
-        let rest: String = after.chars().skip(1).collect();
-        Line::from(vec![
-            label_span,
-            Span::raw(before.to_string()),
-            Span::styled(
-                cursor_ch,
-                Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(rest),
-        ])
+        let avail = usize::from(width).saturating_sub(label_span.width());
+        let mut spans = vec![label_span];
+        spans.extend(input.cursor_spans(avail, Style::default()));
+        Line::from(spans)
     } else {
         let value = if input.value.is_empty() {
             "(empty)".to_string()
