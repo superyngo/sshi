@@ -7,7 +7,7 @@ pub fn command_for(metric: &str) -> String {
         "system_info" => "uname -a && hostname".to_string(),
         "cpu_arch" => "uname -m".to_string(),
         "memory" => "free -b 2>/dev/null || { sysctl -n hw.memsize 2>/dev/null && vm_stat 2>/dev/null; } || vm_stat 2>/dev/null".to_string(),
-        "swap" => "free -b 2>/dev/null".to_string(),
+        "swap" => "free -b 2>/dev/null || sysctl -n vm.swapusage 2>/dev/null".to_string(),
         "disk" => "df -B1 2>/dev/null || df -k".to_string(),
         "cpu_load" => {
             "cat /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null".to_string()

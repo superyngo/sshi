@@ -254,6 +254,11 @@ fn parse_sh_memory(stdout: &str) -> Value {
 }
 
 fn parse_sh_swap(stdout: &str) -> Value {
+    if !stdout.lines().any(|l| l.starts_with("Swap:")) {
+        if let Some(map) = parse_bsd_swapusage(stdout) {
+            return Value::Object(map);
+        }
+    }
     let mut map = serde_json::Map::new();
     for line in stdout.lines() {
         if line.starts_with("Swap:") {
@@ -269,6 +274,27 @@ fn parse_sh_swap(stdout: &str) -> Value {
         }
     }
     Value::Object(map)
+}
+
+/// macOS/BSD `sysctl -n vm.swapusage`: `total = 2048.00M  used = 1034.25M
+/// free = 1013.75M  (encrypted)` (B73).
+fn parse_bsd_swapusage(stdout: &str) -> Option<serde_json::Map<String, Value>> {
+    let field = |name: &str| -> Option<u64> {
+        let rest = stdout.split(&format!("{name} = ")).nth(1)?;
+        let token = rest.split_whitespace().next()?;
+        let (num, unit) = token.split_at(token.find(|c: char| c.is_ascii_alphabetic())?);
+        let scale: f64 = match unit {
+            "K" => 1024.0,
+            "M" => 1024.0 * 1024.0,
+            "G" => 1024.0 * 1024.0 * 1024.0,
+            _ => return None,
+        };
+        Some((num.parse::<f64>().ok()? * scale).round() as u64)
+    };
+    let mut map = serde_json::Map::new();
+    map.insert("total_bytes".to_string(), field("total")?.into());
+    map.insert("used_bytes".to_string(), field("used")?.into());
+    Some(map)
 }
 
 fn parse_sh_disk(stdout: &str) -> Value {
@@ -534,6 +560,27 @@ mod tests {
     fn test_parse_ps_swap_empty() {
         let result = parse(ShellType::PowerShell, "swap", "");
         assert_eq!(result, Value::String("".to_string()));
+    }
+
+    /// B73: macOS/BSD swap comes from `sysctl vm.swapusage` (no `free`).
+    #[test]
+    fn test_parse_macos_swap_fixtures() {
+        let raw = include_str!("../../tests/fixtures/probes/macos_swap.txt");
+        let val = parse(ShellType::Sh, "swap", raw);
+        assert_eq!(val["total_bytes"], serde_json::json!(2048u64 * 1024 * 1024));
+        assert_eq!(val["used_bytes"], serde_json::json!(1_084_489_728u64));
+
+        let none = include_str!("../../tests/fixtures/probes/macos_swap_none.txt");
+        let val = parse(ShellType::Sh, "swap", none);
+        assert_eq!(val["total_bytes"], serde_json::json!(0));
+        assert_eq!(val["used_bytes"], serde_json::json!(0));
+
+        // Linux `free -b` still wins when present.
+        let linux =
+            "              total        used        free\nMem:  8 4 4\nSwap:  2048 1024 1024\n";
+        let val = parse(ShellType::Sh, "swap", linux);
+        assert_eq!(val["total_bytes"], serde_json::json!(2048));
+        assert_eq!(val["used_bytes"], serde_json::json!(1024));
     }
 
     #[test]
