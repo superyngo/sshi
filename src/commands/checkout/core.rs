@@ -92,12 +92,7 @@ pub(crate) fn fetch_latest_snapshots(
         .collect::<Vec<_>>()
         .join(",");
 
-    let snapshot_sql = format!(
-        "SELECT host, collected_at, online, raw_json \
-         FROM check_snapshots WHERE host IN ({}) \
-         ORDER BY host, collected_at DESC",
-        placeholders
-    );
+    let snapshot_sql = latest_snapshot_sql(&placeholders);
     let last_seen_sql = format!(
         "SELECT host, last_online FROM host_last_seen WHERE host IN ({})",
         placeholders
@@ -162,6 +157,18 @@ pub(crate) fn fetch_latest_snapshots(
         }
     }
     Ok(snapshots)
+}
+
+/// SQL for the newest snapshot of *each* host in `placeholders`.
+fn latest_snapshot_sql(placeholders: &str) -> String {
+    format!(
+        "SELECT host, collected_at, online, raw_json FROM ( \
+           SELECT host, collected_at, online, raw_json, \
+                  ROW_NUMBER() OVER (PARTITION BY host ORDER BY collected_at DESC, id DESC) AS rn \
+           FROM check_snapshots WHERE host IN ({placeholders}) \
+         ) WHERE rn = 1 \
+         ORDER BY host"
+    )
 }
 
 /// SQL for the newest `?{limit_param}` snapshots of *each* host in
@@ -287,8 +294,11 @@ pub(crate) fn fetch_combined_snapshots(
 }
 
 #[cfg(test)]
-mod combined_sql_tests {
-    use super::combined_snapshot_sql;
+mod snapshot_sql_tests {
+    use super::{combined_snapshot_sql, fetch_latest_snapshots, latest_snapshot_sql};
+    use crate::commands::Context;
+    use crate::config::schema::AppConfig;
+    use std::sync::Arc;
 
     #[test]
     fn lookback_applies_per_host_not_globally() {
@@ -315,5 +325,97 @@ mod combined_sql_tests {
             .collect();
         assert_eq!(hosts.iter().filter(|h| *h == "server1").count(), 50);
         assert_eq!(hosts.iter().filter(|h| *h == "server2").count(), 1);
+    }
+
+    #[test]
+    fn latest_snapshot_sql_returns_one_row_per_host() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn);
+        for i in 0..10 {
+            let json = format!("{{\"idx\":{}}}", 1000 + i);
+            conn.execute(
+                "INSERT INTO check_snapshots(host, collected_at, online, raw_json) VALUES ('server1', ?1, 1, ?2)",
+                rusqlite::params![1000 + i, json],
+            )
+            .unwrap();
+        }
+        for i in 0..5 {
+            let json = format!("{{\"idx\":{}}}", 2000 + i);
+            conn.execute(
+                "INSERT INTO check_snapshots(host, collected_at, online, raw_json) VALUES ('server2', ?1, 1, ?2)",
+                rusqlite::params![2000 + i, json],
+            )
+            .unwrap();
+        }
+        let sql = latest_snapshot_sql("?1,?2");
+        let mut stmt = conn.prepare(&sql).unwrap();
+        let rows: Vec<(String, i64)> = stmt
+            .query_map(rusqlite::params!["server1", "server2"], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        // Query returns strictly 1 row per host from SQL, not all 15 history rows.
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], ("server1".to_string(), 1009));
+        assert_eq!(rows[1], ("server2".to_string(), 2004));
+    }
+
+    #[test]
+    fn fetch_latest_snapshots_with_history_and_missing_host() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn);
+        conn.execute(
+            "INSERT INTO host_last_seen(host, last_seen, last_online) VALUES ('h1', 1050, 1050), ('h2', 2050, 2050)",
+            [],
+        )
+        .unwrap();
+        for i in 0..5 {
+            let json = format!("{{\"seq\":{}}}", 1000 + i);
+            conn.execute(
+                "INSERT INTO check_snapshots(host, collected_at, online, raw_json) VALUES ('h1', ?1, 1, ?2)",
+                rusqlite::params![1000 + i, json],
+            )
+            .unwrap();
+        }
+        for i in 0..3 {
+            let json = format!("{{\"seq\":{}}}", 2000 + i);
+            conn.execute(
+                "INSERT INTO check_snapshots(host, collected_at, online, raw_json) VALUES ('h2', ?1, 1, ?2)",
+                rusqlite::params![2000 + i, json],
+            )
+            .unwrap();
+        }
+        let ctx = Context {
+            config: Arc::new(AppConfig::default()),
+            config_path: None,
+            db: crate::state::db::DbHandle::new(conn),
+            timeout: 30,
+            mode: crate::commands::TargetMode::All,
+            serial: false,
+            skip: vec![],
+            verbose: false,
+            auth_sender: None,
+        };
+        let snapshots = fetch_latest_snapshots(&ctx, &["h1", "h2", "h3"]).unwrap();
+        assert_eq!(snapshots.len(), 3);
+        assert_eq!(snapshots[0].host, "h1");
+        assert_eq!(snapshots[0].collected_at, 1004);
+        assert!(snapshots[0].online);
+        assert_eq!(snapshots[0].last_online, 1050);
+        assert_eq!(snapshots[0].data["seq"], 1004);
+
+        assert_eq!(snapshots[1].host, "h2");
+        assert_eq!(snapshots[1].collected_at, 2002);
+        assert!(snapshots[1].online);
+        assert_eq!(snapshots[1].last_online, 2050);
+        assert_eq!(snapshots[1].data["seq"], 2002);
+
+        assert_eq!(snapshots[2].host, "h3");
+        assert_eq!(snapshots[2].collected_at, 0);
+        assert!(!snapshots[2].online);
+        assert_eq!(snapshots[2].last_online, 0);
+        assert!(snapshots[2].data.is_null());
     }
 }
