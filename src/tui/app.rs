@@ -8,6 +8,7 @@
 //! Phase 4 (§19): Config tab 3-level read-only browser (section → entry → field)
 //! + external editor 4-stage flow (§7.4) with config_mtime change detection.
 
+use std::future::Future;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -800,7 +801,7 @@ impl App {
             // Build the banner-expiry future: if the reload banner is active,
             // sleep until it expires; otherwise park forever on pending().
             let banner_deadline = self.config_tab.reload_banner_until;
-            let banner_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            let banner_fut: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =
                 match banner_deadline {
                     Some(until) => Box::pin(async move {
                         tokio::time::sleep_until(tokio::time::Instant::from_std(until)).await;
@@ -809,7 +810,7 @@ impl App {
                 };
 
             // Debounced state save (see `save_state`).
-            let state_save_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+            let state_save_fut: std::pin::Pin<Box<dyn Future<Output = ()> + Send>> =
                 match self.state_save_due {
                     Some(due) => Box::pin(tokio::time::sleep_until(due)),
                     None => Box::pin(std::future::pending()),
@@ -1249,14 +1250,20 @@ impl App {
         true
     }
 
-    /// Execute a `check` operation against the current target filter. Returns
-    /// false (no-op) if an operation is already running (concurrency guard).
-    fn execute_check(&mut self) -> bool {
+    /// Start one operation against the current target filter — the shared
+    /// scaffolding of every `execute_*` (B53): one operation at a time, target
+    /// resolution, a fresh `Context`, the cancel token, the progress bridge
+    /// and the `RunningOp` bookkeeping. `op` runs the command core with the
+    /// context and progress sink and returns its report.
+    fn launch_operation<F, Fut>(&mut self, op: F) -> bool
+    where
+        F: FnOnce(Context, EventSender) -> Fut + Send + 'static,
+        Fut: Future<Output = Result<CommandReport>> + Send + 'static,
+    {
         if self.running_op.is_some() {
             self.error = Some("Operation already running".to_string());
             return true;
         }
-
         let target_mode = build_target_mode(&self.target_filter, &self.config);
         let targets: Vec<String> =
             match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
@@ -1274,8 +1281,6 @@ impl App {
         let serial = self.target_filter.serial;
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
-        let out_for_op = self.out_path();
-        let names = comma_names(&self.operate.check_name.value);
         let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
         let skip = self.target_filter.skip.clone();
@@ -1284,11 +1289,8 @@ impl App {
         let cancel = tokio_util::sync::CancellationToken::new();
         let cancel_for_task = cancel.clone();
 
-        // Spawn the operation directly on the main multi-thread runtime.
-        // Phase B made `Context` `Send + Sync` (via `Arc<Mutex<Connection>>`);
-        // G1 wrapped `HostEntry` in `Arc`, G2 wrapped `AppConfig` in `Arc`, so
-        // the operation future is `Send` and no longer needs a dedicated
-        // OS thread + current-thread runtime to satisfy `tokio::spawn`'s bound.
+        // `Context`, `HostEntry` and `AppConfig` are `Send + Sync`, so the
+        // operation runs directly on the multi-thread runtime.
         tokio::spawn(async move {
             let ctx = match Context::from_tui_parts(
                 cfg,
@@ -1307,20 +1309,16 @@ impl App {
             };
             let sink = EventSender::new(event_tx.clone());
             let outcome = tokio::select! {
-                res = crate::commands::check::check_core(&ctx, &names, Some(&sink)) => res.map(CommandReport::from),
+                res = op(ctx, sink) => res,
                 _ = cancel_for_task.cancelled() => {
                     let _ = event_tx.send(TuiEvent::OperationCancelled);
                     return;
                 }
             };
-            match outcome {
-                Ok(report) => {
-                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                }
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                }
-            }
+            let _ = event_tx.send(match outcome {
+                Ok(report) => TuiEvent::OperationFinished(report),
+                Err(e) => TuiEvent::OperationError(e.to_string()),
+            });
         });
 
         self.popup.progress_scroll = None;
@@ -1330,358 +1328,89 @@ impl App {
             targets,
             host_outcomes: Vec::new(),
             mode: mode_for_op,
-            out: out_for_op,
+            out: self.out_path(),
         });
         true
     }
 
+    /// Execute a `check` operation against the current target filter.
+    fn execute_check(&mut self) -> bool {
+        let names = comma_names(&self.operate.check_name.value);
+        self.launch_operation(move |ctx, sink| async move {
+            crate::commands::check::check_core(&ctx, &names, Some(&sink))
+                .await
+                .map(CommandReport::from)
+        })
+    }
+
     /// Execute a `run` command against the current target filter.
     fn execute_run(&mut self) -> bool {
-        if self.running_op.is_some() {
-            self.error = Some("Operation already running".to_string());
-            return true;
-        }
         let command = self.operate.run_command.value.trim().to_string();
         if command.is_empty() {
             self.error = Some("Command field is empty.".to_string());
             return true;
         }
-        let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> =
-            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-                Ok(t) if !t.is_empty() => t,
-                Ok(_) => {
-                    self.error = Some("No hosts matched the current filter.".to_string());
-                    return true;
-                }
-                Err(e) => {
-                    self.error = Some(format!("Filter error: {e}"));
-                    return true;
-                }
-            };
-        let serial = self.target_filter.serial;
-        let timeout = self.last_timeout_secs;
-        let mode_for_op = target_mode.clone();
-        let out_for_op = self.out_path();
-        let cfg = Arc::clone(&self.config);
-        let cfg_path = self.config_path.clone();
-        let skip = self.target_filter.skip.clone();
-        let event_tx = self.event_tx.clone();
-        let auth_sender = self.auth_bridge_tx.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let cancel_for_task = cancel.clone();
         let sudo = self.operate.run_sudo;
-
-        tokio::spawn(async move {
-            let ctx = match Context::from_tui_parts(
-                cfg,
-                cfg_path,
-                target_mode,
-                serial,
-                timeout,
-                skip,
-                auth_sender,
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                    return;
-                }
-            };
-            let sink = EventSender::new(event_tx.clone());
-            let outcome = tokio::select! {
-                res = crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink)) => res.map(CommandReport::from),
-                _ = cancel_for_task.cancelled() => {
-                    let _ = event_tx.send(TuiEvent::OperationCancelled);
-                    return;
-                }
-            };
-            match outcome {
-                Ok(report) => {
-                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                }
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                }
-            }
-        });
-
-        self.popup.progress_scroll = None;
-        self.running_op = Some(RunningOp {
-            cancel,
-            started_at: std::time::Instant::now(),
-            targets,
-            host_outcomes: Vec::new(),
-            mode: mode_for_op,
-            out: out_for_op,
-        });
-        true
+        self.launch_operation(move |ctx, sink| async move {
+            crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink))
+                .await
+                .map(CommandReport::from)
+        })
     }
 
     /// Execute an `exec` (script upload + run) against the current target filter.
     fn execute_exec(&mut self) -> bool {
-        if self.running_op.is_some() {
-            self.error = Some("Operation already running".to_string());
-            return true;
-        }
         let script = self.operate.exec_script.value.trim().to_string();
         if script.is_empty() {
             self.error = Some("Script path field is empty.".to_string());
             return true;
         }
-        let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> =
-            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-                Ok(t) if !t.is_empty() => t,
-                Ok(_) => {
-                    self.error = Some("No hosts matched the current filter.".to_string());
-                    return true;
-                }
-                Err(e) => {
-                    self.error = Some(format!("Filter error: {e}"));
-                    return true;
-                }
-            };
-        let serial = self.target_filter.serial;
-        let timeout = self.last_timeout_secs;
-        let mode_for_op = target_mode.clone();
-        let out_for_op = self.out_path();
-        let cfg = Arc::clone(&self.config);
-        let cfg_path = self.config_path.clone();
-        let skip = self.target_filter.skip.clone();
-        let event_tx = self.event_tx.clone();
-        let auth_sender = self.auth_bridge_tx.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let cancel_for_task = cancel.clone();
-        let sudo = self.operate.exec_sudo;
-        let keep = self.operate.exec_keep;
-
-        tokio::spawn(async move {
-            let ctx = match Context::from_tui_parts(
-                cfg,
-                cfg_path,
-                target_mode,
-                serial,
-                timeout,
-                skip,
-                auth_sender,
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                    return;
-                }
-            };
-            let sink = EventSender::new(event_tx.clone());
-            let outcome = tokio::select! {
-                res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res.map(CommandReport::from),
-                _ = cancel_for_task.cancelled() => {
-                    let _ = event_tx.send(TuiEvent::OperationCancelled);
-                    return;
-                }
-            };
-            match outcome {
-                Ok(report) => {
-                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                }
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                }
-            }
-        });
-
-        self.popup.progress_scroll = None;
-        self.running_op = Some(RunningOp {
-            cancel,
-            started_at: std::time::Instant::now(),
-            targets,
-            host_outcomes: Vec::new(),
-            mode: mode_for_op,
-            out: out_for_op,
-        });
-        true
+        let (sudo, keep) = (self.operate.exec_sudo, self.operate.exec_keep);
+        self.launch_operation(move |ctx, sink| async move {
+            crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink))
+                .await
+                .map(CommandReport::from)
+        })
     }
 
-    /// Execute a `cp` operation in a background thread, following the same
-    /// pattern as `execute_exec`.
+    /// Execute a `cp` operation against the current target filter.
     fn execute_cp(&mut self) -> bool {
-        if self.running_op.is_some() {
-            self.error = Some("Operation already running".to_string());
-            return true;
-        }
         let local = self.operate.cp_local.value.trim().to_string();
         if local.is_empty() {
             self.error = Some("Local path field is empty.".to_string());
             return true;
         }
         let remote_raw = self.operate.cp_remote.value.trim().to_string();
-        let remote: Option<String> = if remote_raw.is_empty() {
-            None
-        } else {
-            Some(remote_raw)
-        };
-
-        let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> =
-            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-                Ok(t) if !t.is_empty() => t,
-                Ok(_) => {
-                    self.error = Some("No hosts matched the current filter.".to_string());
-                    return true;
-                }
-                Err(e) => {
-                    self.error = Some(format!("Filter error: {e}"));
-                    return true;
-                }
-            };
-        let serial = self.target_filter.serial;
-        let timeout = self.last_timeout_secs;
-        let mode_for_op = target_mode.clone();
-        let out_for_op = self.out_path();
-        let cfg = Arc::clone(&self.config);
-        let cfg_path = self.config_path.clone();
-        let skip = self.target_filter.skip.clone();
-        let event_tx = self.event_tx.clone();
-        let auth_sender = self.auth_bridge_tx.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let cancel_for_task = cancel.clone();
-
-        tokio::spawn(async move {
-            let ctx = match Context::from_tui_parts(
-                cfg,
-                cfg_path,
-                target_mode,
-                serial,
-                timeout,
-                skip,
-                auth_sender,
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                    return;
-                }
-            };
-            let sink = EventSender::new(event_tx.clone());
-            let outcome = tokio::select! {
-                res = crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink)) => res.map(CommandReport::from),
-                _ = cancel_for_task.cancelled() => {
-                    let _ = event_tx.send(TuiEvent::OperationCancelled);
-                    return;
-                }
-            };
-            match outcome {
-                Ok(report) => {
-                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                }
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                }
-            }
-        });
-
-        self.popup.progress_scroll = None;
-        self.running_op = Some(RunningOp {
-            cancel,
-            started_at: std::time::Instant::now(),
-            targets,
-            host_outcomes: Vec::new(),
-            mode: mode_for_op,
-            out: out_for_op,
-        });
-        true
+        let remote = (!remote_raw.is_empty()).then_some(remote_raw);
+        self.launch_operation(move |ctx, sink| async move {
+            crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink))
+                .await
+                .map(CommandReport::from)
+        })
     }
 
-    /// Execute a `sync` operation in a background thread, following the same
-    /// pattern as `execute_check`/`execute_run`/`execute_exec`.
+    /// Execute a `sync` operation against the current target filter. Config
+    /// entry names and ad-hoc paths are passed together; the sync core merges
+    /// both (plus the optional source override).
     fn execute_sync(&mut self) -> bool {
-        if self.running_op.is_some() {
-            self.error = Some("An operation is already running.".to_string());
-            return true;
-        }
-        let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let targets: Vec<String> =
-            match resolve_target_names(&target_mode, &self.config, &self.target_filter.skip) {
-                Ok(t) if !t.is_empty() => t,
-                Ok(_) => {
-                    self.error = Some("No hosts matched the current filter.".to_string());
-                    return true;
-                }
-                Err(e) => {
-                    self.error = Some(format!("Filter error: {e}"));
-                    return true;
-                }
-            };
-        let serial = self.target_filter.serial;
-        let timeout = self.last_timeout_secs;
-        let mode_for_op = target_mode.clone();
-        let out_for_op = self.out_path();
-        let cfg = Arc::clone(&self.config);
-        let cfg_path = self.config_path.clone();
-        let skip = self.target_filter.skip.clone();
-        let event_tx = self.event_tx.clone();
-        let auth_sender = self.auth_bridge_tx.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let cancel_for_task = cancel.clone();
         let dry_run = self.operate.sync_dry_run;
-        // Config-entry names and ad-hoc paths are passed together; the sync core
-        // merges both (plus the optional source override).
         let adhoc_files = self.operate.sync_adhoc_files.clone();
         let names = comma_names(&self.operate.sync_name.value);
-        let source_override: Option<String> = {
-            let v = self.operate.sync_source_input.value.trim().to_string();
-            if v.is_empty() {
-                None
-            } else {
-                Some(v)
-            }
-        };
-
-        tokio::spawn(async move {
-            let ctx = match Context::from_tui_parts(
-                cfg,
-                cfg_path,
-                target_mode,
-                serial,
-                timeout,
-                skip,
-                auth_sender,
-            ) {
-                Ok(c) => c,
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                    return;
-                }
-            };
-            let sink = EventSender::new(event_tx.clone());
-            let outcome = tokio::select! {
-                res = crate::commands::sync::sync_core(&ctx, &adhoc_files, &names, dry_run, source_override.as_deref(), Some(&sink)) => res,
-                _ = cancel_for_task.cancelled() => {
-                    let _ = event_tx.send(TuiEvent::OperationCancelled);
-                    return;
-                }
-            };
-            match outcome {
-                Ok(report) => {
-                    let _ = event_tx.send(TuiEvent::OperationFinished(report));
-                }
-                Err(e) => {
-                    let _ = event_tx.send(TuiEvent::OperationError(e.to_string()));
-                }
-            }
-        });
-
-        self.popup.progress_scroll = None;
-        self.running_op = Some(RunningOp {
-            cancel,
-            started_at: std::time::Instant::now(),
-            targets,
-            host_outcomes: Vec::new(),
-            mode: mode_for_op,
-            out: out_for_op,
-        });
-        true
+        let source = self.operate.sync_source_input.value.trim().to_string();
+        let source_override = (!source.is_empty()).then_some(source);
+        self.launch_operation(move |ctx, sink| async move {
+            crate::commands::sync::sync_core(
+                &ctx,
+                &adhoc_files,
+                &names,
+                dry_run,
+                source_override.as_deref(),
+                Some(&sink),
+            )
+            .await
+        })
     }
+
     fn maybe_reload_checkout(&mut self) {
         if !self.db_stale {
             return;
