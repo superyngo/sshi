@@ -62,7 +62,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B17 | Editor precedence differed: `sshi config` tried `$EDITOR` first, TUI `E` tried `$VISUAL` first | HASH-B17 — `commands::config::resolve_editor` (`editor_from`, pure, tested) used by `config::run` and `App::do_open_editor`; `cli.md`/`tui.md`/README updated; real binary: `VISUAL=fake EDITOR=false sshi config` opens fake (old binary ran `false`) |
+| B17 | Editor precedence differed: `sshi config` tried `$EDITOR` first, TUI `E` tried `$VISUAL` first | `0615950` — `commands::config::resolve_editor` (`editor_from`, pure, tested) used by `config::run` and `App::do_open_editor`; `cli.md`/`tui.md`/README updated; real binary: `VISUAL=fake EDITOR=false sshi config` opens fake (old binary ran `false`) |
 | B6 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `107cc41` — `src/tui/focus.rs` deleted (no callers; its own tests went with it), `pub mod focus` removed; 447/289 tests pass |
 | B73 | sh `swap` probe was `free -b` only; macOS/BSD hosts never reported swap | `2f6ff2a` — `sh::command_for("swap")` falls back to `sysctl -n vm.swapusage`; `parse_bsd_swapusage` (K/M/G units); fixtures `macos_swap*.txt` + test; real binary: snapshot `swap` = `{"total_bytes":0,"used_bytes":0}` on the macOS rig (was `{}`) |
 | B30 | Dead SSH/SFTP sessions were never evicted or reconnected | `24df437` — `RusshSessionPool::handle` checks `Handle::is_closed`, reconnects once via `connect_one` (serialized; `Reconnect` keeps config/passphrase cache/auth bridge), `LazyCache::remove` drops old SFTP/rename channels; test `test_lazy_cache_remove_forces_reopen`; real binary: rig connections killed mid-sync → "reconnected" h1/h2, 499/500 synced (old: 71/500) |
