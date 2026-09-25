@@ -35,7 +35,7 @@ pub async fn cp_core(
     local: &str,
     remote: Option<&str>,
     progress: Option<&dyn ProgressSink>,
-) -> Result<CommandReport> {
+) -> Result<CpReport> {
     let transfers = plan_transfers(local, remote)?;
     let remote_base = remote.unwrap_or("~").to_string();
 
@@ -186,14 +186,14 @@ pub async fn cp_core(
 
     pool.shutdown().await;
 
-    Ok(CommandReport::Cp(CpReport {
+    Ok(CpReport {
         executed_at,
         local: local.to_string(),
         remote: remote_base,
         planned_files: transfers.len(),
         targets,
         hosts: host_results,
-    }))
+    })
 }
 
 /// Thin CLI wrapper: handles dry-run, calls `cp_core`, prints summary, writes
@@ -224,10 +224,7 @@ pub async fn run(
     }
 
     let sink = default_printer_sink();
-    let raw = cp_core(ctx, local, remote, Some(&sink)).await?;
-    let CommandReport::Cp(report) = &raw else {
-        unreachable!("cp_core always returns CommandReport::Cp")
-    };
+    let report = cp_core(ctx, local, remote, Some(&sink)).await?;
 
     let mut summary = Summary::default();
     for h in &report.hosts {
@@ -235,6 +232,7 @@ pub async fn run(
     }
     summary.print();
 
+    let raw = CommandReport::from(report);
     maybe_write_report(
         &raw,
         &ctx.mode,

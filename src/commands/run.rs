@@ -27,7 +27,7 @@ pub async fn run_core(
     command: &str,
     sudo: bool,
     progress: Option<&dyn ProgressSink>,
-) -> Result<CommandReport> {
+) -> Result<RunReport> {
     let hosts = ctx.resolve_hosts()?;
     let executed_at = chrono::Utc::now().to_rfc3339();
     let targets: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
@@ -208,12 +208,12 @@ pub async fn run_core(
 
     pool.shutdown().await;
 
-    Ok(CommandReport::Run(RunReport {
+    Ok(RunReport {
         executed_at,
         command: command.to_string(),
         targets,
         hosts: host_results,
-    }))
+    })
 }
 
 /// Thin CLI wrapper: invokes `run_core` with a printer-driven `ProgressSink`,
@@ -242,10 +242,7 @@ pub async fn run(
     }
 
     let sink = default_printer_sink();
-    let raw = run_core(ctx, command, sudo, Some(&sink)).await?;
-    let CommandReport::Run(report) = &raw else {
-        unreachable!("run_core always returns CommandReport::Run")
-    };
+    let report = run_core(ctx, command, sudo, Some(&sink)).await?;
 
     let mut summary = Summary::default();
     for h in &report.hosts {
@@ -254,6 +251,7 @@ pub async fn run(
 
     summary.print();
 
+    let raw = CommandReport::from(report);
     maybe_write_report(
         &raw,
         &ctx.mode,

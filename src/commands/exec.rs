@@ -44,7 +44,7 @@ pub async fn exec_core(
     sudo: bool,
     keep: bool,
     progress: Option<&dyn ProgressSink>,
-) -> Result<CommandReport> {
+) -> Result<ExecReport> {
     let script_path = crate::util::expand_tilde(Path::new(script));
     if !script_path.exists() {
         bail!("Script not found: {}", script);
@@ -202,12 +202,12 @@ pub async fn exec_core(
 
     pool.shutdown().await;
 
-    Ok(CommandReport::Exec(ExecReport {
+    Ok(ExecReport {
         executed_at,
         script: script.to_string(),
         targets,
         hosts: host_results,
-    }))
+    })
 }
 
 /// Thin CLI wrapper: handles dry-run, calls `exec_core`, prints summary,
@@ -244,10 +244,7 @@ pub async fn run(
     }
 
     let sink = default_printer_sink();
-    let raw = exec_core(ctx, script, sudo, keep, Some(&sink)).await?;
-    let CommandReport::Exec(report) = &raw else {
-        unreachable!("exec_core always returns CommandReport::Exec")
-    };
+    let report = exec_core(ctx, script, sudo, keep, Some(&sink)).await?;
 
     let mut summary = Summary::default();
     for h in &report.hosts {
@@ -256,6 +253,7 @@ pub async fn run(
 
     summary.print();
 
+    let raw = CommandReport::from(report);
     maybe_write_report(
         &raw,
         &ctx.mode,

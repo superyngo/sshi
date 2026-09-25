@@ -242,6 +242,27 @@ pub enum CommandReport {
     List(ListReport),
 }
 
+macro_rules! into_command_report {
+    ($($variant:ident($ty:ty)),* $(,)?) => {$(
+        impl From<$ty> for CommandReport {
+            fn from(report: $ty) -> Self {
+                CommandReport::$variant(report)
+            }
+        }
+    )*};
+}
+
+// Typed `*_core` results convert into the TUI's event payload (B53).
+into_command_report!(
+    Check(CheckReport),
+    Run(RunReport),
+    Exec(ExecReport),
+    Sync(SyncReport),
+    Cp(CpReport),
+    Log(LogReport),
+    List(ListReport),
+);
+
 /// Tally of per-host results for a finished multi-host command; decides the
 /// process exit code (ADR 0004).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

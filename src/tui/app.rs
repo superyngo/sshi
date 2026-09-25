@@ -1307,7 +1307,7 @@ impl App {
             };
             let sink = EventSender::new(event_tx.clone());
             let outcome = tokio::select! {
-                res = crate::commands::check::check_core(&ctx, &names, Some(&sink)) => res,
+                res = crate::commands::check::check_core(&ctx, &names, Some(&sink)) => res.map(CommandReport::from),
                 _ = cancel_for_task.cancelled() => {
                     let _ = event_tx.send(TuiEvent::OperationCancelled);
                     return;
@@ -1390,7 +1390,7 @@ impl App {
             };
             let sink = EventSender::new(event_tx.clone());
             let outcome = tokio::select! {
-                res = crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink)) => res,
+                res = crate::commands::run::run_core(&ctx, &command, sudo, Some(&sink)) => res.map(CommandReport::from),
                 _ = cancel_for_task.cancelled() => {
                     let _ = event_tx.send(TuiEvent::OperationCancelled);
                     return;
@@ -1474,7 +1474,7 @@ impl App {
             };
             let sink = EventSender::new(event_tx.clone());
             let outcome = tokio::select! {
-                res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res,
+                res = crate::commands::exec::exec_core(&ctx, &script, sudo, keep, Some(&sink)) => res.map(CommandReport::from),
                 _ = cancel_for_task.cancelled() => {
                     let _ = event_tx.send(TuiEvent::OperationCancelled);
                     return;
@@ -1564,7 +1564,7 @@ impl App {
             };
             let sink = EventSender::new(event_tx.clone());
             let outcome = tokio::select! {
-                res = crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink)) => res,
+                res = crate::commands::cp::cp_core(&ctx, &local, remote.as_deref(), Some(&sink)) => res.map(CommandReport::from),
                 _ = cancel_for_task.cancelled() => {
                     let _ = event_tx.send(TuiEvent::OperationCancelled);
                     return;

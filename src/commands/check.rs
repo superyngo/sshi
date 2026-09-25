@@ -37,7 +37,7 @@ pub async fn check_core(
     ctx: &Context,
     names: &[String],
     progress: Option<&dyn ProgressSink>,
-) -> Result<CommandReport> {
+) -> Result<CheckReport> {
     let hosts = ctx.resolve_hosts()?;
     let host_configs = build_host_check_configs(ctx, &hosts, names);
 
@@ -53,12 +53,12 @@ pub async fn check_core(
         .collect();
 
     if host_configs.is_empty() {
-        return Ok(CommandReport::Check(CheckReport {
+        return Ok(CheckReport {
             executed_at,
             enabled_metrics,
             targets,
             hosts: Vec::new(),
-        }));
+        });
     }
 
     let (pool, _connected) = SshPool::setup(
@@ -302,12 +302,12 @@ pub async fn check_core(
     pool.shutdown().await;
     retention::cleanup(&ctx.db, ctx.config.settings.data_retention_days).await?;
 
-    Ok(CommandReport::Check(CheckReport {
+    Ok(CheckReport {
         executed_at,
         enabled_metrics,
         targets,
         hosts: results,
-    }))
+    })
 }
 
 /// Thin CLI wrapper: invokes `check_core` with a printer-driven
@@ -349,10 +349,7 @@ pub async fn run(
     }
 
     let sink = default_printer_sink();
-    let raw = check_core(ctx, names, Some(&sink)).await?;
-    let CommandReport::Check(report) = &raw else {
-        unreachable!("check_core always returns CommandReport::Check")
-    };
+    let report = check_core(ctx, names, Some(&sink)).await?;
 
     // Build the legacy Summary from the typed CheckReport for stdout.
     let mut summary = Summary::default();
@@ -362,6 +359,7 @@ pub async fn run(
 
     summary.print();
 
+    let raw = CommandReport::from(report);
     maybe_write_report(
         &raw,
         &ctx.mode,
