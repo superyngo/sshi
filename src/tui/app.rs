@@ -1661,11 +1661,17 @@ impl App {
                     verbose: false,
                     auth_sender: None,
                 };
-                if let Ok(snaps) = fetch_latest_snapshots(&tmp_ctx, &host_names) {
-                    self.checkout_all_snapshots = snaps;
-                    self.apply_checkout_filter();
+                match fetch_latest_snapshots(&tmp_ctx, &host_names) {
+                    Ok(snaps) => {
+                        self.checkout_all_snapshots = snaps;
+                        self.apply_checkout_filter();
+                        self.db_stale = false;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Checkout snapshot fetch failed: {e}");
+                        // Leave db_stale true so the next reload retries.
+                    }
                 }
-                self.db_stale = false;
             }
             Err(e) => {
                 tracing::warn!("Checkout DB reload failed: {e}");
@@ -4859,6 +4865,64 @@ mod info_section_tests {
         // `i` opens on TabInfo (the legacy per-tab help) so the original
         // user flow is preserved.
         assert_eq!(InfoSection::default(), InfoSection::TabInfo);
+    }
+}
+
+#[cfg(test)]
+mod checkout_reload_tests {
+    use super::*;
+    use crate::config::schema::{AppConfig, HostEntry};
+    use std::sync::Arc;
+
+    #[test]
+    fn checkout_reload_keeps_db_stale_on_fetch_error() {
+        let dir = tempfile::tempdir().unwrap();
+        // Open and migrate DB first, then corrupt the table so open() succeeds
+        // but fetch_latest_snapshots fails.
+        {
+            let conn = crate::state::db::open(Some(dir.path())).unwrap();
+            conn.execute_batch("DROP TABLE check_snapshots;").unwrap();
+        }
+
+        let mut config = AppConfig::default();
+        config.settings.state_dir = Some(dir.path().to_path_buf());
+        config
+            .host
+            .push(Arc::new(HostEntry::placeholder("h1", "h1")));
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn);
+        let ctx = crate::commands::Context {
+            config: Arc::new(config),
+            config_path: None,
+            db: crate::state::db::DbHandle::new(conn),
+            timeout: 30,
+            mode: crate::commands::TargetMode::All,
+            serial: false,
+            skip: vec![],
+            verbose: false,
+            auth_sender: None,
+        };
+
+        let mut app =
+            App::from_context_with_state_path(&ctx, None, dir.path().join("tui_state.toml"));
+        app.db_stale = true;
+        app.maybe_reload_checkout();
+        assert!(
+            app.db_stale,
+            "db_stale must stay set when snapshot fetch fails"
+        );
+
+        // Now restore table schema and re-run: db_stale should clear
+        {
+            let conn = rusqlite::Connection::open(dir.path().join("sshi.db")).unwrap();
+            conn.execute_batch(include_str!("../state/migrations/001_init.sql"))
+                .unwrap();
+        }
+        app.maybe_reload_checkout();
+        assert!(
+            !app.db_stale,
+            "db_stale should clear when snapshot fetch succeeds"
+        );
     }
 }
 
