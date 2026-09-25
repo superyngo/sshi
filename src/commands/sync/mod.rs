@@ -554,6 +554,7 @@ async fn decide_batch(
         sessions,
     )
     .await?;
+    record_collect_failures(&batch_result.failed, summary, verbose);
 
     let mut all_decisions: Vec<SyncDecision> = Vec::new();
     for path in all_paths {
@@ -922,6 +923,19 @@ async fn run_recursive_entries(
     Ok(())
 }
 
+/// Record hosts whose metadata query failed: they count as failed hosts
+/// (exit 3, ADR 0004) instead of silently dropping out of the sync.
+fn record_collect_failures(failed: &[(String, String)], summary: &mut SyncSummary, verbose: bool) {
+    for (host, reason) in failed {
+        let msg = format!("metadata collection failed: {reason}");
+        if verbose {
+            printer::print_host_line(host, "error", &msg);
+        }
+        tracing::warn!(host = %host, error = %reason, "metadata collection failed");
+        summary.add_host_failure(host, &msg);
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn sync_path_across(
     ctx: &Context,
@@ -943,6 +957,7 @@ async fn sync_path_across(
         Arc::clone(&sessions),
     )
     .await?;
+    record_collect_failures(&collect_result.failed, summary, !quiet);
 
     if collect_result.found.is_empty() {
         if !collect_result.missing.is_empty() {

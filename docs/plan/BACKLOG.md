@@ -34,7 +34,6 @@ this file existed are recorded in those source documents, not here.
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
 | B31 | 2026-09-25 | 2026-09-25 | P2 | Windows `--sudo` never observes the elevated command's exit status; `run --sudo --dry-run` previews the sh form | `src/host/shell.rs` `sudo_wrap`; `src/commands/run.rs` `run` | M | Windows `--sudo` either reports the real exit status or is refused with an error; preview uses the host shell |
-| B32 | 2026-09-25 | 2026-09-25 | P2 | Batch metadata collection silently drops a host whose batch exits non-zero | `src/commands/sync/collect.rs` `batch_collect_all_metadata`, `collect_file_metadata` | S | Failed host recorded in the summary; one unreadable file does not abort the host's batch |
 | B33 | 2026-09-25 | 2026-09-25 | P2 | Newest source choice is nondeterministic on equal mtimes | `src/commands/sync/decide.rs` `make_decisions` | S | Deterministic tie-break (mtime, then hash, then host) or tie reported as conflict |
 | B34 | 2026-09-25 | 2026-09-25 | P2 | Recursive sync runs one exec per host per file and uses legacy `distribute`, bypassing per-host limits | `src/commands/sync/mod.rs` `run_recursive_entries`, `sync_path_across`; `src/commands/sync/distribute.rs` `distribute` | M | Recursive entries use the batch collector and `distribute_pooled`; exec count O(hosts), not O(hosts × files) |
 | B36 | 2026-09-25 | 2026-09-25 | P2 | Unknown `-n` names exit 0 with a wrong hint; missing explicit `-c` path silently becomes an empty config | `src/commands/mod.rs` `select_named`; `src/config/app.rs` `load` | S | `check -a -n typo` exits 1 naming available entries; `-c missing.toml` errors except for `init` |
@@ -98,6 +97,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B32 | Sync metadata collection silently dropped a host whose query failed | HASH-B32 — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |
 | B7 | TUI auth-bridge wait had no timeout; stale popups stayed open | `e237fc7` — `await_credential` with `AUTH_POPUP_TIMEOUT` (120 s); `PopupState::prune_stale_auth` |
 | B2 | TUI auth popup kept the typed credential in plain `String`s (value, undo/kill rings), never zeroized | `99be018` — `InputField::new_secret` + `wipe`; `AuthPopup` wipes on submit/cancel/drop; unit-test verified only |
 | B56 | No CI since `83aea4d`; headless build warned (unused imports in `commands::checkout`) | `f51974e` — `.github/workflows/ci.yml` (ubuntu+macos × default/headless, `-D warnings`); re-exports gated on `tui` |

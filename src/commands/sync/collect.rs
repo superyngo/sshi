@@ -129,7 +129,7 @@ pub(crate) async fn collect_file_metadata(
                          $i=Get-Item $f -ErrorAction SilentlyContinue; \
                          if ($i) {{ \
                            [int64](($i.LastWriteTimeUtc-[datetime]\"1970-01-01\").TotalSeconds), $i.Length -join \" \"; \
-                           (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() \
+                           $h=Get-FileHash $f -Algorithm SHA256 -ErrorAction SilentlyContinue; if ($h) {{ $h.Hash.ToLower() }} else {{ \"NOHASH\" }} \
                          }}",
                         p = ps_path
                     )
@@ -153,7 +153,7 @@ pub(crate) async fn collect_file_metadata(
                          $i=Get-Item '{p}' -ErrorAction SilentlyContinue; \
                          if ($i) {{ \
                            [int64](($i.LastWriteTimeUtc-[datetime]'1970-01-01').TotalSeconds), $i.Length -join ' '; \
-                           (Get-FileHash '{p}' -Algorithm SHA256).Hash.ToLower() \
+                           $h=Get-FileHash '{p}' -Algorithm SHA256 -ErrorAction SilentlyContinue; if ($h) {{ $h.Hash.ToLower() }} else {{ 'NOHASH' }} \
                          }}\"",
                         p = escaped
                     )
@@ -161,6 +161,9 @@ pub(crate) async fn collect_file_metadata(
             };
 
             match sessions.exec(&host.ssh_host, &cmd, timeout).await {
+                Ok(output) if !output.success => {
+                    (host.name.clone(), None, false, Some(exec_failure(&output)))
+                }
                 Ok(output) => {
                     let lines: Vec<&str> = output.stdout.lines().collect();
                     let stat_parts: Vec<&str> = lines
@@ -179,13 +182,13 @@ pub(crate) async fn collect_file_metadata(
                             host: host.name.clone(),
                             mtime,
                             hash,
-                        }), false)
+                        }), false, None)
                     } else {
-                        (host.name.clone(), None, true)
+                        (host.name.clone(), None, true, None)
                     }
                 }
-                Err(_) => {
-                    (host.name.clone(), None, false)
+                Err(e) => {
+                    (host.name.clone(), None, false, Some(format!("{e:#}")))
                 }
             }
         });
@@ -193,16 +196,23 @@ pub(crate) async fn collect_file_metadata(
 
     let mut found = Vec::new();
     let mut missing = Vec::new();
+    let mut failed = Vec::new();
     while let Some(joined) = set.join_next().await {
-        let (host_name, info, is_missing) = joined.context("task panic")?;
-        if let Some(fi) = info {
+        let (host_name, info, is_missing, err) = joined.context("task panic")?;
+        if let Some(e) = err {
+            failed.push((host_name, e));
+        } else if let Some(fi) = info {
             found.push(fi);
         } else if is_missing {
             missing.push(host_name);
         }
     }
 
-    Ok(CollectResult { found, missing })
+    Ok(CollectResult {
+        found,
+        missing,
+        failed,
+    })
 }
 
 pub(crate) async fn batch_collect_all_metadata(
@@ -228,9 +238,10 @@ pub(crate) async fn batch_collect_all_metadata(
             match result {
                 Ok(output) if output.success => {
                     let parsed = parse_batch_metadata_output(&output.stdout, &paths, &host.name);
-                    (host.name.clone(), Some(parsed), false)
+                    (host.name.clone(), Ok(parsed))
                 }
-                _ => (host.name.clone(), None, true),
+                Ok(output) => (host.name.clone(), Err(exec_failure(&output))),
+                Err(e) => (host.name.clone(), Err(format!("{e:#}"))),
             }
         });
     }
@@ -242,29 +253,42 @@ pub(crate) async fn batch_collect_all_metadata(
             CollectResult {
                 found: Vec::new(),
                 missing: Vec::new(),
+                failed: Vec::new(),
             },
         );
     }
 
+    let mut failed = Vec::new();
     while let Some(joined) = set.join_next().await {
-        let (host_name, parsed_opt, is_unreachable) = joined.context("task panic")?;
-        if is_unreachable {
-            continue;
-        }
-        if let Some(parsed) = parsed_opt {
-            for (path, single) in parsed {
-                if let Some(collect) = per_file.get_mut(&path) {
-                    if let Some(fi) = single.found {
-                        collect.found.push(fi);
-                    } else if single.is_missing {
-                        collect.missing.push(host_name.clone());
+        let (host_name, parsed) = joined.context("task panic")?;
+        match parsed {
+            Err(e) => failed.push((host_name, e)),
+            Ok(parsed) => {
+                for (path, single) in parsed {
+                    if let Some(collect) = per_file.get_mut(&path) {
+                        if let Some(fi) = single.found {
+                            collect.found.push(fi);
+                        } else if single.is_missing {
+                            collect.missing.push(host_name.clone());
+                        }
                     }
                 }
             }
         }
     }
 
-    Ok(BatchCollectResult { per_file })
+    Ok(BatchCollectResult { per_file, failed })
+}
+
+/// Reason string for a metadata query that ran but exited non-zero.
+fn exec_failure(output: &crate::host::session_pool::RemoteOutput) -> String {
+    let code = output
+        .exit_code
+        .map_or_else(|| "no exit status".to_string(), |c| format!("exit {c}"));
+    match output.stderr.trim() {
+        "" => code,
+        err => format!("{code}: {}", err.lines().next().unwrap_or(err)),
+    }
 }
 
 pub(crate) fn union_dir_expansions(
@@ -340,7 +364,7 @@ pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> St
                  $i=Get-Item $f -ErrorAction SilentlyContinue; \
                  if ($i) {{ \
                    [int64](($i.LastWriteTimeUtc-[datetime]\"1970-01-01\").TotalSeconds), $i.Length -join \" \"; \
-                   (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() \
+                   $h=Get-FileHash $f -Algorithm SHA256 -ErrorAction SilentlyContinue; if ($h) {{ $h.Hash.ToLower() }} else {{ \"NOHASH\" }} \
                  }} else {{ \"MISSING\" }} \
                  }}",
                 files = expanded.join(",")
@@ -368,7 +392,7 @@ pub(crate) fn build_batch_metadata_cmd(paths: &[String], shell: ShellType) -> St
                    $i=Get-Item $f -ErrorAction SilentlyContinue; \
                    if ($i) {{ \
                      [int64](($i.LastWriteTimeUtc-[datetime]'1970-01-01').TotalSeconds), $i.Length -join ' '; \
-                     (Get-FileHash $f -Algorithm SHA256).Hash.ToLower() \
+                     $h=Get-FileHash $f -Algorithm SHA256 -ErrorAction SilentlyContinue; if ($h) {{ $h.Hash.ToLower() }} else {{ \"NOHASH\" }} \
                    }} else {{ 'MISSING' }} \
                  }}",
                 files = expanded.join(",")

@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::config::schema::{ConflictStrategy, ShellType};
 
 use super::collect::{
-    build_batch_metadata_cmd, build_dir_expand_cmd, parse_batch_metadata_output,
-    parse_dir_expand_output, union_dir_expansions,
+    batch_collect_all_metadata, build_batch_metadata_cmd, build_dir_expand_cmd,
+    collect_file_metadata, parse_batch_metadata_output, parse_dir_expand_output,
+    union_dir_expansions,
 };
 use super::decide::{make_decisions, make_decisions_fixed_source};
 use super::types::{DirExpandResult, FileInfo};
@@ -583,4 +585,85 @@ fn test_by_host_name_maps_ssh_host_to_name() {
             ("ghost".to_string(), "x".to_string())
         ]
     );
+}
+
+/// B32: a host whose metadata query errors or exits non-zero is reported in
+/// `failed` (both collectors) instead of silently vanishing.
+#[tokio::test]
+async fn failed_metadata_hosts_are_reported_not_dropped() {
+    use crate::config::schema::{HostEntry, ShellType};
+    use crate::host::session_pool::{RemoteOutput, SessionPool};
+    use crate::host::session_pool_mock::MockSessionPool;
+    let h = |n: &str| {
+        Arc::new(HostEntry {
+            name: n.into(),
+            ssh_host: n.into(),
+            groups: vec![],
+            shell: ShellType::Sh,
+            proxy_jump: None,
+        })
+    };
+    let out = |stdout: &str, code: i32| RemoteOutput {
+        stdout: stdout.into(),
+        stderr: if code == 0 {
+            String::new()
+        } else {
+            "boom\nmore".into()
+        },
+        exit_code: Some(code),
+        success: code == 0,
+    };
+    let pool: Arc<dyn SessionPool> = Arc::new(
+        MockSessionPool::new(vec!["a".into(), "b".into(), "c".into()])
+            .with_exec(
+                "a",
+                "---FILE:",
+                out("---FILE:/x\n1700000000 1\nNOHASH\n", 0),
+            )
+            .with_exec("a", "stat", out("1700000000 1\n", 0))
+            .with_exec("b", "", out("", 7)),
+        // "c" has no canned response → exec error
+    );
+    let hosts = vec![h("a"), h("b"), h("c")];
+    let paths = vec!["/x".to_string()];
+    let failed_hosts = |f: &[(String, String)]| {
+        let mut v: Vec<_> = f.iter().map(|(h, r)| (h.clone(), r.clone())).collect();
+        v.sort();
+        v
+    };
+
+    let batch = batch_collect_all_metadata(&hosts, &paths, 5, 4, &pool)
+        .await
+        .unwrap();
+    assert_eq!(batch.per_file["/x"].found.len(), 1);
+    assert!(batch.per_file["/x"].missing.is_empty());
+    let f = failed_hosts(&batch.failed);
+    assert_eq!(f[0], ("b".into(), "exit 7: boom".into()));
+    assert_eq!(f[1].0, "c");
+
+    let single = collect_file_metadata(&hosts, "/x", 5, 4, Arc::clone(&pool))
+        .await
+        .unwrap();
+    assert_eq!(single.found.len(), 1);
+    assert!(
+        single.missing.is_empty(),
+        "failed host must not count as missing"
+    );
+    let f = failed_hosts(&single.failed);
+    assert_eq!(
+        f.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(),
+        ["b", "c"]
+    );
+}
+
+/// B32: one unreadable file must not make a PowerShell/cmd batch exit non-zero.
+#[test]
+fn windows_batch_hash_tolerates_unreadable_files() {
+    use crate::config::schema::ShellType;
+    let ps = build_batch_metadata_cmd(&["~/a".to_string()], ShellType::PowerShell);
+    assert!(
+        ps.contains("Get-FileHash $f -Algorithm SHA256 -ErrorAction SilentlyContinue"),
+        "{ps}"
+    );
+    assert!(ps.contains("NOHASH"), "{ps}");
 }
