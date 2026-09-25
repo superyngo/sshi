@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: `sync` with `conflict_strategy = skip` now reports conflicting files as skipped (with the hosts and reason) instead of counting them as in sync (B25).
 - fix: TUI Config tab no longer strips trailing `s`, `d` or `%` from text fields when editing opens (`prod` stayed `pro` on Enter); only unit-suffixed numeric fields (`30s`, `90d`) are stripped (B23).
 - fix: `checkout --combined-view` looks back 50 snapshots per host instead of 50 in total, so a host with fewer snapshots is no longer shown offline (B22).
 - fix: `sshi log` and the TUI View → Log preview no longer panic on non-ASCII command output; both truncate by display width via the shared `util::truncate` (B21).

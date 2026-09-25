@@ -25,7 +25,7 @@ use collect::{
     batch_collect_all_metadata, collect_file_metadata, collect_sync_paths, expand_directory_paths,
     requested_sync_paths, scope_collect_result, union_dir_expansions,
 };
-use decide::{make_decisions, make_decisions_fixed_source};
+use decide::{make_decisions, make_decisions_fixed_source, skip_conflict_hosts};
 use distribute::{distribute, distribute_pooled};
 use report::build_sync_report;
 use types::{DirExpandResult, HostPathMap, PathSourceMap, RecursiveEntry, SyncDecision};
@@ -601,6 +601,12 @@ async fn decide_batch(
             }
             decs
         } else {
+            if let Some(hosts) =
+                skip_conflict_hosts(&scoped_found, &ctx.config.settings.conflict_strategy)
+            {
+                record_conflict_skip(summary, path, &hosts, verbose);
+                continue;
+            }
             make_decisions(
                 &scoped_found,
                 &ctx.config.settings.conflict_strategy,
@@ -976,6 +982,13 @@ async fn sync_path_across(
         }
         decs
     } else {
+        if let Some(hosts) = skip_conflict_hosts(
+            &collect_result.found,
+            &ctx.config.settings.conflict_strategy,
+        ) {
+            record_conflict_skip(summary, path, &hosts, !quiet);
+            return Ok(());
+        }
         make_decisions(
             &collect_result.found,
             &ctx.config.settings.conflict_strategy,
@@ -1132,3 +1145,21 @@ mod tests;
 
 #[cfg(test)]
 mod integration_tests;
+
+/// Report a path left untouched because its copies differ and
+/// `conflict_strategy = skip` (B25: previously counted as in sync).
+fn record_conflict_skip(summary: &mut SyncSummary, path: &str, hosts: &[String], show: bool) {
+    let hosts = hosts.join(", ");
+    if show {
+        printer::print_host_line(
+            "skip",
+            "skip",
+            &format!("conflict on '{}' between {}", path, hosts),
+        );
+    }
+    summary.add_skip_with_reason(
+        path,
+        &hosts,
+        "contents differ between hosts (conflict_strategy = skip)",
+    );
+}

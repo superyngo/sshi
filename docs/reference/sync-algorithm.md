@@ -166,7 +166,7 @@ When hashes differ across reachable hosts, the configured `ConflictStrategy` dic
 - **Reason**: Formatted as `"newest mtime: <timestamp>"` (or `"in sync on reachable hosts, pushing to N missing"`).
 
 #### 2. `ConflictStrategy::Skip`
-- **Conflict Handling**: If more than one distinct hash exists across reachable hosts (`hashes.len() > 1`), `sshi` logs a conflict warning and emits **no** `SyncDecision`. The conflicting file is skipped without modification.
+- **Conflict Handling**: If more than one distinct hash exists across reachable hosts (`hashes.len() > 1`), `sshi` emits **no** `SyncDecision` and leaves every copy unmodified. The caller detects this case first via `decide::skip_conflict_hosts` and records the path as **skipped** in the summary with the reason "contents differ between hosts" and the hosts involved — it is never counted as in sync.
 - **Missing File Propagation**: If all existing copies share the same hash and only missing hosts exist, the first host is chosen as source to push to the missing hosts.
 
 ### Fixed Source Selection (`make_decisions_fixed_source`)

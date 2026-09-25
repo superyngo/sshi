@@ -4,6 +4,20 @@ use crate::config::schema::ConflictStrategy;
 
 use super::types::{FileInfo, SkipInfo, SyncDecision};
 
+/// Under `conflict_strategy = skip`, the hosts whose copies of a path
+/// disagree; `None` when the strategy is not `skip` or all hashes match.
+/// Callers must report these as skipped, not as in sync.
+pub(crate) fn skip_conflict_hosts(
+    file_infos: &[FileInfo],
+    strategy: &ConflictStrategy,
+) -> Option<Vec<String>> {
+    if *strategy != ConflictStrategy::Skip {
+        return None;
+    }
+    let hashes: std::collections::HashSet<_> = file_infos.iter().map(|f| &f.hash).collect();
+    (hashes.len() > 1).then(|| file_infos.iter().map(|f| f.host.clone()).collect())
+}
+
 pub(crate) fn make_decisions(
     file_infos: &[FileInfo],
     strategy: &ConflictStrategy,

@@ -535,3 +535,26 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
     assert_eq!(summary.files_synced, 0);
     assert_eq!(summary.files_skipped, 0);
 }
+
+/// B25: under `skip`, differing copies are reported as a conflict, not in sync.
+#[test]
+fn test_skip_conflict_hosts_reports_conflict() {
+    use super::decide::skip_conflict_hosts;
+    let differ = vec![
+        make_file_info("host-a", "~/.bashrc", "hash1"),
+        make_file_info("host-b", "~/.bashrc", "hash2"),
+    ];
+    let same = vec![
+        make_file_info("host-a", "~/.bashrc", "hash1"),
+        make_file_info("host-b", "~/.bashrc", "hash1"),
+    ];
+    assert_eq!(
+        skip_conflict_hosts(&differ, &ConflictStrategy::Skip),
+        Some(vec!["host-a".to_string(), "host-b".to_string()])
+    );
+    assert_eq!(skip_conflict_hosts(&same, &ConflictStrategy::Skip), None);
+    assert_eq!(
+        skip_conflict_hosts(&differ, &ConflictStrategy::Newest),
+        None
+    );
+}
