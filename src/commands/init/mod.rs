@@ -220,7 +220,7 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
                     ctx.concurrency(),
                     None,
                 )
-                .await;
+                .await?;
 
                 for (name, _err) in &host_key_failures {
                     if !accepted.contains(name) {

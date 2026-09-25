@@ -138,6 +138,45 @@ async fn keyscan_host(alias: &str, timeout_secs: u64) -> Result<String> {
     Ok(key_lines)
 }
 
+/// Append keyscan results to `~/.ssh/known_hosts`.
+///
+/// Returns an error if the home directory cannot be resolved or if writing to
+/// `known_hosts` fails.
+pub(crate) fn append_keys_to_known_hosts(home_dir: Option<PathBuf>, keys: &str) -> Result<()> {
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let home = home_dir.context("could not determine home directory")?;
+    let known_hosts_path = home.join(".ssh").join("known_hosts");
+
+    if let Some(parent) = known_hosts_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    let mut content = String::new();
+    if known_hosts_path.exists() {
+        if let Ok(existing) = std::fs::read_to_string(&known_hosts_path) {
+            if !existing.ends_with('\n') && !existing.is_empty() {
+                content.push('\n');
+            }
+        }
+    }
+    content.push_str(keys);
+    if !content.ends_with('\n') {
+        content.push('\n');
+    }
+
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&known_hosts_path)
+        .with_context(|| format!("failed to open {}", known_hosts_path.display()))?;
+    f.write_all(content.as_bytes())
+        .with_context(|| format!("failed to write to {}", known_hosts_path.display()))?;
+    Ok(())
+}
+
 /// Run ssh-keyscan for multiple hosts in parallel and append results to
 /// `~/.ssh/known_hosts`. Returns the list of host names that were
 /// successfully keyscanned.
@@ -149,7 +188,7 @@ pub(crate) async fn batch_keyscan_and_accept(
     timeout_secs: u64,
     concurrency: usize,
     progress: Option<&dyn ProgressSink>,
-) -> Vec<String> {
+) -> Result<Vec<String>> {
     let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
     let mut set = tokio::task::JoinSet::new();
 
@@ -195,45 +234,10 @@ pub(crate) async fn batch_keyscan_and_accept(
     }
 
     if !all_keys.is_empty() {
-        let known_hosts_path = dirs::home_dir()
-            .map(|h| h.join(".ssh").join("known_hosts"))
-            .expect("Could not determine home directory");
-
-        if let Some(parent) = known_hosts_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-
-        let mut content = String::new();
-        if known_hosts_path.exists() {
-            if let Ok(existing) = std::fs::read_to_string(&known_hosts_path) {
-                if !existing.ends_with('\n') && !existing.is_empty() {
-                    content.push('\n');
-                }
-            }
-        }
-        content.push_str(&all_keys);
-        if !content.ends_with('\n') {
-            content.push('\n');
-        }
-
-        use std::io::Write;
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&known_hosts_path)
-        {
-            Ok(mut f) => {
-                if let Err(e) = f.write_all(content.as_bytes()) {
-                    tracing::warn!("Failed to write known_hosts: {}", e);
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Failed to open known_hosts: {}", e);
-            }
-        }
+        append_keys_to_known_hosts(dirs::home_dir(), &all_keys)?;
     }
 
-    succeeded
+    Ok(succeeded)
 }
 
 /// Detect shell type on every host in `reachable` using the right pool.
@@ -703,5 +707,32 @@ mod tests {
             .skipped_hosts
             .iter()
             .any(|s| s == "host-x"));
+    }
+
+    #[test]
+    fn test_append_keys_to_known_hosts_missing_home() {
+        let err = append_keys_to_known_hosts(None, "host ssh-ed25519 AAA...").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("could not determine home directory"),
+            "unexpected error message: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_append_keys_to_known_hosts_empty_keys_is_ok() {
+        assert!(append_keys_to_known_hosts(None, "").is_ok());
+    }
+
+    #[test]
+    fn test_append_keys_to_known_hosts_writes_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let home = temp_dir.path().to_path_buf();
+        append_keys_to_known_hosts(Some(home.clone()), "host1 ssh-ed25519 AAA").unwrap();
+        let known_hosts = home.join(".ssh").join("known_hosts");
+        assert!(known_hosts.exists());
+        let content = std::fs::read_to_string(&known_hosts).unwrap();
+        assert_eq!(content, "host1 ssh-ed25519 AAA\n");
     }
 }

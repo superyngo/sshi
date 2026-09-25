@@ -19,7 +19,6 @@ this file existed are recorded in those source documents, not here.
 | B3 | 2026-05-21 | 2026-09-25 | P2 | Config tab breadcrumb indexes `config.host/check/sync[*i]` directly in the FieldTable branch; stale index panics | `src/tui/tabs/config_tab.rs` `breadcrumb` | S | Uses `.get(*i)` with fallback; stale index renders without panic |
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
 | B6 | 2026-07-18 | 2026-09-25 | P2 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `src/tui/focus.rs` | S | Types wired in or deleted; allow removed |
-| B8 | 2026-07-18 | 2026-09-25 | P3 | `batch_keyscan_and_accept` panics if the home directory cannot be resolved | `src/commands/init/core.rs` `batch_keyscan_and_accept` | S | Returns an `anyhow` error instead of `.expect` |
 | B10 | 2026-07-18 | 2026-09-25 | P3 | Checkout metric extractors have no unit tests | `src/commands/checkout/mod.rs` `extract_metric_value` | S | Tests cover each metric for sh and PowerShell samples plus fallbacks |
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
@@ -91,6 +90,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B8 | `batch_keyscan_and_accept` panicked if the home directory could not be resolved | HASH-B8 — `append_keys_to_known_hosts` returns `anyhow` context errors; caller propagates; unit tests for missing home and append |
 | B41 | `fetch_latest_snapshots` read the whole snapshot history | `4f7de17` — `latest_snapshot_sql` window query (newest `collected_at`, then `id`); tests: 15 history rows → 2, missing host kept |
 | B71 | CI/release actions on deprecated Node 20/16 runtimes (found while closing B36) | `340b9c9` — checkout@v5, upload-artifact@v6, download-artifact@v7, action-gh-release@v3 (smallest node24 majors; inputs unchanged, actionlint clean); CI annotation checked after push |
 | B64 | `cargo audit`: rsa Marvin, anyhow unsound `downcast_mut`, lru ×2 + paste (via ratatui 0.29), number_prefix (via indicatif 0.17) | `8c4d5ee` — ratatui 0.30 / crossterm 0.29 / indicatif 0.18 / anyhow 1.0.104, no code changes; `cargo audit`: only rsa left (Awaiting external); real binary: TUI tabs render identically (pyte), `check -a` progress OK |
