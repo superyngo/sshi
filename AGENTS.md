@@ -34,8 +34,9 @@ cargo fmt --check
   or in any code path reachable while the TUI is running. Use `tracing`
   macros (`error!`, `warn!`, `debug!`) instead.
 - `commands::*_core` functions must never call `output::printer`. They
-  receive a `ProgressSink` impl or return a `CommandReport` variant;
-  printing is the CLI wrapper's responsibility.
+  receive a `ProgressSink` impl and return data — a typed report
+  (`RunReport`, `ExecReport`, `CpReport`, `CheckReport`, … each with
+  `From<…> for CommandReport`); printing is the CLI wrapper's responsibility.
 - Every change merges into `main` only after `cargo test`,
   `cargo test --no-default-features`, `cargo clippy --all-targets`,
   `cargo clippy --all-targets --no-default-features`, and `cargo fmt --check`
