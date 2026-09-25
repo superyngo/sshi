@@ -19,6 +19,23 @@ use unicode_segmentation::UnicodeSegmentation;
 
 const RING_MAX: usize = 8;
 
+/// Kill ring shared by every non-secret field, so text killed in one field
+/// can be yanked into another (B11). Secret fields never touch it.
+static KILL_RING: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn kill_ring() -> std::sync::MutexGuard<'static, Vec<String>> {
+    KILL_RING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Serializes tests that use the process-wide kill ring and empties it.
+#[cfg(test)]
+pub(crate) fn kill_ring_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    kill_ring().clear();
+    guard
+}
+
 /// Whether the field is currently capturing keyboard input.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum InputMode {
@@ -37,7 +54,6 @@ pub struct InputField {
     /// Snapshot saved on `Enter` (active → normal) for Esc-restore.
     pub saved: String,
     pub mode: InputMode,
-    kill_ring: Vec<String>,
     undo_ring: Vec<(String, usize)>,
     /// Credential mode: no undo/kill history and a pre-reserved buffer, so
     /// the typed text lives in exactly one allocation that `wipe` zeroizes.
@@ -51,7 +67,6 @@ impl InputField {
             cursor_pos: initial.graphemes(true).count(),
             saved: initial.to_string(),
             mode: InputMode::Normal,
-            kill_ring: Vec::new(),
             undo_ring: Vec::new(),
             secret: false,
         }
@@ -71,8 +86,6 @@ impl InputField {
         use zeroize::Zeroize;
         self.value.zeroize();
         self.saved.zeroize();
-        self.kill_ring.iter_mut().for_each(|s| s.zeroize());
-        self.kill_ring.clear();
         self.undo_ring.iter_mut().for_each(|(s, _)| s.zeroize());
         self.undo_ring.clear();
         self.cursor_pos = 0;
@@ -83,7 +96,6 @@ impl InputField {
         self.saved = self.value.clone();
         self.mode = InputMode::Active;
         self.cursor_pos = self.grapheme_count();
-        self.kill_ring.clear();
         self.undo_ring.clear();
     }
 
@@ -302,7 +314,11 @@ impl InputField {
     }
 
     fn yank(&mut self) {
-        let Some(text) = self.kill_ring.last().cloned() else {
+        // Never paste shared (possibly unrelated) text into a credential.
+        if self.secret {
+            return;
+        }
+        let Some(text) = kill_ring().last().cloned() else {
             return;
         };
         self.snapshot_undo();
@@ -338,9 +354,10 @@ impl InputField {
         if killed.is_empty() {
             return;
         }
-        self.kill_ring.push(killed);
-        if self.kill_ring.len() > RING_MAX {
-            self.kill_ring.remove(0);
+        let mut ring = kill_ring();
+        ring.push(killed);
+        if ring.len() > RING_MAX {
+            ring.remove(0);
         }
     }
 
@@ -449,7 +466,7 @@ fn is_word_grapheme(g: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::InputField;
+    use super::{kill_ring_test_guard, InputField};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     fn ctrl(c: char) -> KeyEvent {
@@ -497,6 +514,7 @@ mod tests {
 
     #[test]
     fn ctrl_k_kills_to_end_and_yanks_back() {
+        let _ring = kill_ring_test_guard();
         let mut f = InputField::new("");
         activate_and_type(&mut f, "hello world");
         f.handle_key(ctrl('a'));
@@ -515,6 +533,7 @@ mod tests {
 
     #[test]
     fn ctrl_u_kills_to_start() {
+        let _ring = kill_ring_test_guard();
         let mut f = InputField::new("");
         activate_and_type(&mut f, "hello");
         f.handle_key(key(KeyCode::Left));
@@ -531,6 +550,7 @@ mod tests {
 
     #[test]
     fn ctrl_w_kills_word_back() {
+        let _ring = kill_ring_test_guard();
         let mut f = InputField::new("");
         activate_and_type(&mut f, "foo bar baz");
         assert_eq!(f.cursor_pos_for_test(), 11);
@@ -546,6 +566,7 @@ mod tests {
 
     #[test]
     fn alt_backspace_kills_word_back_like_ctrl_w() {
+        let _ring = kill_ring_test_guard();
         let mut f = InputField::new("");
         activate_and_type(&mut f, "alpha beta");
         assert!(f.handle_key(alt(KeyCode::Backspace)));
@@ -554,6 +575,7 @@ mod tests {
 
     #[test]
     fn ctrl_y_with_empty_kill_ring_is_noop() {
+        let _ring = kill_ring_test_guard();
         let mut f = InputField::new("");
         activate_and_type(&mut f, "abc");
         f.handle_key(key(KeyCode::Home));
@@ -652,6 +674,7 @@ mod tests {
 
     #[test]
     fn kill_ring_caps_at_ring_max() {
+        let _ring = kill_ring_test_guard();
         let mut f = InputField::new("");
         activate_and_type(&mut f, "a b c d e f g h i j");
         for _ in 0..10 {
@@ -738,5 +761,38 @@ mod tests {
         f.activate();
         let (before, cursor, _) = f.visible_parts(4);
         assert_eq!((before.as_str(), cursor.as_str()), ("\u{5b57}", " "));
+    }
+
+    /// B11: text killed in one field can be yanked in another; secret fields
+    /// neither feed nor read the shared ring.
+    #[test]
+    fn kill_ring_is_shared_across_fields_but_not_secrets() {
+        let _ring = kill_ring_test_guard();
+        let mut a = InputField::new("");
+        activate_and_type(&mut a, "alpha beta");
+        a.handle_key(ctrl('w'));
+        let mut b = InputField::new("");
+        b.activate();
+        b.handle_key(ctrl('y'));
+        assert_eq!(b.value, "beta");
+
+        let mut secret = InputField::new_secret();
+        secret.activate();
+        for c in "hunter2".chars() {
+            secret.handle_key(plain(c));
+        }
+        secret.handle_key(ctrl('u'));
+        secret.handle_key(ctrl('y'));
+        assert_eq!(
+            secret.value, "",
+            "secret yank must not paste the shared ring"
+        );
+        let mut c = InputField::new("");
+        c.activate();
+        c.handle_key(ctrl('y'));
+        assert_eq!(
+            c.value, "beta",
+            "secret kill must not reach the shared ring"
+        );
     }
 }
