@@ -109,7 +109,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B35 | Exit status was 0 when every host failed | HASH-B35 — ADR 0004: `3` some hosts failed, `4` all failed |
+| B35 | Exit status was 0 when every host failed | `dae7226` — ADR 0004: `3` some hosts failed, `4` all failed |
 | B25 | Sync with `conflict_strategy = skip` counted conflicting files as in sync | `2ae1102` — `skip_conflict_hosts` + skip summary entry |
 | B23 | TUI Config tab stripped trailing `s`/`d`/`%` from every text field on edit (`prod` → `pro`) | `fa9ee9d` — `strip_unit` limited to U64 fields |
 | B22 | `checkout --combined-view` applied the 50-snapshot lookback globally, so busy hosts starved others into "offline" | `980b31f` — per-host `ROW_NUMBER()` window |
