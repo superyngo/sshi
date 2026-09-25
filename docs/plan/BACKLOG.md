@@ -20,7 +20,6 @@ this file existed are recorded in those source documents, not here.
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
 | B5 | 2026-07-18 | 2026-09-25 | P2 | Recursive-sync drain in `sync_path_across` writes DB rows one by one outside a transaction | `src/commands/sync/mod.rs` `sync_path_across` | S | Inserts batched in one `ctx.db.transaction` |
 | B6 | 2026-07-18 | 2026-09-25 | P2 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `src/tui/focus.rs` | S | Types wired in or deleted; allow removed |
-| B7 | 2026-07-18 | 2026-09-25 | P2 | Auth-bridge oneshot await has no timeout or cancellation (ADR 0001 §c) | `src/host/auth.rs` `authenticate` | S | `rx.await` raced against a timeout and cancel token |
 | B8 | 2026-07-18 | 2026-09-25 | P3 | `batch_keyscan_and_accept` panics if the home directory cannot be resolved | `src/commands/init/core.rs` `batch_keyscan_and_accept` | S | Returns an `anyhow` error instead of `.expect` |
 | B9 | 2026-07-18 | 2026-09-25 | P3 | HTML report templating lives inside the general report module | `src/output/report.rs` `render_html_report` | M | HTML rendering in its own module |
 | B10 | 2026-07-18 | 2026-09-25 | P3 | Checkout metric extractors have no unit tests | `src/commands/checkout/mod.rs` `extract_metric_value` | S | Tests cover each metric for sh and PowerShell samples plus fallbacks |
@@ -99,6 +98,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B7 | TUI auth-bridge wait had no timeout; stale popups stayed open | HASH-B7 — `await_credential` with `AUTH_POPUP_TIMEOUT` (120 s); `PopupState::prune_stale_auth` |
 | B2 | TUI auth popup kept the typed credential in plain `String`s (value, undo/kill rings), never zeroized | `99be018` — `InputField::new_secret` + `wipe`; `AuthPopup` wipes on submit/cancel/drop; unit-test verified only |
 | B56 | No CI since `83aea4d`; headless build warned (unused imports in `commands::checkout`) | `f51974e` — `.github/workflows/ci.yml` (ubuntu+macos × default/headless, `-D warnings`); re-exports gated on `tui` |
 | B28 | Per-host `PassphraseCache`, overlapping CLI prompts, TUI popup replaced by a second request (rejected-unencrypted-key prompts were already fixed by B20) | `f885002` — `SharedPassphraseCache` + `unlock_key` under one lock; `PopupState::push_auth`/`next_auth` queue |

@@ -86,7 +86,7 @@ When the top navigation bar is focused (`navbar_focused == true`):
 - **Activation**: Triggered automatically when an SSH operation requests a password or decrypted key passphrase via `SshAuthRequest` (`src/host/auth.rs`).
 - **Behavior**: Highest priority modal; intercepts all keystrokes. Input is masked with asterisks. The field is `InputField::new_secret()`: no undo/kill history, a pre-reserved 256-byte buffer, and `wipe()` zeroizes it on `Enter`, `Esc` and drop.
 - **Actions**: `Enter` submits the credential over a Tokio oneshot channel (`responder`); `Esc` cancels the request.
-- **Queueing**: Requests arriving while the popup is open wait in `PopupState::auth_queue` and appear one at a time after each `Enter`/`Esc`. Hosts sharing an encrypted key are asked once per connect batch (see [ssh-transport.md](ssh-transport.md#authentication-order)).
+- **Queueing**: Requests arriving while the popup is open wait in `PopupState::auth_queue` and appear one at a time after each `Enter`/`Esc`. A popup left unanswered for 120 s fails its host and closes on its own; popups whose operation was cancelled are dropped the same way. Hosts sharing an encrypted key are asked once per connect batch (see [ssh-transport.md](ssh-transport.md#authentication-order)).
 
 ### Export Popup (`ExportPopup`)
 - **Activation**: Press `o` on the View tab when snapshots, log rows, or list entries are present.

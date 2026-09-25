@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: a TUI password/passphrase popup left unanswered now fails that host after 120 s instead of stalling the operation (and every host waiting to prompt) forever; popups whose operation stopped waiting close on their own (B7).
 - fix(security): the TUI password/passphrase popup keeps no undo or kill-ring copies of the typed text and zeroizes its buffer on Enter, Esc and close. Verified by unit tests; process memory was not inspected on the real binary (B2).
 - ci: restore CI — fmt, clippy (`-D warnings`) and tests for the default and `--no-default-features` builds on Linux and macOS; the headless build no longer warns about TUI-only re-exports in `commands::checkout` (B56).
 - fix: hosts connecting together share one passphrase cache and prompt one at a time, so a key used by several hosts is asked for once; only a passphrase that decrypts the key is remembered; terminal prompts no longer block async workers; in the TUI a second credential request is queued instead of replacing the open popup and failing the first host (B28).

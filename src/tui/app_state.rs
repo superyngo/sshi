@@ -249,6 +249,21 @@ impl PopupState {
         }
     }
 
+    /// Drop popups/queued requests whose auth task stopped waiting (prompt
+    /// timeout or operation cancelled). Returns true if anything changed.
+    pub fn prune_stale_auth(&mut self) -> bool {
+        let before = self.auth_queue.len() + usize::from(self.auth.is_some());
+        self.auth_queue.retain(|r| !r.responder.is_closed());
+        while self
+            .auth
+            .as_ref()
+            .is_some_and(|p| p.responder.as_ref().is_none_or(|r| r.is_closed()))
+        {
+            self.next_auth();
+        }
+        before != self.auth_queue.len() + usize::from(self.auth.is_some())
+    }
+
     /// Close the current credential popup and show the next queued one.
     pub fn next_auth(&mut self) {
         self.auth = self.auth_queue.pop_front().map(AuthPopup::new);
@@ -339,5 +354,22 @@ mod auth_queue_tests {
             }
             assert!(p.input.value.is_empty() && p.input.saved.is_empty());
         }
+    }
+
+    #[test]
+    fn stale_popups_are_pruned_and_next_live_one_shown() {
+        let mut s = PopupState::new();
+        let (r1, rx1) = req("first");
+        let (r2, rx2) = req("second");
+        let (r3, _rx3) = req("third");
+        s.push_auth(r1);
+        s.push_auth(r2);
+        s.push_auth(r3);
+        assert!(!s.prune_stale_auth());
+        drop(rx1); // first host timed out
+        drop(rx2); // second host's operation was cancelled
+        assert!(s.prune_stale_auth());
+        assert_eq!(s.auth.as_ref().unwrap().prompt, "third");
+        assert!(s.auth_queue.is_empty());
     }
 }

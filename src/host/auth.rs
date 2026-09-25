@@ -252,10 +252,7 @@ async fn prompt_credential(prompt: String, sender: Option<&SshAuthSender>) -> Re
             let (responder, receiver) = tokio::sync::oneshot::channel::<String>();
             tx.send(SshAuthRequest { prompt, responder })
                 .map_err(|_| anyhow::anyhow!("TUI auth bridge closed before prompt was sent"))?;
-            let credential = receiver
-                .await
-                .context("TUI auth bridge dropped responder without replying")?;
-            Ok(SecretString::new(credential))
+            await_credential(receiver, auth_popup_timeout()).await
         }
         None => {
             // Blocking TTY read: keep it off the async worker threads.
@@ -266,6 +263,35 @@ async fn prompt_credential(prompt: String, sender: Option<&SshAuthSender>) -> Re
                 .with_context(|| format!("Failed to read credential: {prompt}"))?;
             Ok(SecretString::new(pw))
         }
+    }
+}
+
+/// How long a TUI credential popup may stay unanswered (ADR 0001 §c).
+pub const AUTH_POPUP_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// `AUTH_POPUP_TIMEOUT`, overridable in debug builds via
+/// `SSHI_AUTH_PROMPT_TIMEOUT_SECS` for end-to-end tests.
+fn auth_popup_timeout() -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(s) = std::env::var("SSHI_AUTH_PROMPT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
+        return Duration::from_secs(s);
+    }
+    AUTH_POPUP_TIMEOUT
+}
+
+/// Wait for the TUI popup's answer, failing after `timeout`. Dropping the
+/// receiver (timeout or operation cancel) lets the TUI discard the popup.
+async fn await_credential(
+    receiver: tokio::sync::oneshot::Receiver<String>,
+    timeout: Duration,
+) -> Result<SecretString> {
+    match tokio::time::timeout(timeout, receiver).await {
+        Ok(Ok(credential)) => Ok(SecretString::new(credential)),
+        Ok(Err(_)) => anyhow::bail!("TUI auth bridge dropped responder without replying"),
+        Err(_) => anyhow::bail!("credential prompt timed out after {}s", timeout.as_secs()),
     }
 }
 
@@ -506,5 +532,34 @@ mod tests {
             unlocked, 3,
             "the host that typed the wrong passphrase skips the key"
         );
+    }
+
+    #[tokio::test]
+    async fn unanswered_popup_times_out_and_releases_the_prompt_lock() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SshAuthRequest>();
+        let cache = SharedPassphraseCache::default();
+        let held = tokio::spawn(async move {
+            let _lock = rx.recv().await; // keep the request (and its responder) alive, never answer
+            std::future::pending::<()>().await
+        });
+        let c = cache.clone();
+        let started = std::time::Instant::now();
+        let err = tokio::spawn(async move {
+            let _g = c.lock().await;
+            let (responder, receiver) = tokio::sync::oneshot::channel::<String>();
+            tx.send(SshAuthRequest {
+                prompt: "p".into(),
+                responder,
+            })
+            .unwrap();
+            await_credential(receiver, Duration::from_millis(200)).await
+        })
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert!(err.to_string().contains("timed out"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(cache.try_lock().is_ok(), "lock released after timeout");
+        held.abort();
     }
 }

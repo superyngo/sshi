@@ -729,6 +729,9 @@ impl App {
                 break;
             }
 
+            if self.popup.prune_stale_auth() {
+                dirty = true;
+            }
             if dirty {
                 terminal.draw(|f| self.render(f.area(), f))?;
                 dirty = false;
