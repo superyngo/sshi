@@ -104,7 +104,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B24 | SFTP transfers wrote in place; interrupted transfer truncated the destination; whole transfer bounded by `default_timeout`; close errors discarded | HASH-B24 — temp + rename (`temp_sibling`, `write_local_atomic`), idle timeout per step (`copy_idle`) |
+| B24 | SFTP transfers wrote in place; interrupted transfer truncated the destination; whole transfer bounded by `default_timeout`; close errors discarded | `252cbc7` — temp + rename (`temp_sibling`, `write_local_atomic`), idle timeout per step (`copy_idle`) |
 | B26 | No shared remote-quoting layer (sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`) | `8dbf80d` — `host::quote` used at every site; parity tests per `ShellType` |
 | B1 | PowerShell directory expansion interpolated paths in double quotes, so `$(...)` executed | `8dbf80d` — closed by B26 |
 | B20 | Auth tried neither ssh-agent nor default keys; one `IdentityFile` kept; `IdentitiesOnly` ignored | `0bc35f2` — OpenSSH order in `auth::authenticate`; `ssh_config` keeps all `IdentityFile`s, parses `IdentitiesOnly` |
