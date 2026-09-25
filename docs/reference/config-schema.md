@@ -9,9 +9,13 @@ This document describes the complete TOML configuration schema for `sshi` (`conf
 The configuration file is resolved in the following order:
 
 1. Custom path passed via CLI `--config <path>` (supports `~` tilde expansion).
-2. Default platform config path:
-   - **Linux / macOS**: `~/.config/sshi/config.toml` (`dirs::home_dir().join(".config/sshi/config.toml")`)
-   - **Windows**: `%APPDATA%\sshi\config.toml` (`dirs::config_dir().join("sshi/config.toml")`)
+2. `$XDG_CONFIG_HOME/sshi/config.toml`, if `XDG_CONFIG_HOME` is set to an absolute path.
+3. Default platform config path (`util::resolve_app_dir`):
+   - **Linux**: `~/.config/sshi/config.toml`
+   - **macOS**: `~/Library/Application Support/sshi/config.toml`
+   - **Windows**: `%APPDATA%\sshi\config.toml`
+
+**Legacy migration** (`util::app_dir`, `util::migrate_dir`): if the pre-B44 directory `~/.config/sshi` exists and the resolved directory has no `.migrated-config` marker, its files are copied in (existing files are never overwritten, the legacy directory is never modified), the marker is written, and one `sshi: migrated … → …` line goes to stderr. If the copy fails, sshi keeps using the legacy directory. No-op on Windows and whenever the legacy and resolved directories coincide (Linux default).
 
 If the file does not exist, `sshi` operates with default settings or prompts for initialization (`sshi init`).
 
@@ -30,7 +34,7 @@ The `[settings]` table contains global application settings. All fields are opti
 | `max_concurrency` | `integer` (`usize`) | `10` | Global maximum number of concurrent operations across all hosts. |
 | `max_per_host_concurrency` | `integer` (`usize`) | `4` | Maximum number of concurrent operations permitted against a single host. |
 | `skipped_hosts` | `array of strings` (`Vec<String>`) | `[]` | List of host aliases to skip during `sshi init` host-key scanning and shell probing. Persisted across re-initialization runs. |
-| `state_dir` | `string` (`Option<PathBuf>`) | `None` | Custom path override for the state directory where SQLite database (`sshi.db`) is stored. Defaults to `~/.local/state/sshi` (Linux/macOS) or `%LOCALAPPDATA%\sshi` (Windows). |
+| `state_dir` | `string` (`Option<PathBuf>`) | `None` | Custom path override for the state directory where SQLite database (`sshi.db`) is stored. Defaults to the platform state directory (see [state-schema.md](state-schema.md)). |
 | `default_output_format` | `string` (`Option<String>`) | `None` | Default format when `--out` is specified without an explicit file extension. Precedence: path extension > this setting > `"json"`. |
 
 ### Example

@@ -34,7 +34,7 @@ These options apply globally before subcommand dispatch:
 
 | Option | Description |
 |---|---|
-| `-c, --config <PATH>` | Explicit path to the configuration file (default: `~/.config/sshi/config.toml` or OS standard config directory). |
+| `-c, --config <PATH>` | Explicit path to the configuration file (default: `config.toml` in the platform config directory — see [config-schema.md](config-schema.md)). |
 | `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. Note: `-v` is top-level only and must precede the subcommand (e.g. `sshi -v check --all`); it is not accepted after subcommands. |
 | `-h, --help` | Print top-level help and exit with code `0`. |
 | `-V, --version` | Print version information and exit with code `0`. |

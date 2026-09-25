@@ -197,11 +197,15 @@ pub enum OperationKind {
 ///   1. resolve_path(custom_path) — applies default + tilde expansion.
 ///   2. canonicalize() if the file exists; fall back to to_string_lossy().
 fn config_hash(custom_path: Option<&Path>) -> String {
-    let resolved = match crate::config::app::resolve_path(custom_path) {
-        Ok(p) => p,
-        Err(_) => return "00000000".to_string(),
-    };
-    let s = match std::fs::canonicalize(&resolved) {
+    match crate::config::app::resolve_path(custom_path) {
+        Ok(p) => path_hash(&p),
+        Err(_) => "00000000".to_string(),
+    }
+}
+
+/// 8-hex-char blake3 prefix of `resolved`, canonicalized if it exists.
+fn path_hash(resolved: &Path) -> String {
+    let s = match std::fs::canonicalize(resolved) {
         Ok(canon) => canon.to_string_lossy().into_owned(),
         Err(_) => resolved.to_string_lossy().into_owned(),
     };
@@ -211,10 +215,31 @@ fn config_hash(custom_path: Option<&Path>) -> String {
 }
 
 /// Full path to the TUI state file for the given config.
+///
+/// For the default config (no `-c`), a missing file is seeded once from the
+/// state file keyed by the legacy `~/.config/sshi/config.toml` path, so the
+/// B44 directory move does not reset saved TUI state.
 pub fn state_file_path(config: &AppConfig, config_path: Option<&Path>) -> Result<PathBuf> {
     let dir = crate::state::db::resolved_state_dir(config.settings.state_dir.as_deref())?;
-    let hash = config_hash(config_path);
-    Ok(dir.join(format!("tui_state-{}.toml", hash)))
+    let path = dir.join(format!("tui_state-{}.toml", config_hash(config_path)));
+    if config_path.is_none() && !path.exists() {
+        if let Some(legacy_cfg) = dirs::home_dir()
+            .and_then(|h| crate::util::AppDir::Config.legacy_dir(&h))
+            .map(|d| d.join("config.toml"))
+        {
+            carry_legacy_state(&dir, &path_hash(&legacy_cfg), &path);
+        }
+    }
+    Ok(path)
+}
+
+/// Copy `tui_state-{legacy_hash}.toml` in `dir` to `target` if it exists.
+/// Best-effort: the legacy file is left in place and errors are ignored.
+fn carry_legacy_state(dir: &Path, legacy_hash: &str, target: &Path) {
+    let legacy = dir.join(format!("tui_state-{legacy_hash}.toml"));
+    if legacy != target && legacy.is_file() {
+        let _ = std::fs::copy(&legacy, target);
+    }
 }
 
 // ---------- load / save ----------
@@ -302,6 +327,16 @@ pub fn validate_filter(state: &mut TargetFilterState, config: &AppConfig) {
 mod tests {
     use super::*;
     use crate::config::schema::{HostEntry, ShellType};
+
+    #[test]
+    fn carry_legacy_state_copies_under_new_hash() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("tui_state-aaaaaaaa.toml"), "x=1").unwrap();
+        let target = t.path().join("tui_state-bbbbbbbb.toml");
+        carry_legacy_state(t.path(), "aaaaaaaa", &target);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "x=1");
+        assert!(t.path().join("tui_state-aaaaaaaa.toml").exists());
+    }
 
     #[test]
     fn empty_string_loads_as_default() {

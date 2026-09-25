@@ -268,8 +268,14 @@ All commands that operate on remote hosts support the following target options:
 
 ## Configuration
 
-The default config location is `~/.config/sshi/config.toml`, and state (the
-snapshot database `sshi.db`) lives in `~/.local/state/sshi/`.
+`config.toml` lives in `$XDG_CONFIG_HOME/sshi/` if set, otherwise
+`~/.config/sshi/` (Linux), `~/Library/Application Support/sshi/` (macOS) or
+`%APPDATA%\sshi\` (Windows). State (the snapshot database `sshi.db`) lives in
+`$XDG_STATE_HOME/sshi/` if set, otherwise `~/.local/state/sshi/` (Linux),
+`~/Library/Application Support/sshi/` (macOS) or `%LOCALAPPDATA%\sshi\`
+(Windows). On first run sshi copies files from the older `~/.config/sshi/` and
+`~/.local/state/sshi/` locations into the new ones and leaves the originals in
+place.
 
 > **Migrating from `ssync`:** this project was previously named `ssync` and used
 > `~/.config/ssync/` and `~/.local/state/ssync/`. The new paths are not read

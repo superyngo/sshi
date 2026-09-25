@@ -17,7 +17,7 @@ pub struct Cli {
     #[arg(short = 'v', long)]
     pub verbose: bool,
 
-    /// Path to config file (default: ~/.config/sshi/config.toml)
+    /// Path to config file (default: config.toml in $XDG_CONFIG_HOME/sshi or the platform config dir)
     #[arg(short = 'c', long, global = true, display_order = 9)]
     pub config: Option<PathBuf>,
 

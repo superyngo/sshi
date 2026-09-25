@@ -28,7 +28,7 @@ use crate::output::summary::Summary;
 pub struct InitPlan {
     /// `--dry-run`: skips the persist step. When `true`, `init_core`
     /// returns a report describing what would have happened without
-    /// writing `~/.config/sshi/config.toml`.
+    /// writing the default `config.toml`.
     pub dry_run: bool,
     /// `--update`: re-detect shell on hosts already present in sshi config.
     /// The CLI wrapper ORs this with the "config already exists" condition

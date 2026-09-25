@@ -91,7 +91,8 @@ pub struct Settings {
     pub skipped_hosts: Vec<String>,
 
     /// Override the state directory (where sshi.db is stored).
-    /// Default: ~/.local/state/sshi (Linux/macOS) or %LOCALAPPDATA%/sshi (Windows)
+    /// Default: `$XDG_STATE_HOME/sshi`, else ~/.local/state/sshi (Linux),
+    /// ~/Library/Application Support/sshi (macOS) or %LOCALAPPDATA%/sshi (Windows)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub state_dir: Option<PathBuf>,
 

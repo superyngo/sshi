@@ -11,9 +11,13 @@ This document describes the SQLite database architecture, schema migrations, tab
 ### Path resolution order
 
 1. **Config override**: If `[settings].state_dir` is configured in `config.toml`, `sshi` uses that directory directly (`state::db::resolved_state_dir`).
-2. **Platform default**:
-   - **Linux / macOS**: `~/.local/state/sshi/sshi.db` (following XDG Base Directory specification via `dirs::home_dir().join(".local/state/sshi")`).
-   - **Windows**: `%LOCALAPPDATA%\sshi\sshi.db` (`dirs::data_local_dir().join("sshi")`).
+2. **XDG**: `$XDG_STATE_HOME/sshi/sshi.db`, if `XDG_STATE_HOME` is set to an absolute path.
+3. **Platform default** (`util::resolve_app_dir`):
+   - **Linux**: `~/.local/state/sshi/sshi.db`
+   - **macOS**: `~/Library/Application Support/sshi/sshi.db` (shared with `config.toml`)
+   - **Windows**: `%LOCALAPPDATA%\sshi\sshi.db`
+
+**Legacy migration**: files in the pre-B44 `~/.local/state/sshi` (including `sshi.db-wal`/`-shm` and TUI state files) are copied in once, guarded by a `.migrated-state` marker; same rules as config migration in [config-schema.md](config-schema.md).
 
 When opening the database or saving TUI state, `sshi` ensures the parent directory hierarchy is created automatically (`std::fs::create_dir_all`).
 

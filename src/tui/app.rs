@@ -4185,7 +4185,8 @@ impl App {
                 self.config_path
                     .as_deref()
                     .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "(default — ~/.config/sshi/config.toml)".to_string())
+                    .or_else(|| crate::config::app::config_path().ok().map(|p| p.display().to_string()))
+                    .unwrap_or_else(|| "(default config.toml)".to_string())
             ),
         }
     }
@@ -4210,7 +4211,7 @@ impl App {
              Homepage:   {homepage}\n\
              Repository: {repository}\n\n\
              Privacy: sshi is a local CLI/TUI tool. It connects only to the\n\
-             SSH hosts you configure in ~/.config/sshi/config.toml or ~/.ssh/config.\n\
+             SSH hosts you configure in sshi's config.toml or ~/.ssh/config.\n\
              No telemetry, analytics, or automatic update checks are performed.\n\
              Operation logs and per-host checkout snapshots are stored locally in\n\
              the sshi state database (see `state_dir` in config.toml)."

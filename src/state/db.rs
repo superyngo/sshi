@@ -96,19 +96,10 @@ pub fn boxed_param<T: rusqlite::ToSql + Send + Sync + 'static>(
     Box::new(v)
 }
 
-/// Returns the platform-appropriate state directory for sshi.
+/// Returns the platform-appropriate state directory for sshi
+/// (see [`crate::util::app_dir`]).
 pub fn state_dir() -> Result<PathBuf> {
-    // On macOS/Linux: ~/.local/state/sshi
-    // On Windows: %LOCALAPPDATA%/sshi
-    #[cfg(target_os = "windows")]
-    let base = dirs::data_local_dir().context("Cannot determine local data directory")?;
-    // Use state subdirectory on Linux/macOS for XDG compliance
-    #[cfg(not(target_os = "windows"))]
-    let base = {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        home.join(".local").join("state")
-    };
-    Ok(base.join("sshi"))
+    crate::util::app_dir(crate::util::AppDir::State)
 }
 
 /// Resolve the effective state directory (AD-16): honors the

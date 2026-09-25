@@ -9,18 +9,10 @@ use toml_edit::{value, Array, ArrayOfTables, DocumentMut, Item, Table, Value};
 
 use super::schema::{AppConfig, CheckEntry, HostEntry, SyncEntry};
 
-/// Returns the platform-appropriate config directory for sshi.
+/// Returns the platform-appropriate config directory for sshi
+/// (see [`crate::util::app_dir`]).
 pub fn config_dir() -> Result<PathBuf> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = dirs::home_dir().context("Cannot determine home directory")?;
-        Ok(home.join(".config").join("sshi"))
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let base = dirs::config_dir().context("Cannot determine config directory")?;
-        Ok(base.join("sshi"))
-    }
+    crate::util::app_dir(crate::util::AppDir::Config)
 }
 
 /// Returns the path to config.toml.
@@ -352,8 +344,8 @@ fn inject_config_comments(toml_str: &str) -> String {
     let settings_comment = "\
 # [settings] Global settings:
 #   state_dir = \"/custom/path/to/state\"  # Custom DB storage location
-#                                          # Default: ~/.local/state/sshi (Linux/macOS)
-#                                          #          %LOCALAPPDATA%/sshi (Windows)
+#                                          # Default: $XDG_STATE_HOME/sshi, else ~/.local/state/sshi (Linux),
+#                                          #   ~/Library/Application Support/sshi (macOS), %LOCALAPPDATA%/sshi (Windows)
 ";
 
     let check_comment = "\
