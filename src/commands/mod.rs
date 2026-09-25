@@ -5,6 +5,7 @@ pub mod checkout;
 pub mod config;
 pub mod cp;
 pub mod exec;
+pub(crate) mod fanout;
 pub mod init;
 pub mod list;
 pub mod log;

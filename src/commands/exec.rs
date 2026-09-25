@@ -2,9 +2,8 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{bail, Result};
 
 use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
@@ -13,6 +12,7 @@ use crate::output::printer;
 use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
+use super::fanout::FanOut;
 use super::report::{
     default_printer_sink, CommandReport, ExecHostResult, ExecReport, HostOutcome, HostStatus,
     ProgressSink,
@@ -85,7 +85,7 @@ pub async fn exec_core(
 
     let reachable = pool.filter_reachable(&hosts);
 
-    let mut set = tokio::task::JoinSet::new();
+    let mut fan = FanOut::new(&pool);
     for host in &reachable {
         // Check shell compatibility — skipped hosts are reported immediately.
         if let Some(required) = compatible_shell {
@@ -109,27 +109,17 @@ pub async fn exec_core(
             }
         }
 
-        let host = Arc::clone(host);
+        let task_host = Arc::clone(host);
         let script_path = script_path.to_path_buf();
         let timeout = ctx.timeout;
         let sessions = pool.session_pool.clone();
-        let global_sem = pool.limiter.global_semaphore();
-        if let Some(p) = progress {
-            p.host_started(&host.name);
-        }
-
-        set.spawn(async move {
-            let _permit = global_sem.acquire_owned().await.unwrap();
-            let start = Instant::now();
-            let result =
-                exec_on_host_pooled(&host, &script_path, timeout, keep, sudo, sessions).await;
-            let elapsed = start.elapsed();
-            (host, result, elapsed)
+        fan.spawn(host, progress, async move {
+            exec_on_host_pooled(&task_host, &script_path, timeout, keep, sudo, sessions).await
         });
     }
 
-    while let Some(joined) = set.join_next().await {
-        let (host, result, elapsed) = joined.context("task panic")?;
+    while let Some(done) = fan.next().await {
+        let (host, result, elapsed) = done?;
         let ms = elapsed.as_millis() as u64;
         let now = chrono::Utc::now().timestamp();
 

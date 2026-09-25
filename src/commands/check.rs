@@ -2,9 +2,8 @@
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-use std::time::Instant;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 
 use crate::config::schema::HostEntry;
 use crate::host::pool::SshPool;
@@ -14,6 +13,7 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 use crate::state::retention;
 
+use super::fanout::FanOut;
 use super::report::{
     default_printer_sink, CheckHostResult, CheckReport, CommandReport, HostOutcome, HostStatus,
     ProgressSink,
@@ -118,32 +118,22 @@ pub async fn check_core(
 
     let reachable = pool.filter_reachable(&hosts);
 
-    let mut set = tokio::task::JoinSet::new();
+    let mut fan = FanOut::new(&pool);
     for host in &reachable {
         let (enabled, check_paths) = match host_configs.get(&host.name) {
             Some(config) => config.clone(),
             None => continue,
         };
-        if let Some(p) = progress {
-            p.host_started(&host.name);
-        }
-        let host = Arc::clone(host);
+        let task_host = Arc::clone(host);
         let timeout = ctx.timeout;
         let sessions = pool.session_pool.clone();
-        let global_sem = pool.limiter.global_semaphore();
-
-        set.spawn(async move {
-            let _permit = global_sem.acquire_owned().await.unwrap();
-            let start = Instant::now();
-            let result =
-                collector::collect_pooled(&host, &enabled, &check_paths, timeout, sessions).await;
-            let elapsed = start.elapsed();
-            (host, result, elapsed)
+        fan.spawn(host, progress, async move {
+            collector::collect_pooled(&task_host, &enabled, &check_paths, timeout, sessions).await
         });
     }
 
-    while let Some(joined) = set.join_next().await {
-        let (host, result, elapsed) = joined.context("task panic")?;
+    while let Some(done) = fan.next().await {
+        let (host, result, elapsed) = done?;
         let now = chrono::Utc::now().timestamp();
         let ms = elapsed.as_millis() as u64;
 

@@ -1,9 +1,8 @@
 //! Run a shell command on remote hosts.
 
 use std::sync::Arc;
-use std::time::Instant;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 
 use crate::host::pool::SshPool;
 use crate::host::shell;
@@ -11,6 +10,7 @@ use crate::output::printer;
 use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
+use super::fanout::FanOut;
 use super::report::{
     default_printer_sink, CommandReport, HostOutcome, HostStatus, ProgressSink, RunHostResult,
     RunReport,
@@ -61,7 +61,7 @@ pub async fn run_core(
 
     let reachable = pool.filter_reachable(&hosts);
 
-    let mut set = tokio::task::JoinSet::new();
+    let mut fan = FanOut::new(&pool);
     for host in &reachable {
         let host = Arc::clone(host);
         let cmd = if sudo {
@@ -102,22 +102,14 @@ pub async fn run_core(
         };
         let timeout = ctx.timeout;
         let sessions = pool.session_pool.clone();
-        let global_sem = pool.limiter.global_semaphore();
-        if let Some(p) = progress {
-            p.host_started(&host.name);
-        }
-
-        set.spawn(async move {
-            let _permit = global_sem.acquire_owned().await.unwrap();
-            let start = Instant::now();
-            let result = sessions.exec(&host.ssh_host, &cmd, timeout).await;
-            let elapsed = start.elapsed();
-            (host, result, elapsed)
+        let ssh_host = host.ssh_host.clone();
+        fan.spawn(&host, progress, async move {
+            sessions.exec(&ssh_host, &cmd, timeout).await
         });
     }
 
-    while let Some(joined) = set.join_next().await {
-        let (host, result, elapsed) = joined.context("task panic")?;
+    while let Some(done) = fan.next().await {
+        let (host, result, elapsed) = done?;
         let ms = elapsed.as_millis() as u64;
         let now = chrono::Utc::now().timestamp();
 
