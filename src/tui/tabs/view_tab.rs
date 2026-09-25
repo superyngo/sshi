@@ -507,6 +507,66 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
 
 // ── List result ───────────────────────────────────────────────────────────────
 
+/// One line of the View → List result. [`list_layout`] is the single model
+/// behind rendering, line count, cursor stops and `e`-to-edit (B47).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListRow {
+    HostsTitle,
+    HostsHeader,
+    HostsSeparator,
+    Host(usize),
+    Blank,
+    ChecksTitle,
+    SyncsTitle,
+    /// `(none)` placeholder of an empty section.
+    Empty,
+    CheckName(usize),
+    CheckEnabled(usize),
+    CheckPath(usize, usize),
+    Sync(usize),
+}
+
+impl ListRow {
+    /// The config entry this row edits (`None` for decorative rows).
+    fn target(self) -> Option<ListEditTarget> {
+        match self {
+            ListRow::Host(i) => Some(ListEditTarget::Host(i)),
+            ListRow::CheckName(i) | ListRow::CheckEnabled(i) | ListRow::CheckPath(i, _) => {
+                Some(ListEditTarget::Check(i))
+            }
+            ListRow::Sync(i) => Some(ListEditTarget::Sync(i)),
+            _ => None,
+        }
+    }
+}
+
+/// Rows of the List result, in display order (mirrors `list::run`).
+fn list_layout(list: &ListData) -> Vec<ListRow> {
+    let mut rows = vec![
+        ListRow::HostsTitle,
+        ListRow::HostsHeader,
+        ListRow::HostsSeparator,
+    ];
+    rows.extend((0..list.hosts.len()).map(ListRow::Host));
+    rows.extend([ListRow::Blank, ListRow::ChecksTitle]);
+    if list.checks.is_empty() {
+        rows.push(ListRow::Empty);
+    }
+    for (i, entry) in list.checks.iter().enumerate() {
+        rows.push(ListRow::CheckName(i));
+        if !entry.enabled.is_empty() {
+            rows.push(ListRow::CheckEnabled(i));
+        }
+        rows.extend((0..entry.path.len()).map(|j| ListRow::CheckPath(i, j)));
+    }
+    rows.extend([ListRow::Blank, ListRow::SyncsTitle]);
+    if list.syncs.is_empty() {
+        rows.push(ListRow::Empty);
+    }
+    rows.extend((0..list.syncs.len()).map(ListRow::Sync));
+    rows
+}
+
 /// Render `ListData` mirroring the text layout of `list::run`.
 #[allow(dead_code)]
 pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
@@ -524,93 +584,71 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
         }
     };
 
-    let mut lines: Vec<Line> = Vec::new();
-
-    // ── Hosts ──
-    lines.push(Line::from(Span::styled(
-        format!("── Hosts ({}) ──", list_data.hosts.len()),
-        Style::default()
-            .fg(data.theme.accent_checkout)
-            .add_modifier(Modifier::BOLD),
-    )));
-    lines.push(Line::from(Span::raw(format!(
-        "  {:<16} {:<20} {:<12} Groups",
-        "Name", "SSH Host", "Shell"
-    ))));
-    lines.push(Line::from(Span::styled(
-        format!("  {}", "-".repeat(64)),
-        Style::default().fg(data.theme.inactive),
-    )));
-    for h in &list_data.hosts {
-        let groups = if h.groups.is_empty() {
-            "-".to_string()
-        } else {
-            h.groups.join(", ")
-        };
-        lines.push(Line::from(Span::raw(format!(
-            "  {:<16} {:<20} {:<12} {}",
-            h.name, h.ssh_host, h.shell, groups
-        ))));
-    }
-
-    // ── Checks ──
-    lines.push(Line::from(Span::raw("")));
-    lines.push(Line::from(Span::styled(
-        format!("── Applicable Checks ({}) ──", list_data.checks.len()),
-        Style::default()
-            .fg(data.theme.accent_checkout)
-            .add_modifier(Modifier::BOLD),
-    )));
-    if list_data.checks.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  (none)",
-            Style::default().fg(data.theme.inactive),
-        )));
-    } else {
-        for (i, entry) in list_data.checks.iter().enumerate() {
-            lines.push(Line::from(Span::raw(format!(
+    let title = |text: String| {
+        Line::from(Span::styled(
+            text,
+            Style::default()
+                .fg(data.theme.accent_checkout)
+                .add_modifier(Modifier::BOLD),
+        ))
+    };
+    let dim =
+        |text: String| Line::from(Span::styled(text, Style::default().fg(data.theme.inactive)));
+    let lines: Vec<Line> = list_layout(list_data)
+        .into_iter()
+        .map(|row| match row {
+            ListRow::HostsTitle => title(format!("── Hosts ({}) ──", list_data.hosts.len())),
+            ListRow::HostsHeader => Line::from(Span::raw(format!(
+                "  {:<16} {:<20} {:<12} Groups",
+                "Name", "SSH Host", "Shell"
+            ))),
+            ListRow::HostsSeparator => dim(format!("  {}", "-".repeat(64))),
+            ListRow::Host(i) => {
+                let h = &list_data.hosts[i];
+                let groups = if h.groups.is_empty() {
+                    "-".to_string()
+                } else {
+                    h.groups.join(", ")
+                };
+                Line::from(Span::raw(format!(
+                    "  {:<16} {:<20} {:<12} {}",
+                    h.name, h.ssh_host, h.shell, groups
+                )))
+            }
+            ListRow::Blank => Line::from(Span::raw("")),
+            ListRow::ChecksTitle => title(format!(
+                "── Applicable Checks ({}) ──",
+                list_data.checks.len()
+            )),
+            ListRow::SyncsTitle => title(format!(
+                "── Applicable Sync Entries ({}) ──",
+                list_data.syncs.len()
+            )),
+            ListRow::Empty => dim("  (none)".to_string()),
+            ListRow::CheckName(i) => Line::from(Span::raw(format!(
                 "  [{}] name: {}",
                 i + 1,
-                format_entry_name(&entry.name)
-            ))));
-            if !entry.enabled.is_empty() {
-                lines.push(Line::from(Span::raw(format!(
-                    "      enabled: {}",
-                    entry.enabled.join(", ")
-                ))));
+                format_entry_name(&list_data.checks[i].name)
+            ))),
+            ListRow::CheckEnabled(i) => Line::from(Span::raw(format!(
+                "      enabled: {}",
+                list_data.checks[i].enabled.join(", ")
+            ))),
+            ListRow::CheckPath(i, j) => {
+                let p = &list_data.checks[i].path[j];
+                Line::from(Span::raw(format!("      path: {} ({})", p.path, p.label)))
             }
-            for p in &entry.path {
-                lines.push(Line::from(Span::raw(format!(
-                    "      path: {} ({})",
-                    p.path, p.label
-                ))));
+            ListRow::Sync(i) => {
+                let entry = &list_data.syncs[i];
+                Line::from(Span::raw(format!(
+                    "  [{}] name: {}  paths: {}",
+                    i + 1,
+                    format_entry_name(&entry.name),
+                    entry.paths.join(", ")
+                )))
             }
-        }
-    }
-
-    // ── Syncs ──
-    lines.push(Line::from(Span::raw("")));
-    lines.push(Line::from(Span::styled(
-        format!("── Applicable Sync Entries ({}) ──", list_data.syncs.len()),
-        Style::default()
-            .fg(data.theme.accent_checkout)
-            .add_modifier(Modifier::BOLD),
-    )));
-    if list_data.syncs.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "  (none)",
-            Style::default().fg(data.theme.inactive),
-        )));
-    } else {
-        for (i, entry) in list_data.syncs.iter().enumerate() {
-            lines.push(Line::from(Span::raw(format!(
-                "  [{}] name: {}  paths: {}",
-                i + 1,
-                format_entry_name(&entry.name),
-                entry.paths.join(", ")
-            ))));
-        }
-    }
+        })
+        .collect();
 
     // Apply scroll, and (when the result list holds focus) draw a row cursor
     // on the selected line so it's clear where focus is — mirroring Checkout.
@@ -635,67 +673,19 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
 }
 
 /// Number of lines `render_list_result` produces for this data, so the scroll
-/// viewport can be dimensioned correctly. Must mirror the structure above.
+/// viewport can be dimensioned correctly.
 pub fn list_line_count(list: &ListData) -> usize {
-    // Hosts: title + column header + separator + one per host.
-    let mut n = 3 + list.hosts.len();
-    // Checks: blank + title + body.
-    n += 2;
-    if list.checks.is_empty() {
-        n += 1;
-    } else {
-        for entry in &list.checks {
-            n += 1; // scope line
-            if !entry.enabled.is_empty() {
-                n += 1;
-            }
-            n += entry.path.len();
-        }
-    }
-    // Syncs: blank + title + body.
-    n += 2;
-    if list.syncs.is_empty() {
-        n += 1;
-    } else {
-        n += list.syncs.len();
-    }
-    n
+    list_layout(list).len()
 }
 
-/// Per-line selectable flags for `render_list_result`, mirroring its structure
-/// exactly so the result cursor can skip decorative lines (section titles,
-/// column header, separator, blank spacers, and empty `(none)` placeholders).
-/// `true` marks a data row the focus cursor may land on.
+/// Per-line selectable flags for `render_list_result`: `true` marks a data
+/// row the focus cursor may land on (titles, column header, separator,
+/// blanks and `(none)` placeholders are skipped).
 pub fn list_selectable_lines(list: &ListData) -> Vec<bool> {
-    let mut sel: Vec<bool> = Vec::new();
-    // ── Hosts ──: title, column header, separator (all decorative).
-    sel.push(false); // title
-    sel.push(false); // column header
-    sel.push(false); // separator
-    sel.extend(list.hosts.iter().map(|_| true)); // one host row each
-                                                 // ── Checks ──: blank + title (decorative), then body.
-    sel.push(false); // blank
-    sel.push(false); // title
-    if list.checks.is_empty() {
-        sel.push(false); // "(none)" placeholder
-    } else {
-        for entry in &list.checks {
-            sel.push(true); // scope line
-            if !entry.enabled.is_empty() {
-                sel.push(true); // enabled line
-            }
-            sel.extend(entry.path.iter().map(|_| true)); // one path line each
-        }
-    }
-    // ── Syncs ──: blank + title (decorative), then body.
-    sel.push(false); // blank
-    sel.push(false); // title
-    if list.syncs.is_empty() {
-        sel.push(false); // "(none)" placeholder
-    } else {
-        sel.extend(list.syncs.iter().map(|_| true)); // one entry line each
-    }
-    sel
+    list_layout(list)
+        .into_iter()
+        .map(|row| row.target().is_some())
+        .collect()
 }
 
 fn format_entry_name(name: &Option<String>) -> String {
@@ -719,59 +709,8 @@ pub enum ListEditTarget {
 }
 
 /// Map an absolute line index to the config entry it represents.
-/// Mirrors the exact layout of `render_list_result` / `list_selectable_lines`.
 pub fn list_entry_at_line(list: &ListData, line: usize) -> Option<ListEditTarget> {
-    let mut cursor = 0usize;
-
-    // ── Hosts ──: title, column header, separator.
-    cursor += 3;
-    if line < cursor {
-        return None;
-    }
-    let host_count = list.hosts.len();
-    if line < cursor + host_count {
-        return Some(ListEditTarget::Host(line - cursor));
-    }
-    cursor += host_count;
-
-    // ── Checks ──: blank + title.
-    cursor += 2;
-    if line < cursor {
-        return None;
-    }
-    if list.checks.is_empty() {
-        // "(none)" placeholder.
-        return None;
-    }
-    for (i, entry) in list.checks.iter().enumerate() {
-        let _start = cursor;
-        let mut height = 1; // scope line
-        if !entry.enabled.is_empty() {
-            height += 1;
-        }
-        height += entry.path.len();
-        cursor += height;
-        if line < cursor {
-            return Some(ListEditTarget::Check(i));
-        }
-    }
-
-    // ── Syncs ──: blank + title.
-    cursor += 2;
-    if line < cursor {
-        return None;
-    }
-    if list.syncs.is_empty() {
-        return None;
-    }
-    for (i, _entry) in list.syncs.iter().enumerate() {
-        if line == cursor {
-            return Some(ListEditTarget::Sync(i));
-        }
-        cursor += 1;
-    }
-
-    None
+    list_layout(list).get(line).and_then(|row| row.target())
 }
 
 // ── Log result ────────────────────────────────────────────────────────────────
@@ -977,5 +916,19 @@ mod tests {
         let d = sample(false);
         assert_eq!(list_entry_at_line(&d, 5), None); // checks title
         assert_eq!(list_entry_at_line(&d, 6), None); // "(none)"
+    }
+
+    /// B47: with no checks, sync rows still resolve to their entry.
+    #[test]
+    fn list_entry_at_line_sync_without_checks() {
+        let mut d = sample(true);
+        d.checks.clear();
+        // hosts: title(0) hdr(1) sep(2) h1(3) h2(4); blank(5) checks title(6)
+        // "(none)"(7); blank(8) syncs title(9) sync[0](10)
+        assert_eq!(list_entry_at_line(&d, 7), None);
+        assert_eq!(list_entry_at_line(&d, 10), Some(ListEditTarget::Sync(0)));
+        let sel = list_selectable_lines(&d);
+        assert_eq!(sel.len(), list_line_count(&d));
+        assert!(sel[10] && !sel[7]);
     }
 }

@@ -4976,6 +4976,41 @@ mod navbar_focus_tests {
         App::from_context_with_state_path(&ctx, None, state_file_path)
     }
 
+    /// B47: `e` on a sync row of View → List opens that entry's edit form,
+    /// also when the config has no `[[check]]` entries.
+    #[test]
+    fn e_on_list_sync_row_edits_it_without_checks() {
+        use crate::config::schema::{HostEntry, SyncEntry};
+        let mut app = minimal_app();
+        let mut cfg = (*app.config).clone();
+        cfg.check.clear();
+        cfg.host.push(Arc::new(HostEntry::placeholder("h1", "h1")));
+        let sync: SyncEntry = serde_json::from_value(serde_json::json!({
+            "name": "s", "paths": ["~/f"]
+        }))
+        .unwrap();
+        cfg.sync.push(sync.clone());
+        app.config = Arc::new(cfg);
+        app.view.list = Some(crate::commands::list::ListData {
+            hosts: vec![(*app.config.host[0]).clone()],
+            checks: vec![],
+            syncs: vec![sync],
+        });
+        app.active_tab = TabId::View;
+        app.view.op = ViewOperationKind::List;
+        app.view.focus = ViewFocus::Result;
+        // hosts title/header/separator, h1 (3), blank, checks title, "(none)",
+        // blank, syncs title, sync[0] (9)
+        app.checkout_viewport.selected = 9;
+        app.handle_key(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(
+            app.active_tab,
+            TabId::Config,
+            "`e` should open the sync form"
+        );
+    }
+
     #[test]
     fn app_from_context_with_state_path_uses_explicit_path() {
         let dir = tempfile::tempdir().unwrap();
