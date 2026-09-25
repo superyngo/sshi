@@ -7,6 +7,7 @@ use tokio::sync::Semaphore;
 
 /// Dual-level concurrency limiter: global cap + per-host cap.
 /// Acquire both permits before any SSH/SCP operation.
+#[derive(Clone)]
 pub struct ConcurrencyLimiter {
     global: Arc<Semaphore>,
     per_host: HashMap<String, Arc<Semaphore>>,

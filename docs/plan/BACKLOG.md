@@ -24,7 +24,6 @@ this file existed are recorded in those source documents, not here.
 | B15 | 2026-09-25 | 2026-09-25 | P3 | `init --update` is a no-op whenever `config.toml` exists (`effective_update = update \|\| config_exists`) | `src/commands/init/mod.rs` `run` | S | Flag has a distinct effect, or is removed |
 | B16 | 2026-09-25 | 2026-09-25 | P3 | New-config comment template documents removed `groups`/`enable_hosts`/`enable_all` fields | `src/config/app.rs` `inject_config_comments` | S | Template mentions only fields present in `CheckEntry`/`SyncEntry` |
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
-| B18 | 2026-09-25 | 2026-09-25 | P2 | `distribute_pooled` acquires the global permit before the per-host one, opposite to `ConcurrencyLimiter::acquire` | `src/commands/sync/distribute.rs` `distribute_pooled` | S | Uses `ConcurrencyLimiter::acquire` (per-host first) |
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
 | B31 | 2026-09-25 | 2026-09-25 | P2 | Windows `--sudo` never observes the elevated command's exit status; `run --sudo --dry-run` previews the sh form | `src/host/shell.rs` `sudo_wrap`; `src/commands/run.rs` `run` | M | Windows `--sudo` either reports the real exit status or is refused with an error; preview uses the host shell |
@@ -89,6 +88,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B18 | `distribute_pooled` acquired the global permit before the per-host one | HASH-B18 — `distribute_pooled` uses `ConcurrencyLimiter::acquire`; test `test_distribute_pooled_acquires_per_host_first`; `ssh-transport.md` note updated |
 | B3 | Config tab breadcrumb indexed `config.host/check/sync[*i]` directly; stale index panicked | `613d3c7` — `.get(*i)` with `?` fallback in `ConfigTabState::breadcrumb`; test `breadcrumb_stale_index_does_not_panic` |
 | B8 | `batch_keyscan_and_accept` panicked if the home directory could not be resolved | `1bb5769` — `append_keys_to_known_hosts` returns `anyhow` context errors; caller propagates; unit tests for missing home and append |
 | B41 | `fetch_latest_snapshots` read the whole snapshot history | `4f7de17` — `latest_snapshot_sql` window query (newest `collected_at`, then `id`); tests: 15 history rows → 2, missing host kept |

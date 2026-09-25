@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: sync uploads (`distribute_pooled`) took the global concurrency permit before the per-host one, the opposite of every other command, so a saturated host could hold global slots while idle hosts waited; they now use `ConcurrencyLimiter::acquire` (per-host first) (B18).
 - fix: the Config tab breadcrumb indexed hosts/checks/syncs directly and could panic on a stale selection index; it now renders `?` instead (B3).
 - fix: `init` panicked when the home directory could not be resolved while writing scanned host keys; `batch_keyscan_and_accept` now returns an error naming the problem (`append_keys_to_known_hosts`) (B8).
 - fix: `checkout` fetched every stored snapshot of every selected host and kept the newest in Rust; `fetch_latest_snapshots` now asks SQLite for one row per host (`ROW_NUMBER() OVER (PARTITION BY host …)`), so the read no longer grows with history (B41).

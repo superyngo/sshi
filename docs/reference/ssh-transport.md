@@ -123,7 +123,7 @@ Permit acquisition in `ConcurrencyLimiter::acquire(host)` strictly follows this 
 
 **Why per-host first**: This prevents **head-of-line blocking**. If tasks acquired the global permit first, multiple tasks queued for a single saturated host would each hold a global permit while waiting for that host's lock, starving tasks for other completely idle hosts. Acquiring per-host first ensures tasks only consume a global permit when their target host has an available execution slot.
 
-**Caller Consistency Note**: Callers using `ConcurrencyLimiter::acquire` follow this per-host-first ordering, preventing circular wait across those operations. However, `sync::distribute::distribute_pooled` directly acquires the global semaphore before the per-host semaphore; in practice, sync upload tasks only compete against other uploads within the same distribution phase, avoiding deadlocks under current usage.
+**Caller Consistency Note**: Callers follow this per-host-first ordering, preventing circular wait across operations. All callers, including `sync::distribute::distribute_pooled`, acquire permits via `ConcurrencyLimiter::acquire` (per-host first, then global).
 
 Both permits are held inside an RAII `ConcurrencyPermit` guard and released on drop.
 

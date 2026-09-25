@@ -101,14 +101,10 @@ pub(crate) async fn distribute_pooled(
         let target_name = target_name.clone();
         let sessions = Arc::clone(sessions);
 
-        let limiter_global = limiter.global_semaphore();
-        let limiter_per_host = limiter
-            .per_host_semaphore(&target.name)
-            .expect("target not registered");
+        let limiter = limiter.clone();
 
         set.spawn(async move {
-            let _global_permit = limiter_global.acquire().await.unwrap();
-            let _per_host_permit = limiter_per_host.acquire().await.unwrap();
+            let _permit = limiter.acquire(&target_name).await;
 
             let result = sessions
                 .upload(&target, &local_temp, &remote_path, timeout)
@@ -130,4 +126,66 @@ pub(crate) async fn distribute_pooled(
     }
 
     Ok((succeeded, failed))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::session_pool_mock::MockSessionPool;
+
+    fn make_host(name: &str) -> Arc<HostEntry> {
+        Arc::new(HostEntry::placeholder(name, name))
+    }
+
+    #[tokio::test]
+    async fn test_distribute_pooled_acquires_per_host_first() {
+        let hosts = vec![make_host("src"), make_host("h1"), make_host("h2")];
+        let host_names = vec!["src".to_string(), "h1".to_string(), "h2".to_string()];
+        // Global limit = 1, per-host = 1.
+        let limiter = ConcurrencyLimiter::new(1, 1, &host_names);
+
+        // Pre-acquire h1 permit to simulate a saturated host.
+        let h1_sem = limiter.per_host_semaphore("h1").unwrap();
+        let _h1_hold = h1_sem.acquire_owned().await.unwrap();
+
+        let pool = Arc::new(MockSessionPool::new(host_names.clone())) as Arc<dyn SessionPool>;
+
+        // Target h2 has its per-host permit free.
+        let decision = SyncDecision {
+            path: "/tmp/foo".to_string(),
+            source_host: "src".to_string(),
+            target_hosts: vec!["h2".to_string()],
+            synced_hosts: vec![],
+            reason: "test".to_string(),
+        };
+
+        let result = distribute_pooled(&hosts, &decision, 5, &limiter, &pool).await;
+        assert!(result.is_ok());
+        let (succeeded, failed) = result.unwrap();
+        assert_eq!(succeeded, vec!["h2".to_string()]);
+        assert!(failed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_distribute_pooled_multiple_targets() {
+        let hosts = vec![make_host("src"), make_host("h1"), make_host("h2")];
+        let host_names = vec!["src".to_string(), "h1".to_string(), "h2".to_string()];
+        let limiter = ConcurrencyLimiter::new(2, 2, &host_names);
+        let pool = Arc::new(MockSessionPool::new(host_names.clone())) as Arc<dyn SessionPool>;
+
+        let decision = SyncDecision {
+            path: "/tmp/bar".to_string(),
+            source_host: "src".to_string(),
+            target_hosts: vec!["h1".to_string(), "h2".to_string()],
+            synced_hosts: vec![],
+            reason: "test".to_string(),
+        };
+
+        let result = distribute_pooled(&hosts, &decision, 5, &limiter, &pool).await;
+        assert!(result.is_ok());
+        let (mut succeeded, failed) = result.unwrap();
+        succeeded.sort();
+        assert_eq!(succeeded, vec!["h1".to_string(), "h2".to_string()]);
+        assert!(failed.is_empty());
+    }
 }
