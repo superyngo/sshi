@@ -16,6 +16,7 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
+| B75 | 2026-09-25 | 2026-09-25 | P2 | `~/.ssh/config` options written before the first `Host` line (OpenSSH applies them to every host, e.g. a global `User` or `IdentityFile`) are silently dropped, and so are options at the top of a file `Include`d inside a `Host` block (OpenSSH applies them under that Host) (found while fixing B42) | `src/config/ssh_config.rs` `parse_ssh_config_content_with_dir`, `include_blocks` | S | Top-of-file options apply to every host; an included file's leading options apply under the including `Host`; tests for both |
 
 ## Pending verification
 
