@@ -78,7 +78,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B70 | TUI persisted a `checkout_history` toggle nothing read | HASH-B70 — field removed from `OperateState`/`OpSpecific`; test `old_state_file_with_checkout_history_loads_successfully` |
+| B70 | TUI persisted a `checkout_history` toggle nothing read | `3f49a5e` — field removed from `OperateState`/`OpSpecific`; test `old_state_file_with_checkout_history_loads_successfully` |
 | B15 | `init --update` was a no-op whenever `config.toml` existed (and had nothing to skip otherwise) | `2c78612` — flag, `InitPlan::update` and `effective_update` removed; README and `cli.md` updated; real binary: `init --update` exit 2, `init --dry-run` unchanged |
 | B38 | Recursive `cp` silently skipped symlinks and unreadable entries | `fe2d12e` — `walk_files` warns on symlinks/special files, errors on unreadable entries; `plan_transfers` checks single files; tests; real binary: symlink warned, chmod 000 file → exit 1 |
 | B59 | PowerShell swap collected but never displayable | `19c79a7` — `parser::parse_ps_swap` + shared `ps_swap_totals` used by `extract_metric_value` (legacy raw snapshots too); tests |
