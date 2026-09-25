@@ -62,15 +62,18 @@ pub fn temp_dir(shell: ShellType) -> &'static str {
 }
 
 /// Wrap a command for sudo execution based on shell type.
-pub fn sudo_wrap(shell: ShellType, command: &str) -> String {
+///
+/// Refuses Windows hosts (PowerShell and Cmd) because `Start-Process -Verb RunAs`
+/// and `runas` cannot observe the elevated process exit status or capture stdout/stderr (B31).
+pub fn sudo_wrap(shell: ShellType, command: &str) -> anyhow::Result<String> {
     match shell {
-        ShellType::Sh => format!("sudo {}", command),
-        // Base64 (-EncodedCommand) keeps `command` out of any quoting layer (B26).
-        ShellType::PowerShell => format!(
-            "Start-Process powershell -ArgumentList '-NoProfile','-EncodedCommand','{}' -Verb RunAs",
-            crate::host::quote::encode_ps(command)
-        ),
-        ShellType::Cmd => format!("runas /user:Administrator \"{}\"", command),
+        ShellType::Sh => Ok(format!("sudo {}", command)),
+        ShellType::PowerShell | ShellType::Cmd => {
+            anyhow::bail!(
+                "--sudo is not supported on {} hosts (cannot observe elevated exit status)",
+                shell
+            )
+        }
     }
 }
 
@@ -96,39 +99,33 @@ mod tests {
 
     #[test]
     fn test_sudo_wrap_sh() {
-        let wrapped = sudo_wrap(ShellType::Sh, "apt update");
+        let wrapped = sudo_wrap(ShellType::Sh, "apt update").unwrap();
         assert_eq!(wrapped, "sudo apt update");
     }
 
     #[test]
-    fn test_sudo_wrap_powershell() {
-        let wrapped = sudo_wrap(ShellType::PowerShell, "Install-Module Foo");
-        assert!(wrapped.contains("Start-Process powershell"));
-        assert!(wrapped.contains(&crate::host::quote::encode_ps("Install-Module Foo")));
-        // A quote in the command cannot break out of the -ArgumentList literal.
-        let q = sudo_wrap(ShellType::PowerShell, "echo 'x'; Remove-Item C:\\");
-        assert_eq!(q.matches('\'').count(), 6, "{q}");
-        assert!(wrapped.contains("-Verb RunAs"));
+    fn test_sudo_wrap_powershell_refused() {
+        let res = sudo_wrap(ShellType::PowerShell, "Install-Module Foo");
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("not supported on powershell"));
     }
 
     #[test]
-    fn test_sudo_wrap_cmd() {
-        let wrapped = sudo_wrap(ShellType::Cmd, "net stop thing");
-        assert!(wrapped.contains("runas /user:Administrator"));
-        assert!(wrapped.contains("net stop thing"));
+    fn test_sudo_wrap_cmd_refused() {
+        let res = sudo_wrap(ShellType::Cmd, "net stop thing");
+        assert!(res.is_err());
+        assert!(res
+            .unwrap_err()
+            .to_string()
+            .contains("not supported on cmd"));
     }
 
     #[test]
     fn test_sudo_wrap_sh_empty_command() {
-        let wrapped = sudo_wrap(ShellType::Sh, "");
+        let wrapped = sudo_wrap(ShellType::Sh, "").unwrap();
         assert_eq!(wrapped, "sudo ");
-    }
-
-    #[test]
-    fn test_sudo_wrap_all_variants_return_string() {
-        for shell in [ShellType::Sh, ShellType::PowerShell, ShellType::Cmd] {
-            let s = sudo_wrap(shell, "echo hi");
-            assert!(!s.is_empty());
-        }
     }
 }

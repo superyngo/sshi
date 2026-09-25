@@ -232,10 +232,12 @@ pub async fn run(
         let hosts = ctx.resolve_hosts()?;
         for host in &hosts {
             let compat = compatible_shell.is_none_or(|s| s == host.shell);
-            if compat {
-                printer::print_host_line(&host.name, "ok", "would execute");
-            } else {
+            if !compat {
                 printer::print_host_line(&host.name, "skip", "shell mismatch");
+            } else if let Some(Err(e)) = sudo.then(|| shell::sudo_wrap(host.shell, "")) {
+                printer::print_host_line(&host.name, "error", &e.to_string());
+            } else {
+                printer::print_host_line(&host.name, "ok", "would execute");
             }
         }
         return Ok(HostOutcome::default());
@@ -273,6 +275,10 @@ async fn exec_on_host_pooled(
     sudo: bool,
     sessions: std::sync::Arc<crate::host::session_pool::RusshSessionPool>,
 ) -> Result<String> {
+    if sudo {
+        // Refuse before uploading anything: Windows `--sudo` is unsupported (B31).
+        shell::sudo_wrap(host.shell, "")?;
+    }
     let temp_dir = get_expanded_temp_dir_pooled(host, timeout, sessions.clone()).await?;
     let script_name = script_path
         .file_name()
@@ -322,7 +328,7 @@ async fn exec_on_host_pooled(
     };
 
     let exec_cmd = if sudo {
-        shell::sudo_wrap(host.shell, &exec_cmd)
+        shell::sudo_wrap(host.shell, &exec_cmd)?
     } else {
         exec_cmd
     };

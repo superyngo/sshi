@@ -5,7 +5,6 @@ use std::time::Instant;
 
 use anyhow::{Context as _, Result};
 
-use crate::config::schema::ShellType;
 use crate::host::pool::SshPool;
 use crate::host::shell;
 use crate::output::printer;
@@ -66,7 +65,38 @@ pub async fn run_core(
     for host in &reachable {
         let host = Arc::clone(host);
         let cmd = if sudo {
-            shell::sudo_wrap(host.shell, command)
+            match shell::sudo_wrap(host.shell, command) {
+                Ok(cmd) => cmd,
+                // Windows hosts: refused up front rather than reporting a
+                // success whose elevated exit status was never seen (B31).
+                Err(e) => {
+                    let detail = format!("error — {e}");
+                    if let Some(p) = progress {
+                        p.host_completed(&host.name, HostStatus::Error, &detail, 0);
+                    }
+                    crate::commands::report::record_operation_log(
+                        &ctx.db,
+                        chrono::Utc::now().timestamp(),
+                        "run",
+                        &host.name,
+                        command,
+                        HostStatus::Error,
+                        0,
+                        Some(&e.to_string()),
+                        None,
+                    )
+                    .await;
+                    host_results.push(RunHostResult {
+                        host: host.name.clone(),
+                        status: HostStatus::Error,
+                        duration_ms: None,
+                        detail,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                    });
+                    continue;
+                }
+            }
         } else {
             command.to_string()
         };
@@ -196,15 +226,17 @@ pub async fn run(
     output: &crate::cli::OutputArgs,
 ) -> Result<HostOutcome> {
     if dry_run {
-        let display = if sudo {
-            shell::sudo_wrap(ShellType::Sh, command)
-        } else {
-            command.to_string()
-        };
-        println!("[dry-run] Command: {}", display);
+        println!("[dry-run] Command: {}", command);
         let hosts = ctx.resolve_hosts()?;
         for host in &hosts {
-            printer::print_host_line(&host.name, "ok", "would execute");
+            // Preview the command as each host's shell would receive it (B31).
+            match sudo.then(|| shell::sudo_wrap(host.shell, command)) {
+                None => printer::print_host_line(&host.name, "ok", "would execute"),
+                Some(Ok(wrapped)) => {
+                    printer::print_host_line(&host.name, "ok", &format!("would execute: {wrapped}"))
+                }
+                Some(Err(e)) => printer::print_host_line(&host.name, "error", &e.to_string()),
+            }
         }
         return Ok(HostOutcome::default());
     }

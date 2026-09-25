@@ -243,7 +243,7 @@ Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial
 
 #### Arguments & Options
 - `COMMAND` (required): Shell command string to execute on remote hosts.
-- `-S, --sudo`: Execute the command with elevated privileges using shell-specific sudo wrappers.
+- `-S, --sudo`: Execute the command with `sudo` (sh hosts). PowerShell and cmd hosts are refused with a per-host error (they count as failed hosts): Windows elevation (`Start-Process -Verb RunAs`, `runas`) cannot report the command's exit status or output. `--dry-run` previews the wrapped command per host.
 - `--dry-run`: Preview the wrapped command string and targeted hosts without executing.
 - `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
 - `-H, --help`: Print help.
@@ -263,7 +263,7 @@ Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial
 
 #### Arguments & Options
 - `SCRIPT` (required): Local path to the script file.
-- `-S, --sudo`: Execute the script with sudo.
+- `-S, --sudo`: Execute the script with `sudo` (sh hosts only; PowerShell and cmd hosts are refused with a per-host error before anything is uploaded, as for `run --sudo`).
 - `--keep`: Retain the temporary script file on the remote host after execution instead of deleting it.
 - `--dry-run`: Preview execution and shell compatibility without uploading or running.
 - `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
