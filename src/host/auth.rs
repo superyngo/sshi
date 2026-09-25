@@ -49,10 +49,16 @@ pub type SshAuthSender = tokio::sync::mpsc::UnboundedSender<SshAuthRequest>;
 
 /// Attempt to authenticate `handle` as `user` against `host_name`.
 ///
-/// Auth chain:
-/// 1. For each identity file: try without passphrase (unencrypted keys)
-/// 2. For each identity file: if step 1 failed, prompt for passphrase (cached per path)
-/// 3. Prompt for password if `identities_only` is false
+/// Auth chain (OpenSSH order, B20):
+/// 1. ssh-agent keys via `SSH_AUTH_SOCK` (Unix). With `identities_only`, only
+///    agent keys whose public half matches a listed identity's `.pub` file.
+/// 2. Each identity file that loads without a passphrase.
+/// 3. Each identity file that exists and is encrypted: prompt for its
+///    passphrase (cached per path).
+/// 4. Password prompt, unless `identities_only` is set.
+///
+/// `identity_files` already holds the OpenSSH default keys when no
+/// `IdentityFile` is configured (`ParsedSshConfig::query`).
 ///
 /// When `auth_sender` is `Some`, credential prompts are routed through the
 /// TUI auth bridge (`SshAuthRequest` over the supplied mpsc, reply via the
@@ -66,15 +72,30 @@ pub async fn authenticate(
     cache: &mut PassphraseCache,
     auth_sender: Option<&SshAuthSender>,
 ) -> Result<()> {
-    // Step 1: try each identity file without passphrase (handles unencrypted keys)
+    // RSA keys need the server's preferred SHA-2 signature hash (rsa-sha2-*).
+    let rsa_hash = handle
+        .best_supported_rsa_hash()
+        .await
+        .context("Public key authentication error")?
+        .flatten();
+
+    // Step 1: ssh-agent
+    #[cfg(unix)]
+    if try_agent(handle, user, identity_files, identities_only, rsa_hash).await {
+        return Ok(());
+    }
+
+    // Step 2: identity files that need no passphrase
     for path in identity_files {
-        if try_pubkey(handle, user, path, None).await? {
-            return Ok(());
+        if let Ok(key) = russh::keys::load_secret_key(path, None) {
+            if try_pubkey(handle, user, key, rsa_hash).await? {
+                return Ok(());
+            }
         }
     }
 
-    // Step 2: retry each identity file with passphrase prompt (handles encrypted keys)
-    for path in identity_files {
+    // Step 3: encrypted identity files — prompt for the passphrase
+    for path in identity_files.iter().filter(|p| is_encrypted_key(p)) {
         let passphrase = match cache.get(path) {
             Some(pp) => pp.clone(),
             None => {
@@ -84,12 +105,17 @@ pub async fn authenticate(
                 secret
             }
         };
-        if try_pubkey(handle, user, path, Some(passphrase.as_str())).await? {
-            return Ok(());
+        if passphrase.as_str().is_empty() {
+            continue;
+        }
+        if let Ok(key) = russh::keys::load_secret_key(path, Some(passphrase.as_str())) {
+            if try_pubkey(handle, user, key, rsa_hash).await? {
+                return Ok(());
+            }
         }
     }
 
-    // Step 3: password fallback (only if IdentitiesOnly is not set)
+    // Step 4: password fallback (only if IdentitiesOnly is not set)
     if !identities_only {
         let prompt = password_prompt(user, host_name);
         let password = prompt_credential(prompt, auth_sender).await?;
@@ -104,6 +130,69 @@ pub async fn authenticate(
     }
 
     anyhow::bail!("All authentication methods exhausted for user '{}'", user)
+}
+
+/// Try every key held by the agent at `SSH_AUTH_SOCK`. Agent errors are
+/// non-fatal: the chain continues with identity files.
+#[cfg(unix)]
+async fn try_agent(
+    handle: &mut Handle<SshHandler>,
+    user: &str,
+    identity_files: &[PathBuf],
+    identities_only: bool,
+    rsa_hash: Option<russh::keys::HashAlg>,
+) -> bool {
+    use russh::keys::agent::{client::AgentClient, AgentIdentity};
+    let Ok(mut agent) = AgentClient::connect_env().await else {
+        return false;
+    };
+    let Ok(identities) = agent.request_identities().await else {
+        return false;
+    };
+    let allowed: Vec<russh::keys::PublicKey> = identity_files
+        .iter()
+        .filter_map(|p| {
+            let mut pub_path = p.clone().into_os_string();
+            pub_path.push(".pub");
+            russh::keys::PublicKey::read_openssh_file(Path::new(&pub_path)).ok()
+        })
+        .collect();
+    for id in identities {
+        let AgentIdentity::PublicKey { key, .. } = id else {
+            continue;
+        };
+        if identities_only && !allowed.iter().any(|a| a.key_data() == key.key_data()) {
+            continue;
+        }
+        let hash = if key.algorithm().is_rsa() {
+            rsa_hash
+        } else {
+            None
+        };
+        match handle
+            .authenticate_publickey_with(user, key, hash, &mut agent)
+            .await
+        {
+            Ok(r) if r.success() => return true,
+            Ok(_) => {}
+            Err(e) => tracing::debug!("ssh-agent auth attempt failed: {e}"),
+        }
+    }
+    false
+}
+
+/// Whether `path` is a private key that needs a passphrase. Missing,
+/// unreadable, or unparsable files are not, so they never trigger a prompt.
+fn is_encrypted_key(path: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    if text.contains("Proc-Type: 4,ENCRYPTED") || text.contains("BEGIN ENCRYPTED PRIVATE KEY") {
+        return true; // legacy PEM / PKCS#8
+    }
+    russh::keys::PrivateKey::from_openssh(&text)
+        .map(|k| k.is_encrypted())
+        .unwrap_or(false)
 }
 
 /// Resolve a credential prompt to a `SecretString`, either via the TUI auth
@@ -131,37 +220,15 @@ fn password_prompt(user: &str, host_name: &str) -> String {
     format!("{}@{} password: ", user, host_name)
 }
 
-/// Try public-key auth with an optional passphrase. Returns true if auth succeeded.
+/// Try public-key auth with a loaded key. Returns true if auth succeeded.
 async fn try_pubkey(
     handle: &mut Handle<SshHandler>,
     user: &str,
-    key_path: &Path,
-    passphrase: Option<&str>,
+    key: PrivateKey,
+    rsa_hash: Option<russh::keys::HashAlg>,
 ) -> Result<bool> {
-    let key_pair: PrivateKey = match passphrase {
-        Some(pp) if !pp.is_empty() => match russh::keys::load_secret_key(key_path, Some(pp)) {
-            Ok(kp) => kp,
-            Err(_) => return Ok(false),
-        },
-        _ => {
-            match russh::keys::load_secret_key(key_path, None) {
-                Ok(kp) => kp,
-                Err(_) => return Ok(false), // encrypted key; will retry with passphrase in step 2
-            }
-        }
-    };
-
-    // RSA keys need the server's preferred SHA-2 signature hash (rsa-sha2-*).
-    let hash_alg = handle
-        .best_supported_rsa_hash()
-        .await
-        .context("Public key authentication error")?
-        .flatten();
     let authed = handle
-        .authenticate_publickey(
-            user,
-            PrivateKeyWithHashAlg::new(Arc::new(key_pair), hash_alg),
-        )
+        .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), rsa_hash))
         .await
         .context("Public key authentication error")?;
     Ok(authed.success())
@@ -171,6 +238,36 @@ async fn try_pubkey(
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[cfg(unix)]
+    #[test]
+    fn is_encrypted_key_only_for_real_encrypted_keys() {
+        let t = tempfile::tempdir().unwrap();
+        let keygen = |name: &str, pw: &str| {
+            let p = t.path().join(name);
+            let ok = std::process::Command::new("ssh-keygen")
+                .args(["-q", "-t", "ed25519", "-N", pw, "-f"])
+                .arg(&p)
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok);
+            p
+        };
+        let plain = keygen("plain", "");
+        let enc = keygen("enc", "pw");
+        let pem = t.path().join("pem");
+        std::fs::write(
+            &pem,
+            "-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\n",
+        )
+        .unwrap();
+
+        assert!(!is_encrypted_key(&plain));
+        assert!(is_encrypted_key(&enc));
+        assert!(is_encrypted_key(&pem));
+        assert!(!is_encrypted_key(&t.path().join("missing")));
+    }
 
     #[test]
     fn test_secret_string_new_and_as_str() {

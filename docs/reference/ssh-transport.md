@@ -158,12 +158,14 @@ Authentication is orchestrated by `authenticate()` in `src/host/auth.rs`.
 
 For each connection, credentials are evaluated in the following sequence:
 
-1. **Unencrypted Public Keys**: Iterates over all configured `identity_files` in order, attempting `russh::keys::load_secret_key(path, None)` and `handle.authenticate_publickey` (wrapped in `PrivateKeyWithHashAlg` with the server's `best_supported_rsa_hash`, so RSA keys sign with `rsa-sha2-*`). Unencrypted keys authenticate immediately without prompting.
-2. **Encrypted Public Keys with Passphrase**: For keys that failed unencrypted loading, attempts authentication using passphrases:
+1. **ssh-agent** (Unix): if `SSH_AUTH_SOCK` is set, each agent public key is offered via `handle.authenticate_publickey_with` with the agent as signer (`auth::try_agent`). With `IdentitiesOnly`, only agent keys whose key data matches a listed identity file's `.pub` are offered. Agent errors are non-fatal. The Windows agent pipe is not used.
+2. **Unencrypted Public Keys**: Iterates over all configured `identity_files` in order, attempting `russh::keys::load_secret_key(path, None)` and `handle.authenticate_publickey` (wrapped in `PrivateKeyWithHashAlg` with the server's `best_supported_rsa_hash`, so RSA keys sign with `rsa-sha2-*`). Unencrypted keys authenticate immediately without prompting.
+   `identity_files` holds every `IdentityFile`, or the OpenSSH default keys when none is configured (see [config-schema.md](config-schema.md)).
+3. **Encrypted Public Keys with Passphrase**: Only for identity files that exist and are encrypted (`auth::is_encrypted_key`: OpenSSH-format key with a cipher, or legacy PEM/PKCS#8 encrypted header). Missing or unparsable files never trigger a prompt:
    - Checks `PassphraseCache` (`HashMap<PathBuf, SecretString>`), an in-memory process-scoped cache.
    - If uncached, prompts the user for the passphrase and caches the resulting `SecretString`.
    - Calls `russh::keys::load_secret_key(path, Some(passphrase))` and `handle.authenticate_publickey`.
-3. **Password Fallback**: If all identity files fail and `IdentitiesOnly` is not enabled in SSH config (`!identities_only`), prompts the user with `<user>@<host> password: ` and calls `handle.authenticate_password`.
+4. **Password Fallback**: If all identity files fail and `IdentitiesOnly` is not enabled in SSH config (`!identities_only`), prompts the user with `<user>@<host> password: ` and calls `handle.authenticate_password`.
 
 If all available methods are exhausted without success, authentication fails with `All authentication methods exhausted for user '<user>'`.
 
@@ -206,7 +208,7 @@ The detected `ShellType` controls temporary directory paths (`temp_dir`: `/tmp`,
 |---|---|---|---|
 | **Session & Connection Multiplexing** | Pure-Rust (`russh`) | `src/host/session_pool.rs` | TCP connect, session caching, keepalive, and ProxyJump tunnel stream |
 | **Server Host Key Verification** | Pure-Rust (`russh::keys`) | `src/host/session_pool.rs` | `known_hosts` checking and MITM mismatch detection |
-| **Authentication Chain** | Pure-Rust (`russh`, `russh::keys`) | `src/host/auth.rs` | Public key, passphrase caching, and password fallback |
+| **Authentication Chain** | Pure-Rust (`russh`, `russh::keys`) | `src/host/auth.rs` | ssh-agent, public key, passphrase caching, and password fallback |
 | **Command Execution (`check`, `run`, `exec`)** | Pure-Rust (`russh`) | `src/host/session_pool.rs` | Channel session open, command exec, stdout/stderr/exit code capture |
 | **File Transfer (`sync`, `cp`)** | Pure-Rust (`russh-sftp`) | `src/host/sftp.rs` | SFTP subsystem session, directory creation, streaming file I/O |
 | **Shell Detection** | Pure-Rust (`russh`) | `src/host/shell.rs` | Remote probe execution via session channel |

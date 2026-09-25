@@ -9,8 +9,10 @@ pub struct SshHostEntry {
     pub hostname: Option<String>,
     pub user: Option<String>,
     pub port: Option<u16>,
-    pub identity_file: Option<String>,
+    /// Every `IdentityFile` in the block, in file order (OpenSSH accumulates them).
+    pub identity_files: Vec<String>,
     pub proxy_jump: Option<String>,
+    pub identities_only: Option<bool>,
 }
 
 /// Fully resolved SSH connection parameters for a host alias.
@@ -22,7 +24,8 @@ pub struct ResolvedHostConfig {
     pub hostname: String,
     pub port: u16,
     pub user: String,
-    /// Ordered list of identity files to try
+    /// Ordered list of identity files to try: the host block's, then
+    /// `Host *`'s, or the OpenSSH default keys that exist when none is listed.
     pub identity_files: Vec<std::path::PathBuf>,
     /// First ProxyJump hop alias (None = direct connection)
     pub proxy_jump: Option<String>,
@@ -62,13 +65,27 @@ impl ParsedSshConfig {
 
         let port = specific.and_then(|h| h.port).or(d.port).unwrap_or(22);
 
-        let identity_file = specific
-            .and_then(|h| h.identity_file.clone())
-            .or_else(|| d.identity_file.clone());
+        let mut identity_files: Vec<std::path::PathBuf> = Vec::new();
+        for f in specific
+            .into_iter()
+            .flat_map(|h| h.identity_files.iter())
+            .chain(d.identity_files.iter())
+        {
+            let p = crate::util::expand_tilde(std::path::Path::new(f));
+            if !identity_files.contains(&p) {
+                identity_files.push(p);
+            }
+        }
+        if identity_files.is_empty() {
+            if let Some(home) = dirs::home_dir() {
+                identity_files = default_identity_files(&home);
+            }
+        }
 
-        let identity_files = identity_file
-            .map(|f| vec![crate::util::expand_tilde(std::path::Path::new(&f))])
-            .unwrap_or_default();
+        let identities_only = specific
+            .and_then(|h| h.identities_only)
+            .or(d.identities_only)
+            .unwrap_or(false);
 
         let proxy_jump = specific
             .and_then(|h| h.proxy_jump.clone())
@@ -81,9 +98,19 @@ impl ParsedSshConfig {
             user,
             identity_files,
             proxy_jump,
-            identities_only: false,
+            identities_only,
         }
     }
+}
+
+/// OpenSSH's default identity files that exist under `home/.ssh`, used only
+/// when no `IdentityFile` is configured.
+pub fn default_identity_files(home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    ["id_ed25519", "id_ecdsa", "id_rsa"]
+        .iter()
+        .map(|n| home.join(".ssh").join(n))
+        .filter(|p| p.is_file())
+        .collect()
 }
 
 /// Parse ~/.ssh/config and return a list of named host entries.
@@ -112,8 +139,9 @@ fn parse_ssh_config_content(content: &str) -> Result<ParsedSshConfig> {
         hostname: Option<String>,
         user: Option<String>,
         port: Option<u16>,
-        identity_file: Option<String>,
+        identity_files: Vec<String>,
         proxy_jump: Option<String>,
+        identities_only: Option<bool>,
     }
 
     let mut blocks: Vec<Block> = Vec::new();
@@ -143,8 +171,9 @@ fn parse_ssh_config_content(content: &str) -> Result<ParsedSshConfig> {
                     hostname: None,
                     user: None,
                     port: None,
-                    identity_file: None,
+                    identity_files: Vec::new(),
                     proxy_jump: None,
+                    identities_only: None,
                 });
             }
             "hostname" => {
@@ -164,7 +193,12 @@ fn parse_ssh_config_content(content: &str) -> Result<ParsedSshConfig> {
             }
             "identityfile" => {
                 if let Some(b) = current.as_mut() {
-                    b.identity_file = Some(value.to_string());
+                    b.identity_files.push(value.to_string());
+                }
+            }
+            "identitiesonly" => {
+                if let Some(b) = current.as_mut() {
+                    b.identities_only = Some(value.eq_ignore_ascii_case("yes"));
                 }
             }
             "proxyjump" => {
@@ -197,11 +231,12 @@ fn parse_ssh_config_content(content: &str) -> Result<ParsedSshConfig> {
             if d.port.is_none() {
                 d.port = block.port;
             }
-            if d.identity_file.is_none() {
-                d.identity_file = block.identity_file;
-            }
+            d.identity_files.extend(block.identity_files);
             if d.proxy_jump.is_none() {
                 d.proxy_jump = block.proxy_jump;
+            }
+            if d.identities_only.is_none() {
+                d.identities_only = block.identities_only;
             }
         } else {
             // Expand multi-alias blocks into individual SshHostEntry values.
@@ -211,8 +246,9 @@ fn parse_ssh_config_content(content: &str) -> Result<ParsedSshConfig> {
                     hostname: block.hostname.clone(),
                     user: block.user.clone(),
                     port: block.port,
-                    identity_file: block.identity_file.clone(),
+                    identity_files: block.identity_files.clone(),
                     proxy_jump: block.proxy_jump.clone(),
+                    identities_only: block.identities_only,
                 });
             }
         }
@@ -260,6 +296,56 @@ pub fn resolve_host(alias: &str) -> Result<ResolvedHostConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn identity_files_accumulate_host_then_wildcard_deduped() {
+        let content = "
+Host a
+    IdentityFile /k/one
+    IdentityFile /k/two
+    IdentitiesOnly yes
+Host *
+    IdentityFile /k/two
+    IdentityFile /k/star
+";
+        let r = parse_ssh_config_content(content).unwrap().query("a");
+        let want: Vec<std::path::PathBuf> = ["/k/one", "/k/two", "/k/star"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect();
+        assert_eq!(r.identity_files, want);
+        assert!(r.identities_only);
+    }
+
+    #[test]
+    fn identities_only_inherits_from_wildcard_and_defaults_off() {
+        let c = parse_ssh_config_content(
+            "Host a\nHost b\n  IdentitiesOnly no\nHost *\n  IdentitiesOnly yes\n",
+        )
+        .unwrap();
+        assert!(c.query("a").identities_only);
+        assert!(!c.query("b").identities_only);
+        assert!(
+            !parse_ssh_config_content("Host a\n")
+                .unwrap()
+                .query("a")
+                .identities_only
+        );
+    }
+
+    #[test]
+    fn default_identity_files_lists_only_existing_in_openssh_order() {
+        let t = tempfile::tempdir().unwrap();
+        let ssh = t.path().join(".ssh");
+        std::fs::create_dir_all(&ssh).unwrap();
+        assert!(default_identity_files(t.path()).is_empty());
+        std::fs::write(ssh.join("id_rsa"), "").unwrap();
+        std::fs::write(ssh.join("id_ed25519"), "").unwrap();
+        assert_eq!(
+            default_identity_files(t.path()),
+            vec![ssh.join("id_ed25519"), ssh.join("id_rsa")]
+        );
+    }
 
     #[test]
     fn test_parse_basic_config() {

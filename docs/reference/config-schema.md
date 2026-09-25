@@ -210,7 +210,8 @@ The parser matches directives case-insensitively and supports both space-delimit
 | `HostName` | Target DNS hostname or IP address. | Host alias name |
 | `User` | Remote SSH login username. | Current system username (`whoami::username`) |
 | `Port` | Remote SSH port number (`u16`). | `22` |
-| `IdentityFile` | Path to private authentication key. Supports `~` tilde expansion. | Direct connection / agent / password auth |
+| `IdentityFile` | Path to a private key. Supports `~` tilde expansion. Repeatable: every line is kept, host block first, then `Host *`, duplicates dropped. | The existing ones of `~/.ssh/id_ed25519`, `id_ecdsa`, `id_rsa` (`ssh_config::default_identity_files`) |
+| `IdentitiesOnly` | `yes` limits ssh-agent keys to those matching a listed `IdentityFile`'s `.pub` and disables the password fallback. Host block wins over `Host *`. | `no` |
 | `ProxyJump` | Jump host proxy alias. Comma-separated multi-hop chains are parsed to extract the first hop. | `None` (direct connection) |
 
 ### Parsing and inheritance rules

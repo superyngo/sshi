@@ -73,7 +73,8 @@ fn ssh_host(name: &str) -> SshHostEntry {
         hostname: None,
         user: None,
         port: None,
-        identity_file: None,
+        identity_files: Vec::new(),
+        identities_only: None,
         proxy_jump: None,
     }
 }
