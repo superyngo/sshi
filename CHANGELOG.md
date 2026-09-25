@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: replacing an existing remote file removed it before renaming the upload into place, so readers could briefly see it missing; uploads now rename with `posix-rename@openssh.com` over a second raw SFTP channel when the server offers it (russh-sftp, even 3.0, cannot send extended requests), which replaces atomically. The first upload into a directory also removes `.sshi-tmp.<pid>` files abandoned by a killed sshi (other pid, over an hour old) (B65).
 - fix: sync wrote a `sync_state` row per synced file and target host with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") that nothing ever read; those writes are removed (sync events stay in `operation_log`). The table and existing rows are left in place — dropping them is an irreversible migration held for your approval (Backlog → Awaiting external) (B19).
 - fix: an older sshi opening a state database migrated by a newer one silently rewrote `user_version` downward and ran against the unknown schema; it now refuses with "schema vN is newer than this sshi supports", naming the file, and leaves it untouched (B58).
 - fix: every `sync` run logged `WARN session_pool has 2 strong references at shutdown` and never closed its SSH sessions cleanly, because `sync_inner` still held a pool reference when shutting down (and a failing phase returned before shutdown at all); the phases now run in one block, the reference is dropped, and the pool is always shut down before an error propagates (B72).

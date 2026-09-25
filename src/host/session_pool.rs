@@ -192,6 +192,11 @@ pub struct RusshSessionPool {
     /// for subsequent `upload`/`download` calls. The cache lives for the
     /// pool's lifetime; sessions are torn down together in `shutdown`.
     sftp_cache: LazyCache<SftpSession>,
+    /// per host: a raw SFTP channel for atomic `posix-rename@openssh.com`
+    /// replaces, or `None` when the server lacks it or the open failed (B65).
+    rename_cache: LazyCache<Option<crate::host::sftp::RenameChannel>>,
+    /// `(host, dir)` pairs already swept for abandoned upload temp files.
+    swept_dirs: tokio::sync::Mutex<std::collections::HashSet<(String, String)>>,
     /// cancel senders for proxy keepalive tasks (one per proxied connection)
     proxy_cancels: Vec<tokio::sync::oneshot::Sender<()>>,
 }
@@ -300,6 +305,8 @@ impl RusshSessionPool {
             sftp_failed: Vec::new(),
             home_dirs: tokio::sync::Mutex::new(HashMap::new()),
             sftp_cache: LazyCache::new(),
+            rename_cache: LazyCache::new(),
+            swept_dirs: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             proxy_cancels,
         })
     }
@@ -377,7 +384,47 @@ impl RusshSessionPool {
             .await
     }
 
-    /// Upload a local file to a remote host via SFTP.
+    /// The host's [`RenameChannel`](crate::host::sftp::RenameChannel), opened
+    /// once; `None` when the server lacks `posix-rename@openssh.com` or the
+    /// channel can't be opened (uploads then fall back to remove-then-rename).
+    async fn rename_channel(
+        &self,
+        host_alias: &str,
+        timeout: Duration,
+    ) -> Result<Arc<Option<crate::host::sftp::RenameChannel>>> {
+        let handle = self
+            .sessions
+            .get(host_alias)
+            .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))?
+            .clone();
+        let alias = host_alias.to_string();
+        self.rename_cache
+            .get_or_try_insert_with(host_alias, move || async move {
+                let opened =
+                    tokio::time::timeout(timeout, crate::host::sftp::open_rename_channel(&handle))
+                        .await;
+                match opened {
+                    Ok(Ok(channel)) => {
+                        if channel.is_none() {
+                            tracing::debug!(host = %alias, "no posix-rename@openssh.com; replaces are not atomic");
+                        }
+                        anyhow::Ok(channel)
+                    }
+                    Ok(Err(e)) => {
+                        tracing::debug!(host = %alias, error = %e, "rename channel unavailable");
+                        Ok(None)
+                    }
+                    Err(_) => {
+                        tracing::debug!(host = %alias, "rename channel open timed out");
+                        Ok(None)
+                    }
+                }
+            })
+            .await
+    }
+
+    /// Upload a local file to a remote host via SFTP. The first upload into
+    /// a directory also sweeps abandoned `.sshi-tmp.<pid>` files there (B65).
     pub async fn upload(
         &self,
         host: &crate::config::schema::HostEntry,
@@ -385,22 +432,30 @@ impl RusshSessionPool {
         remote_path: &str,
         timeout_secs: u64,
     ) -> Result<()> {
-        let sftp = self
-            .sftp_session(&host.ssh_host, Duration::from_secs(timeout_secs))
-            .await?;
-        let home = self
-            .home_dir(
-                &host.ssh_host,
-                host.shell,
-                Duration::from_secs(timeout_secs),
-            )
-            .await?;
+        let timeout = Duration::from_secs(timeout_secs);
+        let sftp = self.sftp_session(&host.ssh_host, timeout).await?;
+        let home = self.home_dir(&host.ssh_host, host.shell, timeout).await?;
+        let rename = self.rename_channel(&host.ssh_host, timeout).await?;
+        let resolved = crate::host::sftp::resolve_remote_path(remote_path, &home);
+        if let Some(dir) = std::path::Path::new(&resolved).parent() {
+            let dir = dir.to_string_lossy().into_owned();
+            let first = !dir.is_empty()
+                && self
+                    .swept_dirs
+                    .lock()
+                    .await
+                    .insert((host.ssh_host.clone(), dir.clone()));
+            if first {
+                crate::host::sftp::sweep_stale_temps(&sftp, &dir, timeout).await;
+            }
+        }
         crate::host::sftp::upload(
             &sftp,
+            rename.as_ref().as_ref(),
             local_path,
             remote_path,
             &home,
-            Duration::from_secs(timeout_secs),
+            timeout,
         )
         .await
     }

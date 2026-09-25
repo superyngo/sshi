@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use russh::client::Handle;
-use russh_sftp::client::SftpSession;
+use russh_sftp::client::{RawSftpSession, SftpSession};
+use russh_sftp::protocol::{Packet, StatusCode};
 use tokio::io::AsyncWriteExt;
 
 use super::session_pool::SshHandler;
@@ -90,13 +91,135 @@ where
     }
 }
 
+/// Suffix marker of upload temp files: `<dir>/.<name>.sshi-tmp.<pid>`.
+const TEMP_MARKER: &str = ".sshi-tmp.";
+
 /// Sibling temp name for `dest`: `<dir>/.<name>.sshi-tmp.<pid>`.
 fn temp_sibling(dest: &str) -> String {
     let (dir, name) = match dest.rfind(['/', '\\']) {
         Some(i) => dest.split_at(i + 1),
         None => ("", dest),
     };
-    format!("{dir}.{name}.sshi-tmp.{}", std::process::id())
+    format!("{dir}.{name}{TEMP_MARKER}{}", std::process::id())
+}
+
+/// A temp file left by another sshi process that died mid-upload (SIGKILL):
+/// our name pattern, a pid other than ours, and not modified for `max_age`
+/// seconds (so a concurrent run's live temp file is never touched).
+fn is_stale_temp(file_name: &str, mtime: Option<u32>, now: u64, max_age: u64) -> bool {
+    let Some((base, pid)) = file_name.rsplit_once(TEMP_MARKER) else {
+        return false;
+    };
+    let own = std::process::id().to_string();
+    base.len() > 1
+        && base.starts_with('.')
+        && !pid.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+        && pid != own
+        && mtime.is_some_and(|m| now.saturating_sub(u64::from(m)) >= max_age)
+}
+
+/// Age after which another process's temp file counts as abandoned.
+pub(crate) const STALE_TEMP_SECS: u64 = 3600;
+
+/// Remove abandoned upload temp files ([`is_stale_temp`]) in `dir`. Best
+/// effort: listing or removal errors are logged, never fatal. Returns the
+/// number removed.
+pub(crate) async fn sweep_stale_temps(sftp: &SftpSession, dir: &str, timeout: Duration) -> usize {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let entries = match tokio::time::timeout(timeout, sftp.read_dir(dir)).await {
+        Ok(Ok(entries)) => entries,
+        Ok(Err(e)) => {
+            tracing::debug!(dir, error = %e, "temp sweep: cannot list directory");
+            return 0;
+        }
+        Err(_) => return 0,
+    };
+    let sep = if dir.ends_with(['/', '\\']) { "" } else { "/" };
+    let mut removed = 0;
+    for entry in entries {
+        let name = entry.file_name();
+        if !is_stale_temp(&name, entry.metadata().mtime, now, STALE_TEMP_SECS) {
+            continue;
+        }
+        let path = format!("{dir}{sep}{name}");
+        match tokio::time::timeout(timeout, sftp.remove_file(&path)).await {
+            Ok(Ok(())) => {
+                tracing::info!(path, "removed abandoned upload temp file");
+                removed += 1;
+            }
+            Ok(Err(e)) => tracing::debug!(path, error = %e, "temp sweep: remove failed"),
+            Err(_) => tracing::debug!(path, "temp sweep: remove timed out"),
+        }
+    }
+    removed
+}
+
+/// `posix-rename@openssh.com`: a rename that atomically replaces an existing
+/// target (plain SFTP v3 rename refuses one on OpenSSH).
+const POSIX_RENAME: &str = "posix-rename@openssh.com";
+
+/// A second, raw SFTP channel used only for `posix-rename@openssh.com`:
+/// russh-sftp's `SftpSession` (2.1 through 3.0) cannot send extended
+/// requests, so replacing a file would otherwise need remove-then-rename (B65).
+pub struct RenameChannel {
+    raw: RawSftpSession,
+}
+
+impl RenameChannel {
+    /// Rename `from` over `to`, replacing `to` atomically if it exists.
+    async fn replace(&self, from: &str, to: &str) -> Result<()> {
+        match self
+            .raw
+            .extended(POSIX_RENAME, posix_rename_payload(from, to))
+            .await
+        {
+            Ok(Packet::Status(s)) if s.status_code == StatusCode::Ok => Ok(()),
+            Ok(Packet::Status(s)) => {
+                anyhow::bail!(
+                    "{POSIX_RENAME} failed: {:?} {}",
+                    s.status_code,
+                    s.error_message
+                )
+            }
+            Ok(_) => anyhow::bail!("{POSIX_RENAME}: unexpected reply"),
+            Err(e) => Err(anyhow::Error::new(e).context(format!("{POSIX_RENAME} failed"))),
+        }
+    }
+}
+
+/// Extended-request payload: SSH strings `oldpath`, `newpath`.
+fn posix_rename_payload(from: &str, to: &str) -> Vec<u8> {
+    let mut data = Vec::with_capacity(8 + from.len() + to.len());
+    for s in [from, to] {
+        data.extend_from_slice(&(s.len() as u32).to_be_bytes());
+        data.extend_from_slice(s.as_bytes());
+    }
+    data
+}
+
+/// Open a [`RenameChannel`] when the server advertises `posix-rename@openssh.com`
+/// (`Ok(None)` otherwise).
+pub(crate) async fn open_rename_channel(
+    handle: &Handle<SshHandler>,
+) -> Result<Option<RenameChannel>> {
+    let channel = handle
+        .channel_open_session()
+        .await
+        .context("Failed to open SFTP rename channel")?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .context("Failed to request SFTP subsystem")?;
+    let raw = RawSftpSession::new(channel.into_stream());
+    let version = raw.init().await.context("SFTP init failed")?;
+    let supported = version
+        .extensions
+        .get(POSIX_RENAME)
+        .is_some_and(|v| v == "1");
+    Ok(supported.then_some(RenameChannel { raw }))
 }
 
 /// Upload a local file to a remote path via SFTP using streaming I/O.
@@ -104,10 +227,13 @@ fn temp_sibling(dest: &str) -> String {
 ///
 /// Writes to a sibling temp file and renames it over the destination only
 /// after the data and the remote close succeeded, so an interrupted upload
-/// leaves the existing file intact. `timeout` bounds each step, not the
-/// whole transfer.
+/// leaves the existing file intact. With a [`RenameChannel`] the rename
+/// replaces the destination atomically; without one (server lacks
+/// `posix-rename@openssh.com`) an existing destination is removed first,
+/// leaving a brief gap. `timeout` bounds each step, not the whole transfer.
 pub async fn upload(
     sftp: &SftpSession,
+    rename: Option<&RenameChannel>,
     local_path: &Path,
     remote_path: &str,
     home_dir: &str,
@@ -135,6 +261,11 @@ pub async fn upload(
         step(t, "SFTP flush", remote_file.flush()).await?;
         // Close explicitly: russh-sftp's Drop close is fire-and-forget.
         step(t, "SFTP close", remote_file.shutdown()).await?;
+        if let Some(rc) = rename {
+            return tokio::time::timeout(t, rc.replace(&tmp, &resolved))
+                .await
+                .context("SFTP rename timed out")?;
+        }
         // SFTP v3 rename refuses an existing target on OpenSSH; retry after
         // removing it (brief gap, but never a truncated file).
         if tokio::time::timeout(t, sftp.rename(&tmp, &resolved))
@@ -324,6 +455,34 @@ mod tests {
         assert_eq!(
             temp_sibling("C:\\x\\f"),
             format!("C:\\x\\.f.sshi-tmp.{}", std::process::id())
+        );
+    }
+
+    /// B65: only another process's abandoned temp file matches the sweep.
+    #[test]
+    fn stale_temp_detection() {
+        let now = 10_000;
+        let old = Some(1_000);
+        let other = format!(".f.txt{TEMP_MARKER}{}", std::process::id() + 1);
+        assert!(is_stale_temp(&other, old, now, 3600));
+        // Fresh (a concurrent run may still be writing it) or no mtime: kept.
+        assert!(!is_stale_temp(&other, Some(9_000), now, 3600));
+        assert!(!is_stale_temp(&other, None, now, 3600));
+        // Our own pid, non-numeric pid, not hidden, or no base name: kept.
+        let own = temp_sibling("f.txt");
+        assert!(!is_stale_temp(&own, old, now, 3600));
+        assert!(!is_stale_temp(".f.txt.sshi-tmp.12x", old, now, 3600));
+        assert!(!is_stale_temp("f.txt.sshi-tmp.123", old, now, 3600));
+        assert!(!is_stale_temp(".sshi-tmp.123", old, now, 3600));
+        assert!(!is_stale_temp("report.txt", old, now, 3600));
+    }
+
+    /// B65: the extended request carries two SSH strings, old then new.
+    #[test]
+    fn posix_rename_payload_is_two_ssh_strings() {
+        assert_eq!(
+            posix_rename_payload("/a/.f.tmp", "/a/f"),
+            [&[0, 0, 0, 9][..], b"/a/.f.tmp", &[0, 0, 0, 4], b"/a/f"].concat()
         );
     }
 
