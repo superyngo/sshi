@@ -16,14 +16,10 @@ use crate::output::summary::Summary;
 
 /// Decisions collected by the CLI wrapper before invoking [`crate::commands::init::core::init_core`].
 ///
-/// Persists the persistence-time decisions (`dry_run`, `skip`,
-/// `remove_stale_hosts`) that `init_core`'s detect-and-persist
-/// phase still needs after all per-host retry helpers have run. The
-/// interactive answers (`accept_unknown_host_keys`,
-/// `generate_ssh_key_if_missing`, `copy_id_targets`) are consumed directly
-/// by the wrapper-orchestrated helpers and are carried here only so a
-/// future TUI popup can populate the full plan from a single interaction
-/// surface.
+/// Carries the persistence-time decisions (`dry_run`, `skip`,
+/// `remove_stale_hosts`) that `init_core`'s detect-and-persist phase needs.
+/// The keyscan / ssh-keygen / ssh-copy-id answers stay local to the CLI
+/// wrapper, which runs those retries itself before calling `init_core`.
 #[derive(Debug, Clone, Default)]
 pub struct InitPlan {
     /// `--dry-run`: skips the persist step. When `true`, `init_core`
@@ -36,17 +32,6 @@ pub struct InitPlan {
     /// User answered "y" to "Remove these N host(s) from sshi config?".
     /// Always `false` when `dry_run == true`.
     pub remove_stale_hosts: bool,
-    /// User answered "y" to "Add to known_hosts and retry?". Consumed by
-    /// [`offer_keyscan_retry`](super::core::offer_keyscan_retry); carried
-    /// here for future TUI single-shot plan population.
-    pub accept_unknown_host_keys: bool,
-    /// User answered "y" to "No SSH key found. Create one?". Consumed by
-    /// [`offer_ssh_copy_id_retry`](super::core::offer_ssh_copy_id_retry).
-    pub generate_ssh_key_if_missing: bool,
-    /// Subset of auth-failed hosts the user agreed to copy their public key
-    /// to via `ssh-copy-id`. Consumed by
-    /// [`offer_ssh_copy_id_retry`](super::core::offer_ssh_copy_id_retry).
-    pub copy_id_targets: Vec<String>,
 }
 
 /// Typed outcome of an `init_core` invocation. The CLI wrapper consumes this

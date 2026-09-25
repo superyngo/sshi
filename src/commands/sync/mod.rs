@@ -23,12 +23,12 @@ use super::Context;
 
 use collect::{
     batch_collect_all_metadata, collect_sync_paths, expand_directory_paths, requested_sync_paths,
-    scope_collect_result, union_dir_expansions,
+    union_dir_expansions,
 };
 use decide::{make_decisions, make_decisions_fixed_source, skip_conflict_hosts};
 use distribute::distribute_pooled;
 use report::build_sync_report;
-use types::{DirExpandResult, HostPathMap, PathSourceMap, RecursiveEntry, SyncDecision};
+use types::{DirExpandResult, PathSourceMap, RecursiveEntry, SyncDecision};
 
 pub async fn run(
     ctx: &Context,
@@ -115,7 +115,7 @@ async fn sync_inner(
         }
     }
 
-    let (mut all_paths, recursive_entries, mut host_applicable_paths, mut path_source_map) =
+    let (mut all_paths, recursive_entries, mut path_source_map) =
         collect_sync_paths(ctx, &hosts, names, positional, cli_source);
     if all_paths.is_empty() && recursive_entries.is_empty() {
         if verbose {
@@ -263,7 +263,6 @@ async fn sync_inner(
             &reachable_hosts,
             &mut all_paths,
             &mut path_source_map,
-            &mut host_applicable_paths,
             &sessions,
             verbose,
         )
@@ -275,7 +274,6 @@ async fn sync_inner(
             &reachable_hosts,
             &all_paths,
             &path_source_map,
-            &host_applicable_paths,
             &sessions,
             cli_source,
             push_missing,
@@ -354,9 +352,9 @@ async fn sync_inner(
 }
 
 /// Phase 1: expand directory paths for entries with a fixed source (step 3.5)
-/// and entries with no fixed source (step 3.6). Rewrites `all_paths`,
-/// `path_source_map`, and `host_applicable_paths` in place to substitute
-/// the expanded file list for any directory entry.
+/// and entries with no fixed source (step 3.6). Rewrites `all_paths` and
+/// `path_source_map` in place to substitute the expanded file list for any
+/// directory entry.
 ///
 /// Extracted verbatim from the legacy `sync_inner` body (audit §2.5 HIGH,
 /// §3.7 HIGH). Behaviour byte-identical.
@@ -366,7 +364,6 @@ async fn expand_paths(
     reachable_hosts: &[Arc<HostEntry>],
     all_paths: &mut Vec<String>,
     path_source_map: &mut PathSourceMap<'_>,
-    host_applicable_paths: &mut Option<HostPathMap>,
     sessions: &Arc<dyn SessionPool>,
     verbose: bool,
 ) -> Result<()> {
@@ -389,7 +386,6 @@ async fn expand_paths(
             }
 
             let mut dirs_expanded: HashMap<String, Vec<String>> = HashMap::new();
-            let mut dirs_missing: Vec<String> = Vec::new();
 
             for (src_name, paths_for_src) in &by_source {
                 if let Some(source_host) = reachable_hosts.iter().find(|h| h.name == *src_name) {
@@ -408,10 +404,8 @@ async fn expand_paths(
                                     DirExpandResult::Directory(files) => {
                                         dirs_expanded.insert(path, files);
                                     }
-                                    DirExpandResult::Missing => {
-                                        dirs_missing.push(path);
-                                    }
-                                    DirExpandResult::File => {}
+                                    // Missing paths and plain files stay as given.
+                                    DirExpandResult::Missing | DirExpandResult::File => {}
                                 }
                             }
                         }
@@ -426,7 +420,7 @@ async fn expand_paths(
                 }
             }
 
-            if !dirs_expanded.is_empty() || !dirs_missing.is_empty() {
+            if !dirs_expanded.is_empty() {
                 let mut new_paths = Vec::new();
                 let mut new_paths_seen: HashSet<String> = HashSet::new();
                 for path in all_paths.iter() {
@@ -436,15 +430,6 @@ async fn expand_paths(
                             if new_paths_seen.insert(file_path.clone()) {
                                 new_paths.push(file_path.clone());
                                 path_source_map.entry(file_path.clone()).or_insert(src);
-                            }
-                        }
-                        if let Some(ref mut host_map) = host_applicable_paths {
-                            for path_set in host_map.values_mut() {
-                                if path_set.remove(path) {
-                                    for file_path in expanded_files {
-                                        path_set.insert(file_path.clone());
-                                    }
-                                }
                             }
                         }
                         if verbose && expanded_files.is_empty() {
@@ -506,15 +491,6 @@ async fn expand_paths(
                                 path_source_map.entry(file_path.clone()).or_insert(None);
                             }
                         }
-                        if let Some(ref mut host_map) = host_applicable_paths {
-                            for path_set in host_map.values_mut() {
-                                if path_set.remove(path) {
-                                    for file_path in expanded_files {
-                                        path_set.insert(file_path.clone());
-                                    }
-                                }
-                            }
-                        }
                         if verbose && expanded_files.is_empty() {
                             println!("  {} (empty directory on all hosts, skipping)", path);
                         }
@@ -543,7 +519,6 @@ async fn decide_batch(
     reachable_hosts: &[Arc<HostEntry>],
     all_paths: &[String],
     path_source_map: &PathSourceMap<'_>,
-    host_applicable_paths: &Option<HostPathMap>,
     sessions: &Arc<dyn SessionPool>,
     cli_source: Option<&str>,
     push_missing: bool,
@@ -569,8 +544,7 @@ async fn decide_batch(
         let Some(collect) = batch_result.per_file.get(path) else {
             continue;
         };
-        let (scoped_found, scoped_missing) =
-            scope_collect_result(collect, path, host_applicable_paths);
+        let (scoped_found, scoped_missing) = (&collect.found, &collect.missing);
 
         if scoped_found.is_empty() {
             if verbose {
@@ -590,13 +564,8 @@ async fn decide_batch(
         let effective_source =
             cli_source.or_else(|| path_source_map.get(path.as_str()).copied().flatten());
         let decisions = if let Some(src) = effective_source {
-            let (decs, skip_info) = make_decisions_fixed_source(
-                &scoped_found,
-                path,
-                push_missing,
-                &scoped_missing,
-                src,
-            )?;
+            let (decs, skip_info) =
+                make_decisions_fixed_source(scoped_found, path, push_missing, scoped_missing, src)?;
             if let Some((source, skipped_path)) = skip_info {
                 if verbose {
                     printer::print_host_line(
@@ -615,17 +584,17 @@ async fn decide_batch(
             decs
         } else {
             if let Some((hosts, reason)) =
-                skip_conflict_hosts(&scoped_found, &ctx.config.settings.conflict_strategy)
+                skip_conflict_hosts(scoped_found, &ctx.config.settings.conflict_strategy)
             {
                 record_conflict_skip(summary, path, &hosts, reason, verbose);
                 continue;
             }
             make_decisions(
-                &scoped_found,
+                scoped_found,
                 &ctx.config.settings.conflict_strategy,
                 path,
                 push_missing,
-                &scoped_missing,
+                scoped_missing,
             )
         };
 

@@ -145,13 +145,6 @@ pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-/// Mutate a parsed TOML document in place to reflect the in-memory `AppConfig`.
-///
-/// `[settings]` is updated in place via `set_scalar`, preserving per-key inline
-/// comments and decor. `[[host]]` / `[[check]]` / `[[sync]]` array-of-tables
-/// are fully rebuilt: per-entry inline comments are lost but top-level section
-/// comments survive. Unknown top-level keys are preserved automatically by
-/// `toml_edit`.
 /// Set a scalar key in `table`, preserving the existing item's decor
 /// (whitespace and inline comments) if the key already exists.
 fn set_scalar<V: Into<Value>>(table: &mut Table, key: &str, v: V) {
@@ -172,6 +165,14 @@ fn set_scalar<V: Into<Value>>(table: &mut Table, key: &str, v: V) {
     }
 }
 
+/// Mutate a parsed TOML document in place to reflect the in-memory `AppConfig`.
+///
+/// `[settings]` is updated in place via `set_scalar`, preserving per-key inline
+/// comments and decor. `[[host]]` / `[[check]]` / `[[sync]]` array-of-tables
+/// are fully rebuilt: per-entry inline comments are lost but top-level section
+/// comments survive; unknown keys inside an entry are carried over from the
+/// matching old entry (`write_aot`, B43). Unknown top-level keys are preserved
+/// automatically by `toml_edit`.
 fn apply_config_to_doc(doc: &mut DocumentMut, config: &AppConfig) -> Result<()> {
     // Ensure [settings] exists as a table; B43: accept inline `settings = {…}`.
     let replacement = match doc.get_mut("settings") {

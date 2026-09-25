@@ -356,6 +356,33 @@ pub struct InitPools<'a> {
     pub auth_retry: Option<&'a dyn SessionPool>,
 }
 
+/// sshi hosts whose `ssh_host` alias no longer appears in `~/.ssh/config`
+/// (shared by the CLI wrapper's prompt and `init_core`).
+pub(crate) fn stale_hosts(
+    config: &crate::config::schema::AppConfig,
+    ssh_hosts: &[crate::config::ssh_config::SshHostEntry],
+) -> Vec<String> {
+    let known: std::collections::HashSet<&str> =
+        ssh_hosts.iter().map(|h| h.name.as_str()).collect();
+    config
+        .host
+        .iter()
+        .filter(|h| !known.contains(h.ssh_host.as_str()))
+        .map(|h| h.ssh_host.clone())
+        .collect()
+}
+
+/// Hosts `init` skips: `settings.skipped_hosts` plus this run's `--skip`.
+pub(crate) fn skip_list(config: &crate::config::schema::AppConfig, skip: &[String]) -> Vec<String> {
+    config
+        .settings
+        .skipped_hosts
+        .iter()
+        .chain(skip)
+        .cloned()
+        .collect()
+}
+
 /// Pure command core: runs the final shell-detection + persistence phase
 /// after the CLI wrapper has collected all interactive answers and (when
 /// authorised) driven the keyscan / ssh-copy-id retry flows.
@@ -363,9 +390,8 @@ pub struct InitPools<'a> {
 /// `pools` borrows the session pool plus any retry pools the wrapper
 /// created; their reachable-host union is what [`detect_shells`] walks.
 /// `plan` carries the persistence-time decisions (`dry_run`, `skip`,
-/// `remove_stale_hosts`); the interactive answers
-/// (`accept_unknown_host_keys`, `copy_id_targets`, etc.) don't reach
-/// `init_core` — they're consumed by the wrapper-orchestrated retry flows.
+/// `remove_stale_hosts`); the keyscan / key-copy answers never reach
+/// `init_core` — the wrapper runs those retry flows itself.
 ///
 /// No `println!`, no `printer::*`, no `stdin` reads. Per-host detect events
 /// stream via `progress`.
@@ -400,26 +426,11 @@ pub async fn init_core(
 
     let config_exists = crate::config::app::resolve_path(ctx.config_path.as_deref())?.exists();
     if config_exists {
-        let ssh_host_names: std::collections::HashSet<&str> =
-            ssh_hosts.iter().map(|h| h.name.as_str()).collect();
-        report.stale_host_names = ctx
-            .config
-            .host
-            .iter()
-            .filter(|h| !ssh_host_names.contains(h.ssh_host.as_str()))
-            .map(|h| h.ssh_host.clone())
-            .collect();
+        report.stale_host_names = stale_hosts(&ctx.config, ssh_hosts);
     }
     report.stale_hosts_removed = plan.remove_stale_hosts && !report.stale_host_names.is_empty();
 
-    let all_skips: Vec<String> = ctx
-        .config
-        .settings
-        .skipped_hosts
-        .iter()
-        .cloned()
-        .chain(plan.skip.iter().cloned())
-        .collect();
+    let all_skips = skip_list(&ctx.config, &plan.skip);
     for ssh_host in ssh_hosts {
         if all_skips.iter().any(|s| s == &ssh_host.name) {
             report.skipped_hosts.push(ssh_host.name.clone());
@@ -630,9 +641,6 @@ mod tests {
         assert!(!plan.dry_run);
         assert!(plan.skip.is_empty());
         assert!(!plan.remove_stale_hosts);
-        assert!(!plan.accept_unknown_host_keys);
-        assert!(!plan.generate_ssh_key_if_missing);
-        assert!(plan.copy_id_targets.is_empty());
     }
 
     #[test]

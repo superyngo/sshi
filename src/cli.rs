@@ -391,6 +391,19 @@ pub enum ActionFilter {
     Cp,
 }
 
+impl ActionFilter {
+    /// The `operation_log.command` value this filter matches.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ActionFilter::Sync => "sync",
+            ActionFilter::Run => "run",
+            ActionFilter::Exec => "exec",
+            ActionFilter::Check => "check",
+            ActionFilter::Cp => "cp",
+        }
+    }
+}
+
 /// Print clap help to stdout followed by a trailing newline.
 ///
 /// clap's `Command::print_help` omits the final newline; the `--help`

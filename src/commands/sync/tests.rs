@@ -490,7 +490,6 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
         &reachable_hosts,
         &[],
         &path_source_map,
-        &None,
         &sessions_dyn,
         None,
         true,

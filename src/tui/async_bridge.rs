@@ -1,14 +1,15 @@
 //! Async bridge between command-core operations and the TUI render loop
 //! (per docs/spec/2026-05-06-tui-reconstruct.md §18, AD-13).
 //!
-//! Operations run on tokio tasks. Per-host events flow through a bounded
-//! `tokio::mpsc::channel(1024)` as `TuiEvent` values. The main loop drains
-//! the channel non-blockingly each frame and updates `App` state.
+//! Operations run on tokio tasks. Per-host events flow through an unbounded
+//! `tokio::sync::mpsc` channel as `TuiEvent` values; the main loop awaits the
+//! next event alongside terminal input (`tokio::select!` in `App::run`) and
+//! updates `App` state.
 //!
 //! `AsyncBridge` implements `ProgressSink` so command-core can emit events
 //! without knowing about the TUI.
 
-use tokio::sync::mpsc::{Sender, UnboundedSender};
+use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::commands::report::{CommandReport, HostStatus, ProgressSink};
@@ -37,16 +38,12 @@ pub enum TuiEvent {
     Notice(String),
 }
 
-/// Channel capacity — covers ~500 hosts × 2 events with headroom (§18.1).
-#[allow(dead_code)]
-pub const CHANNEL_CAPACITY: usize = 1024;
-
 /// Handle to a currently-running operation (per §18.2).
 ///
-/// The operation itself runs on a dedicated OS thread (see
-/// `App::execute_check` for rationale); no `JoinHandle` is held — cancellation
-/// is via `CancellationToken`, and termination is signalled exclusively
-/// through the event channel.
+/// The operation itself runs on a tokio task spawned by the `App::execute_*`
+/// methods; no `JoinHandle` is held — cancellation is via
+/// `CancellationToken`, and termination is signalled exclusively through the
+/// event channel.
 pub struct RunningOp {
     pub cancel: CancellationToken,
     pub started_at: std::time::Instant,
@@ -98,14 +95,6 @@ impl ProgressSink for EventSender {
             duration_ms: ms,
         });
     }
-}
-
-/// Bounded variant for callers that need backpressure. The current MVP uses
-/// the unbounded sender for simplicity; bounded support is reserved for
-/// future per-line streaming (Phase 8).
-#[allow(dead_code)]
-pub struct BoundedEventSender {
-    pub tx: Sender<TuiEvent>,
 }
 
 fn truncate_detail(s: &str, max_lines: usize) -> String {

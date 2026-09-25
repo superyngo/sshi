@@ -10,8 +10,8 @@ use crate::host::session_pool::SessionPool;
 
 use super::super::Context;
 use super::types::{
-    BatchCollectResult, CollectResult, DirExpandResult, FileInfo, HostPathMap, PathSourceMap,
-    RecursiveEntry, SingleFileResult,
+    BatchCollectResult, CollectResult, DirExpandResult, FileInfo, PathSourceMap, RecursiveEntry,
+    SingleFileResult,
 };
 
 pub(crate) fn collect_sync_paths<'a>(
@@ -20,12 +20,7 @@ pub(crate) fn collect_sync_paths<'a>(
     names: &[String],
     positional: &'a [String],
     cli_source: Option<&'a str>,
-) -> (
-    Vec<String>,
-    Vec<RecursiveEntry<'a>>,
-    Option<HostPathMap>,
-    PathSourceMap<'a>,
-) {
+) -> (Vec<String>, Vec<RecursiveEntry<'a>>, PathSourceMap<'a>) {
     let mut paths: Vec<String> = Vec::new();
     let mut recursive: Vec<RecursiveEntry<'a>> = Vec::new();
     let mut path_sources: PathSourceMap<'a> = HashMap::new();
@@ -54,7 +49,7 @@ pub(crate) fn collect_sync_paths<'a>(
         path_sources.entry(tp).or_insert(cli_source);
     }
 
-    (paths, recursive, None, path_sources)
+    (paths, recursive, path_sources)
 }
 
 pub(crate) fn requested_sync_paths(
@@ -71,31 +66,6 @@ pub(crate) fn requested_sync_paths(
         set.insert(to_tilde_path(p));
     }
     set.into_iter().collect()
-}
-
-pub(crate) fn scope_collect_result(
-    collect: &CollectResult,
-    path: &str,
-    host_applicable_paths: &Option<HostPathMap>,
-) -> (Vec<FileInfo>, Vec<String>) {
-    match host_applicable_paths {
-        Some(map) => {
-            let found: Vec<FileInfo> = collect
-                .found
-                .iter()
-                .filter(|fi| map.get(&fi.host).is_some_and(|paths| paths.contains(path)))
-                .cloned()
-                .collect();
-            let missing: Vec<String> = collect
-                .missing
-                .iter()
-                .filter(|host| map.get(*host).is_some_and(|paths| paths.contains(path)))
-                .cloned()
-                .collect();
-            (found, missing)
-        }
-        None => (collect.found.clone(), collect.missing.clone()),
-    }
 }
 
 /// Largest metadata command (bytes) sent in one exec, per remote shell. A

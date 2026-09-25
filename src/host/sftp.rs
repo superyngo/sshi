@@ -348,7 +348,9 @@ pub async fn download(
     Ok(())
 }
 
-/// Recursively create directories on the remote (best-effort; ignores already-exists errors).
+/// Recursively create directories on the remote. An existing directory is
+/// fine; any other failure (permission denied, a file in the way) is
+/// returned instead of surfacing later as a confusing upload error.
 async fn mkdir_p_sftp(sftp: &SftpSession, path: &Path) -> Result<()> {
     let path_str = path.to_string_lossy();
     let parts: Vec<&str> = path_str.split('/').filter(|s| !s.is_empty()).collect();
@@ -364,7 +366,19 @@ async fn mkdir_p_sftp(sftp: &SftpSession, path: &Path) -> Result<()> {
             current.push('/');
         }
         current.push_str(part);
-        let _ = sftp.create_dir(&current).await; // ignore error if already exists
+        if let Err(e) = sftp.create_dir(&current).await {
+            // OpenSSH answers a bare FAILURE for "already exists", so only a
+            // path that is not a directory afterwards is an error.
+            let is_dir = sftp
+                .metadata(&current)
+                .await
+                .is_ok_and(|m| m.file_type().is_dir());
+            if !is_dir {
+                return Err(
+                    anyhow::Error::new(e).context(format!("SFTP mkdir failed for {current}"))
+                );
+            }
+        }
     }
     Ok(())
 }

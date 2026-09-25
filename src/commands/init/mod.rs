@@ -73,15 +73,7 @@ pub async fn run(ctx: &Context, dry_run: bool, skip: Vec<String>) -> Result<()> 
     };
 
     if config_exists {
-        let ssh_host_names: std::collections::HashSet<&str> =
-            ssh_hosts.iter().map(|h| h.name.as_str()).collect();
-        stale_host_names = ctx
-            .config
-            .host
-            .iter()
-            .filter(|h| !ssh_host_names.contains(h.ssh_host.as_str()))
-            .map(|h| h.ssh_host.clone())
-            .collect();
+        stale_host_names = core::stale_hosts(&ctx.config, &ssh_hosts);
 
         if !stale_host_names.is_empty() {
             println!(
@@ -110,14 +102,7 @@ pub async fn run(ctx: &Context, dry_run: bool, skip: Vec<String>) -> Result<()> 
         }
     }
 
-    let all_skips: Vec<String> = ctx
-        .config
-        .settings
-        .skipped_hosts
-        .iter()
-        .cloned()
-        .chain(skip.iter().cloned())
-        .collect();
+    let all_skips = core::skip_list(&ctx.config, &skip);
 
     let mut detect_hosts: Vec<String> = Vec::new();
     let mut summary = Summary::default();
@@ -207,7 +192,6 @@ pub async fn run(ctx: &Context, dry_run: bool, skip: Vec<String>) -> Result<()> 
             std::io::stdin().read_line(&mut answer)?;
 
             if answer.trim().eq_ignore_ascii_case("y") {
-                plan.accept_unknown_host_keys = true;
                 let accepted = batch_keyscan_and_accept(
                     &host_key_failures,
                     ctx.timeout,
@@ -275,14 +259,11 @@ pub async fn run(ctx: &Context, dry_run: bool, skip: Vec<String>) -> Result<()> 
             }
 
             let have_default_key = default_ssh_key_exists();
-            if !have_default_key
-                && prompt_yes_no("No SSH key found. Create one (ssh-keygen -t ed25519)?")?
-            {
-                plan.generate_ssh_key_if_missing = true;
-            }
+            let generate_key = !have_default_key
+                && prompt_yes_no("No SSH key found. Create one (ssh-keygen -t ed25519)?")?;
 
             let mut have_key = have_default_key;
-            if plan.generate_ssh_key_if_missing {
+            if generate_key {
                 have_key = run_interactive("ssh-keygen", &["-t", "ed25519"]);
                 if !have_key {
                     println!("ssh-keygen did not produce a key; skipping ssh-copy-id.");

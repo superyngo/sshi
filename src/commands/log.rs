@@ -39,13 +39,7 @@ pub fn log_core(
         bind_values.push(Box::new(h.clone()));
     }
     if let Some(ref a) = action {
-        let action_str = match a {
-            ActionFilter::Sync => "sync",
-            ActionFilter::Run => "run",
-            ActionFilter::Exec => "exec",
-            ActionFilter::Check => "check",
-            ActionFilter::Cp => "cp",
-        };
+        let action_str = a.as_str();
         query.push_str(&format!(" AND command = ?{}", bind_values.len() + 1));
         bind_values.push(Box::new(action_str.to_string()));
     }
@@ -175,13 +169,7 @@ pub async fn run(
                 last,
                 since,
                 host,
-                action: action.map(|a| match a {
-                    ActionFilter::Sync => "sync".to_string(),
-                    ActionFilter::Run => "run".to_string(),
-                    ActionFilter::Exec => "exec".to_string(),
-                    ActionFilter::Check => "check".to_string(),
-                    ActionFilter::Cp => "cp".to_string(),
-                }),
+                action: action.map(|a| a.as_str().to_string()),
                 errors,
             },
             entries,

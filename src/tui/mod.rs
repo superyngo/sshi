@@ -11,7 +11,6 @@ pub mod app_state;
 pub mod async_bridge;
 pub mod components;
 pub mod entry;
-pub mod event;
 pub mod log_layer;
 pub mod state;
 pub mod tabs;

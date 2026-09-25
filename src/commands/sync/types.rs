@@ -4,8 +4,6 @@ use crate::config::schema::SyncEntry;
 
 pub(crate) type RecursiveEntry<'a> = (&'a SyncEntry, HashSet<String>, Option<&'a str>);
 
-pub(crate) type HostPathMap = HashMap<String, HashSet<String>>;
-
 pub(crate) type PathSourceMap<'a> = HashMap<String, Option<&'a str>>;
 
 #[derive(Debug, Clone)]

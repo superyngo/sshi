@@ -48,7 +48,6 @@ use super::state::persist::{
 };
 use super::tabs::config_tab::ConfigTabState;
 use super::tabs::config_tab::ConfigZone;
-use super::tabs::operate_schema;
 use super::tabs::operate_tab::{self, OpField, OperateRenderData};
 use super::tabs::TabId;
 use super::theme::Theme;
@@ -1053,13 +1052,11 @@ impl App {
                     })
                     .collect();
 
-                let action_filter_str = self.view.log_action.as_ref().map(|a| match a {
-                    ActionFilter::Sync => "sync".to_string(),
-                    ActionFilter::Run => "run".to_string(),
-                    ActionFilter::Exec => "exec".to_string(),
-                    ActionFilter::Check => "check".to_string(),
-                    ActionFilter::Cp => "cp".to_string(),
-                });
+                let action_filter_str = self
+                    .view
+                    .log_action
+                    .as_ref()
+                    .map(|a| a.as_str().to_string());
 
                 let report = CommandReport::Log(LogReport {
                     executed_at: executed_at.clone(),
@@ -3397,7 +3394,7 @@ impl App {
                     log_since_input: &self.view.log_since_input,
                     log_host_input: &self.view.log_host_input,
                     log_errors: self.view.log_errors,
-                    log_action: operate_schema::action_str(self.view.log_action.as_ref()),
+                    log_action: self.view.log_action.as_ref().map_or("all", |a| a.as_str()),
                     specific_focused,
                 };
                 super::tabs::view_tab::render_view(&data, chunks[1], frame);
