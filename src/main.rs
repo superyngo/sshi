@@ -128,7 +128,6 @@ async fn main() -> Result<()> {
 
     match command {
         Commands::Init {
-            update,
             dry_run,
             skip,
             timeout,
@@ -136,7 +135,7 @@ async fn main() -> Result<()> {
         } => {
             let ctx =
                 commands::Context::new_without_targets(cli.verbose, cfg, timeout, true).await?;
-            commands::init::run(&ctx, update, dry_run, skip).await
+            commands::init::run(&ctx, dry_run, skip).await
         }
         Commands::Config { .. } => commands::config::run(cfg).await,
         Commands::List { target, output } => {

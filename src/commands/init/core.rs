@@ -629,7 +629,6 @@ mod tests {
     fn init_plan_default_declines_all_interactive_decisions() {
         let plan = InitPlan::default();
         assert!(!plan.dry_run);
-        assert!(!plan.update);
         assert!(plan.skip.is_empty());
         assert!(!plan.remove_stale_hosts);
         assert!(!plan.accept_unknown_host_keys);

@@ -54,7 +54,7 @@ fn prompt_yes_no(question: &str) -> Result<bool> {
 /// Thin CLI wrapper: parses `~/.ssh/config`, asks the user the interactive
 /// questions in the original byte-order, drives the non-interactive
 /// [`core`] helpers between prompts, and prints the post-run summary.
-pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) -> Result<()> {
+pub async fn run(ctx: &Context, dry_run: bool, skip: Vec<String>) -> Result<()> {
     println!("Scanning ~/.ssh/config...");
     let ssh_hosts = ssh_config::parse_ssh_config()?;
 
@@ -64,12 +64,10 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
     }
 
     let config_exists = crate::config::app::resolve_path(ctx.config_path.as_deref())?.exists();
-    let effective_update = update || config_exists;
 
     let mut stale_host_names: Vec<String> = Vec::new();
     let mut plan = InitPlan {
         dry_run,
-        update: effective_update,
         skip: skip.clone(),
         ..Default::default()
     };
@@ -128,10 +126,6 @@ pub async fn run(ctx: &Context, update: bool, dry_run: bool, skip: Vec<String>) 
         if all_skips.iter().any(|s| s == &ssh_host.name) {
             printer::print_host_line(&ssh_host.name, "skip", "skipped");
             summary.add_skip();
-            continue;
-        }
-        let already_exists = ctx.config.host.iter().any(|h| h.ssh_host == ssh_host.name);
-        if already_exists && !effective_update {
             continue;
         }
         detect_hosts.push(ssh_host.name.clone());

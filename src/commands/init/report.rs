@@ -17,7 +17,7 @@ use crate::output::summary::Summary;
 /// Decisions collected by the CLI wrapper before invoking [`crate::commands::init::core::init_core`].
 ///
 /// Persists the persistence-time decisions (`dry_run`, `skip`,
-/// `remove_stale_hosts`, `update`) that `init_core`'s detect-and-persist
+/// `remove_stale_hosts`) that `init_core`'s detect-and-persist
 /// phase still needs after all per-host retry helpers have run. The
 /// interactive answers (`accept_unknown_host_keys`,
 /// `generate_ssh_key_if_missing`, `copy_id_targets`) are consumed directly
@@ -30,10 +30,6 @@ pub struct InitPlan {
     /// returns a report describing what would have happened without
     /// writing the default `config.toml`.
     pub dry_run: bool,
-    /// `--update`: re-detect shell on hosts already present in sshi config.
-    /// The CLI wrapper ORs this with the "config already exists" condition
-    /// before passing it in.
-    pub update: bool,
     /// `--skip` values merged with `settings.skipped_hosts` from the loaded
     /// config. New skips are persisted.
     pub skip: Vec<String>,

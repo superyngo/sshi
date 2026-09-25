@@ -74,12 +74,6 @@ Import hosts from `~/.ssh/config`:
 sshi init
 ```
 
-Re-detect shell types for existing hosts:
-
-```bash
-sshi init --update
-```
-
 ### Check
 
 Collect system snapshots from hosts:

@@ -76,10 +76,6 @@ pub enum Commands {
     /// Import hosts from ~/.ssh/config and detect remote shell types
     #[command(disable_help_flag = true)]
     Init {
-        /// Re-detect shell type for existing hosts
-        #[arg(long)]
-        update: bool,
-
         /// Show what would be imported without writing
         #[arg(long)]
         dry_run: bool,

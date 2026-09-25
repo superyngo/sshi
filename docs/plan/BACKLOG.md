@@ -20,7 +20,6 @@ this file existed are recorded in those source documents, not here.
 | B6 | 2026-07-18 | 2026-09-25 | P2 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `src/tui/focus.rs` | S | Types wired in or deleted; allow removed |
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
-| B15 | 2026-09-25 | 2026-09-25 | P3 | `init --update` is a no-op whenever `config.toml` exists (`effective_update = update \|\| config_exists`) | `src/commands/init/mod.rs` `run` | S | Flag has a distinct effect, or is removed |
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
@@ -80,6 +79,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B15 | `init --update` was a no-op whenever `config.toml` existed (and had nothing to skip otherwise) | HASH-B15 — flag, `InitPlan::update` and `effective_update` removed; README and `cli.md` updated; real binary: `init --update` exit 2, `init --dry-run` unchanged |
 | B38 | Recursive `cp` silently skipped symlinks and unreadable entries | `fe2d12e` — `walk_files` warns on symlinks/special files, errors on unreadable entries; `plan_transfers` checks single files; tests; real binary: symlink warned, chmod 000 file → exit 1 |
 | B59 | PowerShell swap collected but never displayable | `19c79a7` — `parser::parse_ps_swap` + shared `ps_swap_totals` used by `extract_metric_value` (legacy raw snapshots too); tests |
 | B68 | TUI tests resolved the real state dir via `App::new` and could run the legacy migration | `aa6cbcd` — `App::from_context_with_state_path`; `minimal_app` uses a per-process temp dir; test asserts the explicit path is used |

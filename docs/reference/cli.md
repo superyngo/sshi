@@ -108,7 +108,6 @@ The following table summarizes all flags across every subcommand. The global `-v
 | `-n, --name` | — | ✓ | — | ✓ | — | — | — | — | — | — |
 | `-S, --sudo` | — | — | — | — | — | ✓ | ✓ | — | — | — |
 | `-S, --source` | — | — | — | ✓ | — | — | — | — | — | — |
-| `--update` | ✓ | — | — | — | — | — | — | — | — | — |
 | `--keep` | — | — | — | — | — | — | ✓ | — | — | — |
 | `--combined-view` | — | — | ✓ | — | — | — | — | — | — | — |
 | `--since` | — | — | — | — | — | — | — | — | — | ✓ |
@@ -131,7 +130,6 @@ sshi init [OPTIONS]
 ```
 
 #### Options
-- `--update`: Re-detect shell types and probe settings for hosts already present in `config.toml`. Note: when `config.toml` already exists, `sshi init` re-probes existing hosts by default regardless of whether `--update` is passed.
 - `--dry-run`: Preview imported and stale hosts without writing changes to `config.toml` or executing keyscan/key-copy retries.
 - `--skip <HOSTS>`: Skip specific hosts from connectivity testing and shell detection (comma-separated).
 - `--timeout <SECS>`: Connection timeout in seconds during host discovery.
