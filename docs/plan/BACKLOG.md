@@ -76,7 +76,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B49 | One unknown enum value reset all persisted TUI state | HASH-B49 — `persist::deserialize_enum_or_default` on the six enum fields; test `unknown_enum_value_falls_back_per_field_while_other_fields_survive` |
+| B49 | One unknown enum value reset all persisted TUI state | `de3859f` — `persist::deserialize_enum_or_default` on the six enum fields; test `unknown_enum_value_falls_back_per_field_while_other_fields_survive` |
 | B61 | Enums/catalogs re-spelled: shell strings in Config tab, `ShellMode` label ×3, check catalog ×2 (×3 with the B16 template), script-extension mapping ×2 | `5412320` — one source each; `inject_config_comments` builds the probe list from `DEFAULT_CHECK_ENABLED`; real binary: `init` template byte-identical probe list |
 | B70 | TUI persisted a `checkout_history` toggle nothing read | `3f49a5e` — field removed from `OperateState`/`OpSpecific`; test `old_state_file_with_checkout_history_loads_successfully` |
 | B15 | `init --update` was a no-op whenever `config.toml` existed (and had nothing to skip otherwise) | `2c78612` — flag, `InitPlan::update` and `effective_update` removed; README and `cli.md` updated; real binary: `init --update` exit 2, `init --dry-run` unchanged |
