@@ -93,7 +93,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B9 | HTML report templating lived inside the general report module | HASH-B9 — `render_html_report` and helpers moved to `output::html`; 391/240 tests unchanged |
+| B9 | HTML report templating lived inside the general report module | `9841414` — `render_html_report` and helpers moved to `output::html`; 391/240 tests unchanged |
 | B36 | Unknown `-n` exited 0 with a wrong hint; missing explicit `-c` became an empty config | `752b3c8` — `ensure_check_names` / `ensure_sync_names` + `load_config` (init and TUI exempt); real binary: typo/missing path exit 1, `init` still creates |
 | B14 | `checkout --history` / `--since` parsed but ignored | `f5f2424` — flags removed from CLI, docs and README (option A); real binary rejects them with exit 2 |
 | B13 | `-v/--verbose` rejected after the subcommand | `e53fbe9` — `global = true` on `Cli::verbose`; real binary `check -a -v` accepted |
