@@ -62,7 +62,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B74 | `$VISUAL`/`$EDITOR` values with arguments failed (whole value used as the program name) | HASH-B74 — `commands::config::editor_command` (Unix `sh -c` for values with whitespace) used by `config::run` and `App::do_open_editor`; test `editor_with_arguments_runs_through_sh`; real binary: `VISUAL="fake --wait"` → editor got `--wait c.toml` (old: "Failed to open editor") |
+| B74 | `$VISUAL`/`$EDITOR` values with arguments failed (whole value used as the program name) | `310bf46` — `commands::config::editor_command` (Unix `sh -c` for values with whitespace) used by `config::run` and `App::do_open_editor`; test `editor_with_arguments_runs_through_sh`; real binary: `VISUAL="fake --wait"` → editor got `--wait c.toml` (old: "Failed to open editor") |
 | B17 | Editor precedence differed: `sshi config` tried `$EDITOR` first, TUI `E` tried `$VISUAL` first | `0615950` — `commands::config::resolve_editor` (`editor_from`, pure, tested) used by `config::run` and `App::do_open_editor`; `cli.md`/`tui.md`/README updated; real binary: `VISUAL=fake EDITOR=false sshi config` opens fake (old binary ran `false`) |
 | B6 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `107cc41` — `src/tui/focus.rs` deleted (no callers; its own tests went with it), `pub mod focus` removed; 447/289 tests pass |
 | B73 | sh `swap` probe was `free -b` only; macOS/BSD hosts never reported swap | `2f6ff2a` — `sh::command_for("swap")` falls back to `sysctl -n vm.swapusage`; `parse_bsd_swapusage` (K/M/G units); fixtures `macos_swap*.txt` + test; real binary: snapshot `swap` = `{"total_bytes":0,"used_bytes":0}` on the macOS rig (was `{}`) |
