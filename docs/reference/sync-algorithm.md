@@ -1,32 +1,39 @@
 # Sync algorithm reference
 
-This document describes the three-stage file synchronization protocol implemented in `sshi` (`src/commands/sync/`). The synchronization engine coordinates file consistency across multiple remote hosts over SSH/SFTP using a centralized coordination model.
+This document describes the file synchronization protocol implemented in `sshi` (`src/commands/sync/`). The synchronization engine coordinates file consistency across multiple remote hosts over SSH/SFTP using a centralized coordination model.
 
 ## Overview
 
-The sync workflow runs across three primary phases:
+The sync workflow runs across four primary phases:
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ 1. Collect (src/commands/sync/collect.rs)              │
-│    - Expand directories on remote hosts (find -L)      │
-│    - Gather mtime, size, and SHA-256 hashes in batch   │
+│ 1. Directory Expansion (commands::sync::collect)       │
+│    - Expand directory paths on remote hosts (find -L)  │
+│    - Rewrite path lists with expanded file paths       │
 └──────────────────────────┬─────────────────────────────┘
                            │
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│ 2. Decide (src/commands/sync/decide.rs)                │
-│    - Compare file hashes across hosts                  │
-│    - Select source host per ConflictStrategy / source  │
-│    - Build SyncDecision (source, targets, synced)      │
+│ 2. Decide Batch (commands::sync::decide)               │
+│    - Batch-gather mtime, size, SHA-256 hashes          │
+│    - Compare file hashes across reachable hosts        │
+│    - Build SyncDecision per file (source, targets)     │
 └──────────────────────────┬─────────────────────────────┘
                            │
                            ▼
 ┌────────────────────────────────────────────────────────┐
-│ 3. Distribute (src/commands/sync/distribute.rs)        │
+│ 3. Distribute Batch (commands::sync::distribute)       │
 │    - Local Relay: Download source file to local temp   │
 │    - Concurrently upload local temp to target hosts    │
 │    - Record results in SQLite sync_state & log         │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 4. Recursive Entries (commands::sync::mod)             │
+│    - Iterate recursive sync entries (recursive = true) │
+│    - Run per-file sync flow via sync_path_across       │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -39,7 +46,7 @@ The sync pipeline is coordinated by `sync_core` and `sync_inner` in `src/command
 Before metadata collection, configured sync paths are resolved and expanded into concrete file lists:
 
 1. **Path Resolution (`collect_sync_paths`)**:
-   - Gathers paths from CLI positional arguments (ad-hoc mode) or matching `[[sync]]` configuration entries (named or group-targeted).
+   - Gathers paths from CLI positional arguments (ad-hoc mode) or matching `[[sync]]` configuration entries (selected via `-n/--name`).
    - Distinguishes between flat batch sync paths and recursive sync entries (`recursive = true`).
 2. **Directory Expansion (`expand_paths`, `expand_directory_paths`)**:
    - For entries with a fixed source: inspects the directory on the specified source host.
@@ -126,7 +133,7 @@ To minimize SSH channel round-trips, `sshi` executes a single batched remote com
 - **`blake3` in `Cargo.toml`**: The `blake3` crate dependency in `Cargo.toml` is used for internal local utilities:
   - Generating stable random entry IDs (`generate_entry_id()` in `src/config/schema.rs`).
   - Hashing config paths for TUI state file persistence (`src/tui/state/persist.rs`).
-- **Database Schema Column**: The SQLite `sync_state` table retains a column historically named `blake3`, but sync writes empty strings or SHA-256 hashes to it. The active hash algorithm executed on remote hosts during synchronization is **SHA-256**.
+- **Database Schema Column**: The SQLite `sync_state` table retains a column historically named `blake3`, but sync writes empty strings (`""`) to it; hashes are compared in memory during decision-making and are not persisted to the database. The active hash algorithm executed on remote hosts during synchronization is **SHA-256**.
 
 ### Collection Results
 
@@ -209,4 +216,14 @@ When `--dry-run` is specified:
 
 After successful distribution:
 1. **SQLite Database Update**: Updates `sync_state` and appends entries to `operation_log` in a single SQLite transaction.
-2. **Summary & Progress**: Updates `SyncSummary` counters (`synced_files`, `conflicts_resolved`, `bytes_transferred`, `host_failures`) and dispatches event notifications to `ProgressSink` (updating the CLI progress or TUI view).
+2. **Summary & Progress**: Updates `SyncSummary` counters (`files_synced`, `files_partial`, `files_failed`, `transfers_synced`, `transfers_failed`, etc.) and dispatches event notifications to `ProgressSink` (updating the CLI progress or TUI view).
+
+---
+
+## Phase 4: Recursive Entries (`run_recursive_entries`)
+
+Entries configured with `recursive = true` bypass the batched collect/decide/distribute pipeline. In Phase 4 (`commands::sync::run_recursive_entries`):
+
+1. **Directory Expansion**: Expands directory contents on the source host (or computes the union of expanded paths across reachable hosts when no fixed source is specified).
+2. **Per-File Synchronization**: Executes `sync_path_across` sequentially for each expanded file path, collecting metadata (`collect_file_metadata`), making individual `SyncDecision` evaluations, and executing `distribute_pooled`.
+3. **Incremental Recording**: Each synchronized file commits its outcome immediately to SQLite (`sync_state` and `operation_log`) and dispatches progress updates to the caller's `ProgressSink`.

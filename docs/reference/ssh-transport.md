@@ -4,13 +4,14 @@ This document describes the `russh`-based SSH transport layer in `sshi`. All rem
 
 ## Overview
 
-The transport stack is structured across five primary modules:
+The transport stack is structured across five primary modules and testing abstractions:
 
-1. **`RusshSessionPool` (`src/host/session_pool.rs`)**: Thread-safe pool managing authenticated `russh` client sessions (`Handle<SshHandler>`), channel multiplexing, `known_hosts` verification, and lazy SFTP session caching.
-2. **`SshPool` (`src/host/pool.rs`)**: High-level orchestrator wrapping `RusshSessionPool`, `ConcurrencyLimiter`, and `SyncProgress` for subcommand execution.
-3. **`ConcurrencyLimiter` (`src/host/concurrency.rs`)**: Two-tier semaphore enforcing global and per-host concurrency limits without head-of-line blocking.
-4. **`SftpSession` (`src/host/sftp.rs`)**: Streaming file upload and download operations built on `russh-sftp`.
-5. **Authentication & TUI Bridge (`src/host/auth.rs`)**: Multi-step credential resolution chain supporting unencrypted keys, encrypted keys with passphrase caching, and password fallback across CLI and TUI surfaces.
+1. **`SessionPool` trait (`src/host/session_pool.rs`) & `MockSessionPool` (`src/host/session_pool_mock.rs`)**: Async trait abstracting remote command execution and SFTP transfers across production SSH sessions and headless test mocks.
+2. **`RusshSessionPool` (`src/host/session_pool.rs`)**: Thread-safe pool implementing `SessionPool`, managing authenticated `russh` client sessions (`Handle<SshHandler>`), channel multiplexing, `known_hosts` verification, and lazy SFTP session caching.
+3. **`SshPool` (`src/host/pool.rs`)**: High-level orchestrator wrapping `RusshSessionPool`, `ConcurrencyLimiter`, and `SyncProgress` for subcommand execution.
+4. **`ConcurrencyLimiter` (`src/host/concurrency.rs`)**: Two-tier semaphore enforcing global and per-host concurrency limits without head-of-line blocking.
+5. **`SftpSession` (`src/host/sftp.rs`)**: Streaming file upload and download operations built on `russh-sftp`.
+6. **Authentication & TUI Bridge (`src/host/auth.rs`)**: Multi-step credential resolution chain supporting unencrypted keys, encrypted keys with passphrase caching, and password fallback across CLI and TUI surfaces.
 
 ---
 
@@ -65,7 +66,7 @@ SFTP sessions are managed through `LazyCache<SftpSession>`:
 
 ## SshPool High-Level Wrapper
 
-`SshPool` (`src/host/pool.rs`) is the central handle used by subcommands (`check`, `sync`, `run`, `exec`, `cp`, `init`):
+`SshPool` (`src/host/pool.rs`) is the central handle used by subcommands (`check`, `sync`, `run`, `exec`, `cp`). `init` manages `RusshSessionPool` instances directly via `InitPools` (`commands::init::core::InitPools`).
 
 ```rust
 pub struct SshPool {
@@ -109,7 +110,7 @@ pub struct ConcurrencyLimiter {
 
 - **`max_concurrency`**: Default `10` (configured in `[settings]` in `config.toml`).
 - **`max_per_host_concurrency`**: Default `4` (configured in `[settings]` in `config.toml`).
-- **`--serial` Flag**: Overrides both limits to `1` across all command contexts (`CommandContext::concurrency()`, `CommandContext::per_host_concurrency()`).
+- **`--serial` Flag**: Overrides both limits to `1` across all command contexts (`Context::concurrency()`, `Context::per_host_concurrency()`).
 
 ### Permit Acquisition Order & Deadlock Prevention
 
@@ -118,7 +119,9 @@ Permit acquisition in `ConcurrencyLimiter::acquire(host)` strictly follows this 
 1. **Per-host semaphore permit acquired first.**
 2. **Global semaphore permit acquired second.**
 
-**Why per-host first**: This prevents **head-of-line blocking**. If tasks acquired the global permit first, multiple tasks queued for a single saturated host would each hold a global permit while waiting for that host's lock, starving tasks for other completely idle hosts. Acquiring per-host first ensures tasks only consume a global permit when their target host has an available execution slot. Because all callers follow this identical order, circular dependency and deadlock are impossible.
+**Why per-host first**: This prevents **head-of-line blocking**. If tasks acquired the global permit first, multiple tasks queued for a single saturated host would each hold a global permit while waiting for that host's lock, starving tasks for other completely idle hosts. Acquiring per-host first ensures tasks only consume a global permit when their target host has an available execution slot.
+
+**Caller Consistency Note**: Callers using `ConcurrencyLimiter::acquire` follow this per-host-first ordering, preventing circular wait across those operations. However, `sync::distribute::distribute_pooled` directly acquires the global semaphore before the per-host semaphore; in practice, sync upload tasks only compete against other uploads within the same distribution phase, avoiding deadlocks under current usage.
 
 Both permits are held inside an RAII `ConcurrencyPermit` guard and released on drop.
 

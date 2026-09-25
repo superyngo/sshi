@@ -3,32 +3,32 @@
 ## Build, Test, and Quality Commands
 
 ```bash
-# Build (single sshi binary; TUI enabled via --features tui)
-cargo build                                       # headless (default)
-cargo build --features tui                        # with TUI
-cargo build --release                             # Release headless
-cargo build --release --features tui              # Release with TUI
+# Build (single sshi binary; TUI enabled by default)
+cargo build                                       # with TUI (default)
+cargo build --no-default-features                 # headless
+cargo build --release                             # Release with TUI (default)
+cargo build --release --no-default-features       # Release headless
 
 # Check without building (faster)
 cargo check
-cargo check --features tui
+cargo check --no-default-features
 
 # Run tests (both feature configurations must pass)
 cargo test
-cargo test --features tui
+cargo test --no-default-features
 cargo test test_name                              # Run single test
 cargo test -- --nocapture                         # Show print! output
 
 # Linting (run for both feature configs)
 cargo clippy --all-targets
-cargo clippy --all-targets --features tui
+cargo clippy --all-targets --no-default-features
 
 # Formatting
 cargo fmt
 cargo fmt --check
 ```
 
-## TUI contributor rules (per docs/reference/tui.md)
+## TUI contributor rules
 
 - No `eprintln!` / `println!` / `print!` / `eprint!` anywhere in `src/tui/`
   or in any code path reachable while the TUI is running. Use `tracing`
@@ -36,11 +36,11 @@ cargo fmt --check
 - `commands::*_core` functions must never call `output::printer`. They
   receive a `ProgressSink` impl or return a `CommandReport` variant;
   printing is the CLI wrapper's responsibility.
-- Each phase merges into `feat/tui` only after `cargo test`,
-  `cargo test --features tui`, `cargo clippy --all-targets`,
-  `cargo clippy --all-targets --features tui`, and `cargo fmt --check`
+- Every change merges into `main` only after `cargo test`,
+  `cargo test --no-default-features`, `cargo clippy --all-targets`,
+  `cargo clippy --all-targets --no-default-features`, and `cargo fmt --check`
   all pass. To revert a regression, revert the merge commit on
-  `feat/tui` — the branch history is the rollback.
+  `main` — the branch history is the rollback.
 
 ## Code Style Guidelines
 
@@ -73,7 +73,7 @@ cargo fmt --check
 - Write helper functions for test data setup
 - Use in-memory SQLite for DB tests: `Connection::open_in_memory()`
 - Test public APIs, not implementation details
-- Prefix test functions with `test_`
+- Use descriptive test function names; `test_` prefix is optional
 
 ### Feature Flags
 - TUI features guarded with `#[cfg(feature = "tui")]`

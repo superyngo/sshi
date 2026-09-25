@@ -1,35 +1,9 @@
 # Copilot Instructions for sshi
 
-## Build & Test
+## Conduct & Commands
 
-```bash
-# Build
-cargo build
+Contributor workflows, build commands, test instructions, and code conventions live in [AGENTS.md](../AGENTS.md).
 
-# Build without TUI feature
-cargo build --no-default-features
+## Architecture & Documentation
 
-# Run tests
-cargo test
-
-# Run a single test
-cargo test test_name
-
-# Run tests in a specific module
-cargo test config::ssh_config::tests
-
-# Check without building
-cargo check
-
-# Lint
-cargo clippy
-```
-
-## Architecture
-
-sshi is documented in [CONTEXT.md](../CONTEXT.md) — start there. Current behavior (CLI surface,
-config schema, SSH transport, sync algorithm, state schema, TUI) lives in `docs/reference/`.
-
-## Conventions
-
-See [AGENTS.md](../AGENTS.md) for code style, error handling, and contributor conventions.
+Documentation entry point is [CONTEXT.md](../CONTEXT.md). Current subsystem behavior (CLI surface, config schema, SSH transport, sync algorithm, state schema, TUI) lives in `docs/reference/`.

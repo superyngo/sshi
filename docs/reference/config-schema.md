@@ -87,7 +87,7 @@ Each `[[check]]` entry configures a periodic metric inspection or health check t
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `name` | `string` (`Option<String>`) | `None` | Selection identifier (`sshi check -n <name>`) and TUI sidebar label. If omitted, the entry is only reachable when named `"default"`. |
+| `name` | `string` (`Option<String>`) | `None` | Selection identifier (`sshi check -n <name>`) and TUI sidebar label. When `-n` is omitted on the CLI, `sshi check` selects the entry explicitly named `"default"`. Entries with an omitted or empty `name` cannot be selected by CLI commands and trigger a warning on load. |
 | `id` | `string` | `""` | Stable 8-hex-character identifier used for TUI persistence state. Automatically generated via BLAKE3 on creation; falls back to vector index if empty. |
 | `enabled` | `array of strings` | `[]` | List of system metric probes enabled for this check task. |
 | `path` | `array of tables` (`[[check.path]]`) | `[]` | Custom path monitoring rules for tracking directory and file status. |

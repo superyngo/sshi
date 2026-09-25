@@ -1,6 +1,6 @@
 # TUI reference
 
-`sshi` includes an interactive terminal user interface built with [ratatui](https://ratatui.rs) and [crossterm](https://github.com/crossterm-rs/crossterm). The TUI is gated behind the Cargo feature `tui` (`cargo build --features tui`). When launched without subcommands (`sshi`), the application enters TUI mode by default (`src/main.rs`, `src/tui/entry.rs`).
+`sshi` includes an interactive terminal user interface built with [ratatui](https://ratatui.rs) and [crossterm](https://github.com/crossterm-rs/crossterm). The TUI is gated behind the Cargo feature `tui`, which is enabled by default in `Cargo.toml`. Standard builds (`cargo build`) include the TUI; headless CLI-only builds use `cargo build --no-default-features`. When launched without subcommands (`sshi`), the application enters TUI mode by default (`src/main.rs`, `src/tui/entry.rs`).
 
 ## Tab structure
 
@@ -15,7 +15,7 @@ The TUI is organized into three primary tabs defined in `src/tui/tabs/mod.rs` (`
 ### Layout & Frame Allocation
 
 The screen layout is divided vertically into three zones (`src/tui/app.rs`):
-1. **Tab bar** (`Length(3)`): Displays the application title `sshi`, active tab tabs widget, and the active filter badge (`[All]`, `[Group: …]`, `[Host: …]`, `[Shell: …]`).
+1. **Tab bar** (`Length(3)`): Displays the application title `sshi`, version number right-aligned, and the active tab selection widget (`1:Config`, `2:Operate`, `3:View`).
 2. **Main content** (`Min(0)`): Houses the active tab widget and all nested viewports.
 3. **Status bar** (`Length(2)`): Displays contextual keybinding hints and transient notifications or error messages (`app.error`, styled in bold red).
 
@@ -94,7 +94,7 @@ When the top navigation bar is focused (`navbar_focused == true`):
 
 ### Member & Name Pickers (`MemberPicker`)
 - **Activation**: Press `Enter` on multi-select/single-select fields in Operate or View tabs (e.g., Target Groups, Target Hosts, Skip Hosts, Shell Mode, Check Names, Sync Names, Sync Source).
-- **Navigation**: `↑` / `↓` / `j` / `k` move highlight; `Space` toggles item selection; `a` (where supported) jumps to the Config tab to create a missing entry; `Enter` / `s` commits the selection; `Esc` cancels without applying.
+- **Navigation**: `↑` / `↓` / `j` / `k` move highlight; `Space` or `x` toggles item selection; `a` (where supported) jumps to the Config tab to create a missing entry; `Enter` commits the selection; `Esc` cancels without applying.
 
 ### Progress & Report Popups
 - **Running Operation**: Displays real-time per-host outcome streaming with auto-scrolling progress. `Esc` requests graceful cooperative cancellation. `↑`/`↓`/`PgUp`/`PgDn` engage manual scrolling; `End` resumes auto-scroll tracking.
@@ -110,13 +110,13 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 
 ```
 ┌─ Config: Sidebar ──────────┐┌─ Field Table: host[0] (web-prod-1) ──────────┐
-│ ▼ Settings                 ││ hostname          192.168.1.10               │
-│ ▼ Hosts (3)                ││ user              deploy                     │
-│   ▶ web-prod-1             ││ port              22                         │
-│     web-prod-2             ││ auth_type         agent                      │
-│     db-primary             ││ key_path          (none)                     │
-│ ▶ Checks (2)               ││ groups            [web, prod]                │
-│ ▶ Syncs (1)                ││ proxy_jump        (none)                     │
+│ ▼ Settings                 ││ name              web-prod-1                 │
+│ ▼ Hosts (3)                ││ ssh_host          192.168.1.10               │
+│   ▶ web-prod-1             ││ shell             sh                         │
+│     web-prod-2             ││ groups            [web, prod]                │
+│     db-primary             ││ proxy_jump        (none)                     │
+│ ▶ Checks (2)               ││                                              │
+│ ▶ Syncs (1)                ││                                              │
 └────────────────────────────┘└──────────────────────────────────────────────┘
 ```
 
@@ -136,8 +136,8 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 - **Quick-Clear Optional**: Press `Delete` on an `OptionalString` field to instantly clear its value (required fields like `name` cannot be cleared).
 - **Direct Sub-Popups**:
   - `groups` (`FieldKind::VecString`): Opens `DirectGroupPickerState` showing all known groups across the config with toggle checkboxes.
-  - `enabled` (`FieldKind::CheckEnabled`): Opens `DirectGroupPickerState` over fixed probe options (`os`, `cpu`, `memory`, `disk`, `network`, `procs`, `systemd`).
-  - Vector fields / custom lists: Opens `DirectVecEditorState` for list item management (`a` to add, `d` to delete, `e` to edit).
+  - `enabled` (`FieldKind::CheckEnabled`): Opens `DirectGroupPickerState` over fixed probe options (`online`, `system_info`, `cpu_arch`, `memory`, `swap`, `disk`, `cpu_load`, `network`, `battery`, `ip_address`).
+  - Vector fields / custom lists: Opens `DirectVecEditorState` for list item management (`a` or `Enter` to add, `d` to delete selected, `s` to save, `Esc` to cancel).
 
 #### Entry Management
 - **Add Entry (`a`)**: Press `a` while an entry or section is selected to open `EntryFormState` pre-populated with required and default fields for that type.
@@ -154,22 +154,30 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 The Operate tab (`src/tui/tabs/operate_tab.rs`) is the operational command center. It unifies operation configuration, target resolution, and command execution into a linear focus flow (`OpField`).
 
 ```
-┌─ Operation ────────────────────────────────────────────────────────────────┐
-│ (•) Check    ( ) Run    ( ) Exec    ( ) Sync    ( ) Cp                     │
-├─ Target & Common Settings ─────────────────────────────────────────────────┤
-│ Mode:     (•) All    ( ) Groups    ( ) Hosts    ( ) Shell                  │
-│ Skip:     (none)                                                           │
-│ Timeout:  30s                 Serial:  [ ]          Dry-Run: [ ]           │
-│ Out:      (none)                                                           │
-├─ Parameters: Check ────────────────────────────────────────────────────────┤
-│ Check:    sys-health, disk-audit                                           │
-│                                                            [ Execute (e) ] │
+┌─ Operate ──────────────────────────────────────────────────────────────────┐
+│ Operation: [◉ run]  [○ exec]  [○ sync]  [○ cp]  [○ check]                  │
+│                                                                            │
+│ ── Common ──                                                               │
+│ Target:  ◉ All   ○ Groups   ○ Hosts   ○ Shell   (3 hosts)                  │
+│ Skip:    (none)                                                            │
+│ Timeout: 30s                                                               │
+│ [ ] Serial (s)                                                             │
+│ [ ] dry-run (d)                                                            │
+│ ┌─ Output report (.json/.html, optional) ────────────────────────────────┐ │
+│ │                                                                        │ │
+│ └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                            │
+│ ── check params ──                                                         │
+│ Entries: (default)  (Enter: choose)                                        │
+└────────────────────────────────────────────────────────────────────────────┘
+┌─ Execute ──────────────────────────────────────────────────────────────────┐
+│ [ Execute check (Enter) ] (e)                                              │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 #### Linear Field Walk (`operate_fields`)
 Focus moves linearly through focusable elements using `↑` / `↓` / `j` / `k`:
-1. `OpRadio`: Operation selector (`Check`, `Run`, `Exec`, `Sync`, `Cp`). `←` / `→` cycles operations.
+1. `OpRadio`: Operation selector (`Run`, `Exec`, `Sync`, `Cp`, `Check`). `←` / `→` cycles operations in this order.
 2. `TargetMode`: Filter strategy (`All`, `Groups`, `Hosts`, `Shell`). `←` / `→` cycles mode.
 3. `TargetMembers`: Visible when mode is not `All`. `Enter` opens member picker (`Space` cycles shell when mode is `Shell`).
 4. `Skip`: Excluded hosts. `Enter` opens host picker; `Delete` clears.
@@ -199,21 +207,24 @@ Focus moves linearly through focusable elements using `↑` / `↓` / `j` / `k`:
 The View tab (`src/tui/tabs/view_tab.rs`) is a multi-mode inspection dashboard. The sub-view is selected via `ViewOperationKind` (`OpSelector`):
 
 ```
-┌─ View: [ Checkout ]  List  Log ────────────────────────────────────────────┐
-│ Target: [All] (3 hosts)                                                    │
-│ [ ] Combined (latest metrics per host)                                     │
-├─ Snapshots ────────────────────────────────────────────────────────────────┤
-│ Host         Status  OS            CPU%   Mem%   Disk%  Updated            │
-│ web-prod-1   ✓ ok    Ubuntu 24.04   4.2%  38.1%  52.0%  2m ago             │
-│ web-prod-2   ✓ ok    Ubuntu 24.04   6.8%  41.0%  54.2%  2m ago             │
-│ db-primary   ✓ ok    Debian 12     18.5%  82.4%  68.1%  1m ago             │
+┌─ View ─────────────────────────────────────────────────────────────────────┐
+│ Show:  Checkout   List   Log   ←/→ to switch                               │
+│ Target:  ◉ All   ○ Groups   ○ Hosts   ○ Shell   (3 hosts)                  │
+│ Skip:    none                                                              │
+│ Combined: [ ]  c=toggle                                                    │
+└────────────────────────────────────────────────────────────────────────────┘
+┌─ Checkout ─────────────────────────────────────────────────────────────────┐
+│ Host             Status      OS            CPU%   Mem%   Disk%   Last Seen │
+│   web-prod-1     ✓ online    Ubuntu 24.04  4.2%   38.1%  52.0%   2m ago    │
+│   web-prod-2     ✓ online    Ubuntu 24.04  6.8%   41.0%  54.2%   2m ago    │
+│   db-primary     ✓ online    Debian 12     18.5%  82.4%  68.1%   1m ago    │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 #### Sub-Views
 1. **Checkout (`ViewOperationKind::Checkout`)**:
    - Displays latest system metrics from SQLite (`check_snapshots` table).
-   - **Columns**: Host name, reachability status, OS, CPU usage, Memory usage, Disk usage, and relative update timestamp.
+   - **Columns**: `Host`, `Status` (`✓ online` / `✗ offline`), dynamic metric columns from configured check probes, and `Last Seen` relative timestamp.
    - **Combined View (`c` / Space)**: Toggles between point-in-time snapshot view and combined latest metric compilation across all check runs.
    - **Navigation**: `↑` / `↓` / `j` / `k` move row selection; `PgUp` / `PgDn` / `Home` / `End` scroll viewport.
 2. **List (`ViewOperationKind::List`)**:
@@ -312,7 +323,7 @@ The TUI automatically persists UI navigation and filter state on exit (`src/tui/
 
 ### File Location & Naming
 - **Path**: `{state_dir}/tui_state-{config_hash}.toml`
-  - `state_dir`: Derived via `dirs::state_dir()/sshi` (falling back to `dirs::data_local_dir()/sshi`).
+  - `state_dir`: Derived via `state::db::resolved_state_dir`, honoring the `[settings].state_dir` override if specified, otherwise defaulting to `~/.local/state/sshi` on Unix/macOS (`dirs::home_dir().join(".local/state/sshi")`) and `%LOCALAPPDATA%\sshi` on Windows (`dirs::data_local_dir().join("sshi")`).
   - `config_hash`: First 8 hex characters of the BLAKE3 hash of the canonicalized configuration file path string.
 - **Atomic Persistence**: Written atomically via `tempfile::NamedTempFile::persist()` to prevent corruption on sudden termination.
 - **Fault Tolerance**: Missing, unreadable, or invalid state files fall back to defaults silently without panicking.
@@ -360,8 +371,4 @@ On load, `validate_filter()` sanitizes persisted state against the active `AppCo
 
 ---
 
-## Contributor rules
-
-- No `eprintln!` / `println!` / `print!` / `eprint!` anywhere in `src/tui/` or in any code path reachable while the TUI is running. Use `tracing` macros (`error!`, `warn!`, `debug!`) instead.
-- `commands::*_core` functions must never call `output::printer`. They receive a `ProgressSink` impl or return a `CommandReport` variant; printing is the CLI wrapper's responsibility.
-- The merge gate for any TUI change is `cargo test`, `cargo test --features tui`, `cargo clippy --all-targets` run twice, and `cargo fmt --check`.
+See [AGENTS.md](../../AGENTS.md) for TUI contributor rules and merge gates.

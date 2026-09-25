@@ -4,31 +4,7 @@ SSH-config-based cross-platform remote management tool.
 
 ## Recent changes
 
-Notable user-visible improvements in the 1.7.0 release (full details in
-`CHANGELOG.md` under `[v1.7.0]`):
-
-- **SSH keepalives** prevent aggressive `ClientAliveInterval` servers and NAT
-  idle timers from silently dropping the session mid-operation.
-- **Streaming SFTP transfers** lift the previous 64 MB per-file cap — large
-  files now stream chunk-by-chunk instead of being buffered whole.
-- **`NO_COLOR` support**: set the `NO_COLOR` environment variable
-  (per <https://no-color.org>) to render the TUI without ANSI colour codes;
-  set `TERM=linux` for an ASCII glyph fallback (`✓ ✗ ⊘ ⚠` → `+ x o !`).
-- **Emacs-style editing** in TUI input fields: `Ctrl+A`/`Ctrl+E` (line
-  start/end), `Ctrl+K`/`Ctrl+U` (kill-to-end / kill-to-start), `Ctrl+W`
-  (delete-word-back), `Ctrl+Y` (yank last kill), `Ctrl+Left`/`Ctrl+Right`
-  (word jumps), `Ctrl+Z` (undo). Cursor moves by grapheme cluster.
-- **Scrollable popups**: Help (`?`), Info (`i`), and Export popups now accept
-  `↑↓`/`j`/`k`/`PgUp`/`PgDn`/`Home`/`End` and size content-aware — full Help
-  body reachable on a 24-row terminal.
-- **About panel** inside the `i` Info popup (cycle with `Tab`/`Shift+Tab`/`i`)
-  surfaces app name, version, description, author, license, homepage,
-  repository, and a short privacy statement.
-- **Passphrase-protected SSH keys** finally work in TUI mode — credential
-  prompts route through a popup instead of dead-locking on `rpassword`.
-- **Dry-run toggle** now persists across TUI restarts.
-- **`--release` binaries** are ~50% smaller (`lto="thin"`, `codegen-units=1`,
-  `strip="symbols"`).
+See [CHANGELOG.md](CHANGELOG.md) for recent changes and release notes.
 
 ## Features
 
@@ -69,57 +45,24 @@ cargo install --path .
 
 ## Binaries
 
-One binary is produced. Source builds default to headless; release downloads include a TUI-enabled build.
+One binary is produced. Source builds include the TUI by default; headless builds can be compiled using `--no-default-features`. Release downloads include a TUI-enabled build.
 
 | Binary | Built with | What it does |
 |--------|-----------|--------------|
-| `sshi` | always | All CLI subcommands. Invoked without a subcommand → launches TUI (if built with `--features tui`), otherwise prints "Interactive TUI not available" and exits 1. |
+| `sshi` | always | All CLI subcommands. Invoked without a subcommand → launches TUI (if built with `tui` feature, default), otherwise prints "TUI not compiled in. Rebuild with --features tui." and exits 1. |
 
 ```bash
-cargo build --bin sshi                            # headless
-cargo build --bin sshi --features tui             # TUI build
+cargo build                                       # TUI build (default)
+cargo build --no-default-features                 # headless
 ```
 
 > Running multiple `sshi` instances against the same config simultaneously
 > is not supported; they share a single state file with last-write-wins
 > semantics.
 
-## TUI keybindings (Phase 7)
+## TUI keybindings
 
-| Scope | Key | Action |
-|-------|-----|--------|
-| Global | `1` / `2` / `3` | Switch to Config / Operate / Checkout |
-| Global | `q` | Quit (state saved) |
-| Global | `Ctrl+C` | Quit immediately (state saved; cancels running op) |
-| Global | `Esc` | Close popup / clear error / cancel running op |
-| Global | `?` | Toggle keybindings help popup |
-| Global | `i` | Toggle contextual info popup |
-| Global | `L` | Toggle log overlay |
-| Config | `↑` `↓` `j` `k` | Move within sidebar or field table |
-| Config | `←` / `→` | Switch zones (Sidebar ↔ FieldTable); also cycles radio/toggle fields |
-| Config | `Tab` | Sidebar → FieldTable (within Config tab only) |
-| Config | `PgUp` `PgDn` `Home` `End` | Page / jump navigation |
-| Config | `e` / `Enter` | Edit selected field inline; cycle radio fields; open group picker for `groups` |
-| Config | `E` | Open config file in `$VISUAL` / `$EDITOR` / `vi`; reloads on change |
-| Config | _(autosave)_ | Edits are saved to disk automatically on commit (preserves comments and unknown keys via `toml_edit`) |
-| Config | `a` | Add new entry (host / check / sync based on sidebar selection) |
-| Config | `d` | Delete selected entry (with confirmation) |
-| Config (group picker) | `Space` | Toggle group selection |
-| Config (group picker) | `Enter` / `s` | Apply group selection |
-| Config (group picker) | `Esc` | Cancel group picker |
-| Operate | `↑` / `↓` (or `j`/`k`) | Move between zones |
-| Operate | `←` / `→` (or `Tab` / `Shift+Tab`) | Cycle the focused radio: operation (check / run / exec / sync / cp) or target mode |
-| Operate | `f` | Open Target Filter popup |
-| Operate | `Enter` on `[Execute]` | Run the selected operation |
-| Operate | `e` | Run the current operation from anywhere on the tab |
-| View | `←` / `→` (or `Tab` / `Shift+Tab`) | Cycle the `Show:` selector (Checkout / List / Log) |
-| Checkout | `↑` `↓` `j` `k` | Move row selection |
-| Checkout | `PgUp` `PgDn` `Home` `End` | Page / jump navigation |
-| View (all) | `o` | Export the currently viewed data to a report file (.json or .html) |
-
-> **Note:** On the Config tab, `Tab` switches between the Sidebar and FieldTable zones rather than cycling to the next tab. Use `1` / `2` / `3` to switch tabs from Config.
->
-> **toml_edit comment preservation:** `S` saves config using `toml_edit`, which preserves all comments and unknown keys. The one known limitation: when an entry (host/check/sync) is deleted, any inline comments attached to that entry's keys are lost. All other comments survive edits.
+See [docs/reference/tui.md](docs/reference/tui.md) for complete TUI documentation and keybindings.
 
 ## Usage
 
@@ -197,9 +140,6 @@ sshi run --all "uptime"
 
 # Run with sudo
 sshi run --all "apt update" -S
-
-# Auto-confirm prompts (serial mode)
-sshi run --all "systemctl restart nginx" --yes
 ```
 
 ### Exec
@@ -264,6 +204,21 @@ sshi checkout --all --history
 
 # History from specific date
 sshi checkout --all --history --since "2025-01-01"
+```
+
+### List
+
+List configured hosts, shell types, assigned groups, and checks:
+
+```bash
+# List all configured hosts
+sshi list --all
+
+# List hosts in a specific group
+sshi list -g web
+
+# Export host list to JSON report
+sshi list --all --out hosts.json
 ```
 
 ### Log
@@ -331,30 +286,33 @@ Example configuration:
 [settings]
 default_timeout = 30
 max_concurrency = 10
-state_dir = "~/.local/share/sshi"
+state_dir = "~/.local/state/sshi"
 # default_output_format = "html"   # json (default) or html
 
 [[host]]
 name = "server1"
-hostname = "192.168.1.10"
-user = "admin"
-port = 22
+ssh_host = "server1"
+shell = "sh"
 groups = ["production", "web"]
 
 [[host]]
 name = "server2"
-hostname = "192.168.1.11"
-user = "admin"
+ssh_host = "server2"
+shell = "sh"
 groups = ["production", "db"]
 
-[[host.file]]
-path = "/etc/hosts"
-description = "Hosts file"
+[[check]]
+name = "default"
+enabled = ["online", "cpu_load", "memory", "disk"]
 
-[[host.file]]
-path = "/etc/resolv.conf"
-description = "DNS configuration"
+[[check.path]]
+path = "/var/log/nginx"
+label = "Nginx Logs"
 ```
+
+## Documentation
+
+See [CONTEXT.md](CONTEXT.md) for architectural overview, design documents, and reading order across reference specifications.
 
 ## License
 

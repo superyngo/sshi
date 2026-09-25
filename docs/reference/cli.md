@@ -35,7 +35,7 @@ These options apply globally before subcommand dispatch:
 | Option | Description |
 |---|---|
 | `-c, --config <PATH>` | Explicit path to the configuration file (default: `~/.config/sshi/config.toml` or OS standard config directory). |
-| `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. |
+| `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. Note: `-v` is top-level only and must precede the subcommand (e.g. `sshi -v check --all`); it is not accepted after subcommands. |
 | `-h, --help` | Print top-level help and exit with code `0`. |
 | `-V, --version` | Print version information and exit with code `0`. |
 
@@ -47,7 +47,7 @@ Commands that perform operations on remote hosts (`check`, `checkout`, `sync`, `
 
 ### Target mode selectors
 
-Target-operating commands require **exactly one** target mode selector. Specifying multiple mode selectors or omitting them results in a validation error:
+Target-operating commands require **exactly one** target mode selector. Specifying multiple mode selectors or omitting them results in a validation error (exiting with code `1` via `commands::resolve_target_mode`):
 
 | Flag | Mode | Description |
 |---|---|---|
@@ -91,15 +91,14 @@ sshi <command> [TARGETS] --out [PATH]
 
 ## Flag matrix
 
-The following table summarizes all flags across every subcommand:
+The following table summarizes all flags across every subcommand. Note that `-v, --verbose` is a top-level option placed before the subcommand (e.g. `sshi -v check --all`); it is not accepted after subcommands. The global `-c, --config` option is accepted both before and after subcommands.
 
 | Flag | `init` | `check` | `checkout` | `sync` | `cp` | `run` | `exec` | `config` | `list` | `log` |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | `-c, --config` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `-v, --verbose` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `-a, --all` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | `-g, --group` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
-| `-h, --host` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓* |
+| `-h, --host` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | ✓*1 |
 | `-s, --shell` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | `--skip` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
 | `--serial` | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ | — |
@@ -109,10 +108,18 @@ The following table summarizes all flags across every subcommand:
 | `-n, --name` | — | ✓ | — | ✓ | — | — | — | — | — | — |
 | `-S, --sudo` | — | — | — | — | — | ✓ | ✓ | — | — | — |
 | `-S, --source` | — | — | — | ✓ | — | — | — | — | — | — |
+| `--update` | ✓ | — | — | — | — | — | — | — | — | — |
+| `--keep` | — | — | — | — | — | — | ✓ | — | — | — |
+| `--combined-view` | — | — | ✓ | — | — | — | — | — | — | — |
+| `--history` | — | — | ✓*2 | — | — | — | — | — | — | — |
+| `--since` | — | — | ✓*2 | — | — | — | — | — | — | ✓ |
+| `--last` | — | — | — | — | — | — | — | — | — | ✓ |
+| `--action` | — | — | — | — | — | — | — | — | — | ✓ |
+| `--errors` | — | — | — | — | — | — | — | — | — | ✓ |
 | `-H, --help` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-*\* Note: In `log`, `-h, --host` is a log-filtering option rather than a target selector.*
-
+*\*1 Note: In `log`, `-h, --host` is a log-filtering option rather than a target selector.*  
+*\*2 Note: In `checkout`, `--history` and `--since` are accepted by the CLI and recorded in `--out` report metadata, but are currently ignored in the terminal output view.*
 ---
 
 ## Subcommand reference
@@ -126,7 +133,7 @@ sshi init [OPTIONS]
 ```
 
 #### Options
-- `--update`: Re-detect shell types and probe settings for hosts already present in `config.toml`.
+- `--update`: Re-detect shell types and probe settings for hosts already present in `config.toml`. Note: when `config.toml` already exists, `sshi init` re-probes existing hosts by default regardless of whether `--update` is passed.
 - `--dry-run`: Preview imported and stale hosts without writing changes to `config.toml` or executing keyscan/key-copy retries.
 - `--skip <HOSTS>`: Skip specific hosts from connectivity testing and shell detection (comma-separated).
 - `--timeout <SECS>`: Connection timeout in seconds during host discovery.
@@ -173,8 +180,8 @@ sshi checkout <TARGETS> [OPTIONS]
 Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
 
 #### Options
-- `--history`: Query historical trend data for targeted hosts.
-- `--since <TIME>`: History query start boundary. Supports relative days (e.g. `7d`), relative hours (e.g. `24h`), or absolute dates (`YYYY-MM-DD`).
+- `--history`: Query historical trend data for targeted hosts. (Note: currently ignored in the terminal table view; preserved in `--out` report metadata.)
+- `--since <TIME>`: History query start boundary. Supports relative days (e.g. `7d`), relative hours (e.g. `24h`), or absolute dates (`YYYY-MM-DD`). (Note: currently ignored in the terminal table view; preserved in `--out` report metadata.)
 - `--combined-view`: Per-metric combined view: displays the most recent recorded value for each metric column across all historical snapshots rather than only the single latest snapshot.
 - `-o, --out [PATH]`: Write structured report to `.json` or `.html`.
 - `-H, --help`: Print help.
@@ -286,7 +293,7 @@ sshi config [OPTIONS]
 - `-H, --help`: Print help.
 
 #### Editor resolution
-Resolves editor from `$EDITOR`, falling back to `$VISUAL`, then `vi` on Unix / `notepad` on Windows.
+Resolves editor from `$EDITOR`, falling back to `$VISUAL`, then `vi` on Unix / `notepad` on Windows (`commands::config::run`).
 
 ---
 
@@ -333,8 +340,8 @@ The CLI adheres to the following exit code contract:
 | Exit code | Condition | Description |
 |---|---|---|
 | `0` | Success | Normal successful completion, clean TUI exit, dry-run completion, or `--help`/`--version` display. |
-| `1` | Operational failure | Fatal error during command setup or execution (e.g. configuration file unreadable, local script missing, TUI feature disabled). |
-| `2` | Usage / Non-TTY error | Command-line argument parsing error, mutually exclusive target flags, missing required arguments, or bare `sshi` invoked in a non-TTY/unsuitable terminal environment. |
+| `1` | Operational failure | Fatal error during command setup, semantic target validation failure (e.g. missing target selector, mutually exclusive target flags), runtime execution failure (e.g. configuration file unreadable, local script missing), or TUI feature disabled. |
+| `2` | Usage / Non-TTY error | Command-line syntax error (unrecognized flags, missing required positional arguments), or bare `sshi` invoked in a non-TTY or unsuitable terminal environment (`$TERM` empty or `"dumb"`). |
 
 ### Partial host failures
 

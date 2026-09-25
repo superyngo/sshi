@@ -6,16 +6,16 @@ This document describes the SQLite database architecture, schema migrations, tab
 
 ## Database location and path resolution
 
-`sshi` stores its persistent state in a single SQLite database file named `sshi.db`.
+`sshi` stores its persistent SQLite state in `sshi.db`. The resolved state directory also houses TUI state files named `tui_state-{config_hash}.toml` (`tui::state::persist::state_file_path`).
 
 ### Path resolution order
 
-1. **Config override**: If `[settings].state_dir` is configured in `config.toml`, `sshi` uses that directory directly (`src/state/db.rs:resolved_state_dir`).
+1. **Config override**: If `[settings].state_dir` is configured in `config.toml`, `sshi` uses that directory directly (`state::db::resolved_state_dir`).
 2. **Platform default**:
    - **Linux / macOS**: `~/.local/state/sshi/sshi.db` (following XDG Base Directory specification via `dirs::home_dir().join(".local/state/sshi")`).
    - **Windows**: `%LOCALAPPDATA%\sshi\sshi.db` (`dirs::data_local_dir().join("sshi")`).
 
-When opening the database, `sshi` ensures the parent directory hierarchy is created automatically (`std::fs::create_dir_all`).
+When opening the database or saving TUI state, `sshi` ensures the parent directory hierarchy is created automatically (`std::fs::create_dir_all`).
 
 ---
 
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS host_last_seen (
 
 ### 3. `sync_state`
 
-Tracks the synchronization state and file content metadata across sync groups and target hosts.
+Records file synchronization events across sync entries and target hosts. Currently, the sync engine operates without consulting this table (change detection queries hosts live), making `sync_state` an audit log of synced paths.
 
 ```sql
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -178,17 +178,17 @@ CREATE INDEX IF NOT EXISTS idx_sync_state_group
 | Column | Type | Nullable | Description |
 |---|---|---|---|
 | `id` | `INTEGER` | No | Auto-incrementing primary key. |
-| `sync_group` | `TEXT` | No | Sync group name/label from `[[sync]]`. |
+| `sync_group` | `TEXT` | No | Sync entry name/label from `[[sync]]`. |
 | `host` | `TEXT` | No | Target remote host name. |
-| `path` | `TEXT` | No | Absolute remote file path. |
-| `mtime` | `INTEGER` | No | File modification timestamp (seconds) on the remote host. |
-| `size_bytes` | `INTEGER` | No | File size in bytes. |
-| `blake3` | `TEXT` | No | BLAKE3 64-character hexadecimal checksum of the file content. |
+| `path` | `TEXT` | No | Remote file path. |
+| `mtime` | `INTEGER` | No | Placeholder timestamp; currently inserted as `0`. |
+| `size_bytes` | `INTEGER` | No | Placeholder file size; currently inserted as `0`. |
+| `blake3` | `TEXT` | No | Legacy hash column; currently inserted as `""` (empty string). |
 | `synced_at` | `INTEGER` | No | Unix epoch timestamp (seconds) when sync succeeded. |
 
 #### Constraints & Indexes
-- `UNIQUE (sync_group, host, path)`: Ensures a single recorded state per file per host in each sync group.
-- `idx_sync_state_group`: Index on `(sync_group, host)` for fast retrieval during sync planning and change detection.
+- `UNIQUE (sync_group, host, path)`: Ensures an upsert updates the record for a given file and target host.
+- `idx_sync_state_group`: Index on `(sync_group, host)` defined in schema; currently unused by the query engine as `sync_state` is not read.
 
 ---
 
@@ -223,8 +223,8 @@ CREATE INDEX IF NOT EXISTS idx_operation_log_host
 | `command` | `TEXT` | No | Subcommand name (`"check"`, `"sync"`, `"run"`, `"exec"`, `"cp"`). |
 | `host` | `TEXT` | No | Target host alias. |
 | `action` | `TEXT` | No | Action detail (e.g., `"metrics_batch"`, command line string, sync file path). |
-| `status` | `TEXT` | No | Execution status (e.g., `"ok"`, `"error"`, `"offline"`). |
-| `duration_ms` | `INTEGER` | Yes | Total execution duration in milliseconds (`NULL` if unavailable). |
+| `status` | `TEXT` | No | Execution status (`"ok"`, `"error"`). |
+| `duration_ms` | `INTEGER` | Yes | Total execution duration in milliseconds (`NULL` if unavailable; `sync` records `0`). |
 | `note` | `TEXT` | Yes | Optional error message, failure reason, or detail note (`NULL` on success). |
 | `stdout` | `TEXT` | Yes | Captured stdout preview for `exec` and `run` commands (added in schema v2, `NULL` otherwise). |
 
@@ -251,7 +251,7 @@ Because `check` can be executed periodically via cron, CLI, or TUI, cleanup runs
 ### Configuration
 
 Data retention is governed by `[settings].data_retention_days` in `config.toml`:
-- **Default**: `90` days (`src/config/schema.rs:default_retention`).
+- **Default**: `90` days (`config::schema::default_retention`).
 - **Disable cleanup**: Setting `data_retention_days = 0` disables cleanup entirely, retaining all historical records indefinitely.
 
 ### Pruning logic
@@ -270,4 +270,4 @@ DELETE FROM operation_log WHERE timestamp < (strftime('%s', 'now') - ?1);
 | `check_snapshots` | **Yes** | Time-series metrics data grows proportionally with check frequency. |
 | `operation_log` | **Yes** | Audit log grows with every executed command. |
 | `host_last_seen` | **No** | Stores exactly one high-water mark row per host. |
-| `sync_state` | **No** | Represents current file synchronization state, not historical logs. |
+| `sync_state` | **No** | Represents file synchronization audit records; currently write-only and never read by sync planning. |
