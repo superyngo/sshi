@@ -4614,11 +4614,23 @@ fn spawn_signal_listener(tx: tokio::sync::mpsc::Sender<()>) {
     #[cfg(windows)]
     {
         tokio::spawn(async move {
-            // TODO(post-MVP windows): CTRL_CLOSE_EVENT via windows-sys for
-            // close-button shutdown on Windows.
+            use tokio::signal::windows::{ctrl_break, ctrl_c, ctrl_close};
+            // Closing the console window (CTRL_CLOSE_EVENT) gives the process
+            // about 5 s before Windows kills it; tokio parks its handler thread
+            // meanwhile, so quitting through the normal path restores the
+            // terminal first (B12). Ctrl+Break behaves like Ctrl+C.
+            let (mut c, mut brk, mut close) = match (ctrl_c(), ctrl_break(), ctrl_close()) {
+                (Ok(c), Ok(brk), Ok(close)) => (c, brk, close),
+                _ => {
+                    tracing::warn!("Failed to install console control handlers");
+                    return;
+                }
+            };
             loop {
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    let _ = tx.send(()).await;
+                tokio::select! {
+                    _ = c.recv() => { let _ = tx.send(()).await; }
+                    _ = brk.recv() => { let _ = tx.send(()).await; }
+                    _ = close.recv() => { let _ = tx.send(()).await; }
                 }
             }
         });

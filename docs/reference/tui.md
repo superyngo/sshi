@@ -35,7 +35,7 @@ Global keybindings are evaluated first and remain active across all tabs, unless
 | `2` | Global | Switch directly to the **Operate** tab (`TabId::Operate`). |
 | `3` | Global | Switch directly to the **View** tab (`TabId::View`). |
 | `q` | Global | Quit the application cleanly; automatically flushes pending config and state changes to disk. |
-| `Ctrl+C` | Global | Immediate emergency abort; cancels any active background operation, flushes pending state, and exits. |
+| `Ctrl+C` | Global | Immediate emergency abort; cancels any active background operation, flushes pending state, and exits. The same clean exit (terminal restored) runs on SIGHUP/SIGTERM/SIGINT on Unix, and on Ctrl+Break or closing the console window on Windows (`spawn_signal_listener`). |
 | `Esc` | Global | Context-dependent escape action (see [Escape Level Cycling](#escape-level-cycling)). |
 | `?` | Global | Toggle the modal **Keybindings & Help** popup. |
 | `i` | Global | Toggle the contextual **Info** popup. |
