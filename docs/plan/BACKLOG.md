@@ -83,7 +83,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B45 | Config tab discarded edits silently: `path:{i}` check rows, unparseable numeric settings | HASH-B45 — `FieldDescriptor::readonly` for check paths; `apply_settings` returns `Result` and the editor stays open with the message; tests |
+| B45 | Config tab discarded edits silently: `path:{i}` check rows, unparseable numeric settings | `28aefbf` — `FieldDescriptor::readonly` for check paths; `apply_settings` returns `Result` and the editor stays open with the message; tests |
 | B16 | New-config comment template documented removed `groups`/`enable_hosts`/`enable_all` fields | `e9c5728` — `inject_config_comments` rewritten to current `CheckEntry`/`CheckPath`/`SyncEntry`/`Settings` fields; test `b16_template_mentions_only_existing_schema_fields` |
 | B10 | Checkout metric extractors had no unit tests | `8e6d4c8` — tests in `checkout::tests` for each metric (sh and PowerShell samples, fallbacks); no behaviour change |
 | B62 | Sync source-skip and `-v` unreachable/sftp-failed lines swapped host and status in `print_host_line` | `80a187f` — arguments swapped back in `decide_batch`, `sync_path_across`, `sync_inner`; real binary: `[h1 ] ⊘ does not have …` |
