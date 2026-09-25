@@ -26,7 +26,6 @@ Landed, but the check needs a platform or environment not available locally.
 | Closing the Windows console window quits the TUI cleanly and restores the terminal (B12) | `67d823b` | Run `sshi` in Windows Terminal / conhost and click the window's close button; the next shell prompt is usable. The branch type-checks for `x86_64-pc-windows-msvc` (scratch crate); the full crate cannot be cross-checked here (C build scripts) | Register `SetConsoleCtrlHandler` directly via `windows-sys` |
 | 30 s SSH keepalive prevents idle drops | `e4a3ebe` | Run against a server with `ClientAliveInterval 10`, `ClientAliveCountMax 0` | Lower the interval |
 | WAL + `busy_timeout=5000` removes lock contention | `268cbc6` | CLI commands run while the TUI writes operation logs | Single-writer DB actor |
-| One cached SFTP channel per host across many files | `cce33f7` | Trace log of a 100+ file `sshi cp` shows one channel per host | Revert to channel-per-op |
 
 ## Awaiting external
 
@@ -53,6 +52,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| — | One cached SFTP channel per host across many files (was pending verification) | `cce33f7` — verified 2026-09-25: a 120-file `cp -a` shows, per host in the rig's sshd VERBOSE log, one command session and two `sftp` subsystem sessions (the data channel plus B65's rename channel), independent of file count |
 | B53 | Operation scaffolding duplicated (five `App::execute_*`, four command cores); `*_core` returned an enum callers `unreachable!`d; `App::handle_key` 1,010+ lines | `13ccb55` — commits `6a265eb` (typed `*_core` returns, `From<…> for CommandReport`), `b0562ee` (`FanOut`), `98506ce` (`launch_operation`) and this one (`handle_key` → `handle_popup_key` with seven layer handlers, `handle_navbar_key`, `handle_global_key`, `handle_{config,operate,view}_key`); 456/293 tests unchanged; real binary: run/exec/cp/check via CLI and TUI (launch, list `e`, form Esc, yank, help/info) behave as before |
 | B54 | Parallel implementations: TUI export vs CLI report builders (checkout), `resolve_target_names` vs `Context::resolve_hosts`, `Summary`/`SyncSummary` printing, Operate/View target rows, `parse_ssh_config`/`load_ssh_config` | `b079076` — each pair reduced to one function (see changelog); tests `checkout_operation_report_rows_and_summary`, `detail_lines_dedupe_and_cluster`; real binary: `checkout -a --out` and the TUI View export of the same rows produce identical JSON apart from `executed_at` |
 | B55 | Dead code and misleading comments (list in the 2026-09-25 code audit) | `6d70d8c` — modules `tui::tabs::operate_schema`, `tui::event` deleted; `collect_sync_paths` returns no scoping map; `InitPlan` keeps only `dry_run`/`skip`/`remove_stale_hosts`; `init::core::{stale_hosts, skip_list}`; `mkdir_p_sftp` checks `metadata` before failing; the `sync_state` log message and redundant vec-delete clamp were already gone with B19/B46; real binary: `cp` into `~/INTEG55/blocker/f.bin` (blocker is a file) → "SFTP mkdir failed for …/blocker" |

@@ -99,7 +99,7 @@ Directory expansion queries remote files using `build_dir_expand_cmd`:
 
 ## Stage 1: Collect (Metadata Gathering)
 
-The collection phase queries file metadata across all reachable hosts in parallel (`batch_collect_all_metadata` in `src/commands/sync/collect.rs`; per-file `collect_file_metadata` for recursive entries).
+The collection phase queries file metadata across all reachable hosts in parallel (`batch_collect_all_metadata` in `src/commands/sync/collect.rs`, one exec per host per chunk; recursive entries use the same collector, see Phase 4).
 
 A host whose query errors or exits non-zero is returned in `failed` and recorded by `record_collect_failures` as a host failure (`metadata collection failed: exit N: <first stderr line>`, exit code 3 per ADR 0004). Its state is unknown, so it is neither a source nor a target for that run; it is never treated as `MISSING`. On PowerShell/Cmd, `Get-FileHash` runs with `-ErrorAction SilentlyContinue` and prints `NOHASH` for an unreadable file, so one locked file does not fail the whole batch.
 

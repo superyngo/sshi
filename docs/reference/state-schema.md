@@ -186,9 +186,9 @@ CREATE INDEX IF NOT EXISTS idx_sync_state_group
 | `sync_group` | `TEXT` | No | Sync entry name/label from `[[sync]]`. |
 | `host` | `TEXT` | No | Target remote host name. |
 | `path` | `TEXT` | No | Remote file path. |
-| `mtime` | `INTEGER` | No | Placeholder timestamp; currently inserted as `0`. |
-| `size_bytes` | `INTEGER` | No | Placeholder file size; currently inserted as `0`. |
-| `blake3` | `TEXT` | No | Legacy hash column; currently inserted as `""` (empty string). |
+| `mtime` | `INTEGER` | No | Placeholder timestamp; was always written as `0`. |
+| `size_bytes` | `INTEGER` | No | Placeholder file size; was always written as `0`. |
+| `blake3` | `TEXT` | No | Legacy hash column; was always written as `""` (empty string). |
 | `synced_at` | `INTEGER` | No | Unix epoch timestamp (seconds) when sync succeeded. |
 
 #### Constraints & Indexes
