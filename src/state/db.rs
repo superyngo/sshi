@@ -131,7 +131,7 @@ pub fn open(override_dir: Option<&std::path::Path>) -> Result<Connection> {
         "PRAGMA journal_mode=WAL;\nPRAGMA busy_timeout=5000;\nPRAGMA synchronous=NORMAL;",
     )?;
 
-    migrate(&conn)?;
+    migrate(&conn).with_context(|| format!("State database {}", path.display()))?;
     Ok(conn)
 }
 
@@ -142,6 +142,14 @@ pub fn migrate_for_test(conn: &Connection) {
 
 fn migrate(conn: &Connection) -> Result<()> {
     let version: u32 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    // A newer binary migrated this DB: don't rewrite its marker downward or
+    // run against a schema this build doesn't know (B58).
+    if version > CURRENT_VERSION {
+        anyhow::bail!(
+            "schema v{version} is newer than this sshi supports (v{CURRENT_VERSION}); \
+             upgrade sshi or set [settings].state_dir to another directory"
+        );
+    }
 
     if version < 1 {
         conn.execute_batch(include_str!("migrations/001_init.sql"))?;
@@ -179,6 +187,20 @@ mod tests {
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
         assert_eq!(version, CURRENT_VERSION);
+    }
+
+    /// B58: a DB migrated by a newer binary is refused and its version kept.
+    #[test]
+    fn migrate_refuses_newer_schema_and_keeps_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "user_version", CURRENT_VERSION + 1)
+            .unwrap();
+        let err = migrate(&conn).unwrap_err().to_string();
+        assert!(err.contains("newer than this sshi"), "{err}");
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION + 1);
     }
 
     #[test]

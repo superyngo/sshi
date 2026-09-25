@@ -71,6 +71,7 @@ Database migrations are embedded into the compiled binary and managed sequential
   - **Version 0 → 1**: Executes `src/state/migrations/001_init.sql` (creates `check_snapshots`, `host_last_seen`, `sync_state`, `operation_log`, and associated indexes).
   - **Version 1 → 2**: Executes `src/state/migrations/002_log_stdout.sql` (adds `stdout` column to `operation_log`). To guard against race conditions across concurrent processes, migration 2 performs an idempotent column check via `pragma_table_info('operation_log')` before running `ALTER TABLE`.
 - **Version update**: After all migrations succeed, `PRAGMA user_version` is set to `CURRENT_VERSION`.
+- **Newer database**: If `user_version` is greater than `CURRENT_VERSION` (the file was migrated by a newer sshi), `db::open` fails with "schema vN is newer than this sshi supports" and leaves the file untouched; upgrade sshi or point `[settings].state_dir` elsewhere.
 
 ### Adding a new migration
 
