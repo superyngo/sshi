@@ -185,7 +185,7 @@ async fn sync_inner(
 
     for (name, err) in by_host_name(&hosts, pool.failed_hosts()) {
         if verbose {
-            printer::print_host_line("unreachable", "error", &format!("{}: {}", name, err));
+            printer::print_host_line(&name, "error", &format!("unreachable: {}", err));
         } else {
             tracing::warn!(host = %name, error = %err, "unreachable");
         }
@@ -194,7 +194,7 @@ async fn sync_inner(
 
     for (name, err) in by_host_name(&hosts, pool.sftp_failed_hosts()) {
         if verbose {
-            printer::print_host_line("sftp-failed", "error", &format!("{}: {}", name, err));
+            printer::print_host_line(&name, "error", &format!("sftp-failed: {}", err));
         } else {
             tracing::warn!(host = %name, error = %err, "sftp probe failed");
         }
@@ -593,8 +593,8 @@ async fn decide_batch(
             if let Some((source, skipped_path)) = skip_info {
                 if verbose {
                     printer::print_host_line(
-                        "skip",
                         &source,
+                        "skip",
                         &format!("does not have '{}'", skipped_path),
                     );
                 }
@@ -1055,8 +1055,8 @@ async fn sync_path_across(
         if let Some((source, skipped_path)) = skip_info {
             if !quiet {
                 printer::print_host_line(
-                    "skip",
                     &source,
+                    "skip",
                     &format!("does not have '{}'", skipped_path),
                 );
             } else {
