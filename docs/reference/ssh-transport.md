@@ -134,9 +134,12 @@ File operations in `src/host/sftp.rs` are built on `russh_sftp::client::SftpSess
 
 ### Streaming I/O and No Fixed Size Cap
 
-- **Streaming Implementation**: File uploads (`upload`) and downloads (`download`) stream data between local `tokio::fs::File` instances and remote `sftp.create()` / `sftp.open()` file handles via `tokio::io::copy`.
-- **No File Size Cap**: Data is transferred incrementally in memory-efficient stream chunks (Tokio 8 KB copy buffer written through SFTP protocol frames). There is **no fixed file size limit** and no whole-file memory buffering.
-- **Explicit Flush and Shutdown**: Remote file handles explicitly execute `remote_file.flush()` and `remote_file.shutdown()`. Because `russh-sftp`'s `Drop` implementation is fire-and-forget, explicit shutdown ensures write and close errors on the remote server are surfaced back to `sshi` rather than silently ignored.
+- **Streaming Implementation**: `upload` and `download` stream between a local `tokio::fs::File` and the remote `sftp.create()` / `sftp.open()` handle through `copy_idle`, in 256 KiB chunks. There is **no fixed file size limit** and no whole-file buffering.
+- **Temp file + rename**: data is written to a sibling temp file `.<name>.sshi-tmp.<pid>` (`temp_sibling`) and renamed over the destination only after every byte arrived and the file closed cleanly. An interrupted, failed or timed-out transfer leaves the existing destination untouched and removes the temp file (locally also on cancellation, via `TempGuard`). A process killed with SIGKILL can leave a remote temp file behind.
+  - Remote: SFTP v3 rename refuses an existing target on OpenSSH, so `upload` retries after removing the destination — a brief window where the file is absent, never a truncated one.
+  - Local (`write_local_atomic`): `rename` replaces the destination atomically.
+- **Close errors surface**: the remote handle is flushed and `shutdown()` explicitly (`russh-sftp`'s `Drop` close is fire-and-forget); a flush or close failure fails the transfer before the rename.
+- **Idle timeout**: `default_timeout` / `--timeout` bounds each step (open, each chunk read/write, flush, close, rename), not the whole transfer — a slow transfer that keeps moving never times out; one stalled for the timeout fails with `… timed out (no progress for Ns)`.
 
 ### Path Resolution and Auto-Directory Creation
 

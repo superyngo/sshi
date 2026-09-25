@@ -56,9 +56,56 @@ pub(crate) async fn open_sftp(handle: &Handle<SshHandler>) -> Result<SftpSession
         .context("Failed to create SFTP session")
 }
 
+/// Size of each read/write step in [`copy_idle`]; each step gets the full idle timeout.
+const COPY_CHUNK: usize = 256 * 1024;
+
+/// Run one transfer step under the idle `timeout`.
+async fn step<T, F>(timeout: Duration, what: &str, fut: F) -> Result<T>
+where
+    F: std::future::Future<Output = std::io::Result<T>>,
+{
+    tokio::time::timeout(timeout, fut)
+        .await
+        .map_err(|_| anyhow::anyhow!("{what} timed out (no progress for {}s)", timeout.as_secs()))?
+        .with_context(|| what.to_string())
+}
+
+/// Stream `r` into `w`, bounding each chunk (not the whole copy) by `idle`:
+/// a slow transfer that keeps moving never times out, a stalled one does.
+async fn copy_idle<R, W>(r: &mut R, w: &mut W, idle: Duration) -> Result<u64>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut buf = vec![0u8; COPY_CHUNK];
+    let mut total = 0u64;
+    loop {
+        let n = step(idle, "read", r.read(&mut buf)).await?;
+        if n == 0 {
+            return Ok(total);
+        }
+        step(idle, "write", w.write_all(&buf[..n])).await?;
+        total += n as u64;
+    }
+}
+
+/// Sibling temp name for `dest`: `<dir>/.<name>.sshi-tmp.<pid>`.
+fn temp_sibling(dest: &str) -> String {
+    let (dir, name) = match dest.rfind(['/', '\\']) {
+        Some(i) => dest.split_at(i + 1),
+        None => ("", dest),
+    };
+    format!("{dir}.{name}.sshi-tmp.{}", std::process::id())
+}
+
 /// Upload a local file to a remote path via SFTP using streaming I/O.
 /// The `remote_path` may start with `~` (expanded using `home_dir`).
-/// Streams in `SFTP_CHUNK_SIZE` chunks; no whole-file buffering.
+///
+/// Writes to a sibling temp file and renames it over the destination only
+/// after the data and the remote close succeeded, so an interrupted upload
+/// leaves the existing file intact. `timeout` bounds each step, not the
+/// whole transfer.
 pub async fn upload(
     sftp: &SftpSession,
     local_path: &Path,
@@ -66,42 +113,91 @@ pub async fn upload(
     home_dir: &str,
     timeout: Duration,
 ) -> Result<()> {
-    tokio::time::timeout(timeout, async {
-        let resolved = resolve_remote_path(remote_path, home_dir);
-        if let Some(parent) = std::path::Path::new(&resolved).parent() {
-            if parent != std::path::Path::new("") {
-                mkdir_p_sftp(sftp, parent).await?;
-            }
+    let resolved = resolve_remote_path(remote_path, home_dir);
+    let tmp = temp_sibling(&resolved);
+    let t = timeout;
+    if let Some(parent) = std::path::Path::new(&resolved).parent() {
+        if parent != std::path::Path::new("") {
+            tokio::time::timeout(t, mkdir_p_sftp(sftp, parent))
+                .await
+                .context("SFTP mkdir timed out")??;
         }
-        let mut local_file = tokio::fs::File::open(local_path)
+    }
+    let mut local_file = tokio::fs::File::open(local_path)
+        .await
+        .with_context(|| format!("Cannot open {} for read", local_path.display()))?;
+    let mut remote_file = tokio::time::timeout(t, sftp.create(&tmp))
+        .await
+        .context("SFTP upload open timed out")?
+        .with_context(|| format!("SFTP upload open failed for {tmp}"))?;
+    let sent = async {
+        copy_idle(&mut local_file, &mut remote_file, t).await?;
+        step(t, "SFTP flush", remote_file.flush()).await?;
+        // Close explicitly: russh-sftp's Drop close is fire-and-forget.
+        step(t, "SFTP close", remote_file.shutdown()).await?;
+        // SFTP v3 rename refuses an existing target on OpenSSH; retry after
+        // removing it (brief gap, but never a truncated file).
+        if tokio::time::timeout(t, sftp.rename(&tmp, &resolved))
             .await
-            .with_context(|| format!("Cannot open {} for read", local_path.display()))?;
-        let mut remote_file = sftp
-            .create(&resolved)
-            .await
-            .with_context(|| format!("SFTP upload open failed for {}", resolved))?;
-        // Stream local → remote via tokio::io::copy; copies in 8KB tokio
-        // internal chunks but writes through SFTP in SFTP_CHUNK_SIZE frames.
-        tokio::io::copy(&mut local_file, &mut remote_file)
-            .await
-            .with_context(|| format!("SFTP upload stream failed for {}", resolved))?;
-        // Flush + shutdown so the close_handle reaches the server before drop.
-        // russh-sftp's Drop is fire-and-forget; calling shutdown explicitly
-        // surfaces close errors instead of silently dropping them.
-        remote_file
-            .flush()
-            .await
-            .with_context(|| format!("SFTP upload flush failed for {}", resolved))?;
-        let _ = remote_file.shutdown().await;
-        Ok(())
-    })
-    .await
-    .context("SFTP upload timed out")?
+            .ok()
+            .and_then(|r| r.ok())
+            .is_none()
+        {
+            let _ = tokio::time::timeout(t, sftp.remove_file(&resolved)).await;
+            tokio::time::timeout(t, sftp.rename(&tmp, &resolved))
+                .await
+                .context("SFTP rename timed out")??;
+        }
+        anyhow::Ok(())
+    }
+    .await;
+    if let Err(e) = sent {
+        let _ = tokio::time::timeout(t, sftp.remove_file(&tmp)).await;
+        return Err(e.context(format!("SFTP upload failed for {resolved}")));
+    }
+    Ok(())
+}
+
+/// Removes a local temp file on drop unless disarmed (covers cancellation).
+struct TempGuard(Option<std::path::PathBuf>);
+impl Drop for TempGuard {
+    fn drop(&mut self) {
+        if let Some(p) = self.0.take() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// Stream `src` into a sibling temp of `dest`, then rename it into place.
+/// On any error or cancellation `dest` is untouched and the temp is removed.
+async fn write_local_atomic<R>(src: &mut R, dest: &Path, idle: Duration) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    if let Some(parent) = dest.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let tmp = std::path::PathBuf::from(temp_sibling(&dest.to_string_lossy()));
+    let mut guard = TempGuard(Some(tmp.clone()));
+    let mut f = tokio::fs::File::create(&tmp)
+        .await
+        .with_context(|| format!("Cannot open {} for write", tmp.display()))?;
+    copy_idle(src, &mut f, idle).await?;
+    step(idle, "flush", f.flush()).await?;
+    drop(f);
+    tokio::fs::rename(&tmp, dest)
+        .await
+        .with_context(|| format!("Cannot replace {}", dest.display()))?;
+    guard.0 = None;
+    Ok(())
 }
 
 /// Download a remote file to a local path via SFTP using streaming I/O.
 /// The `remote_path` may start with `~` (expanded using `home_dir`).
-/// Streams in `SFTP_CHUNK_SIZE` chunks; no whole-file buffering.
+///
+/// Writes a sibling temp file and renames it into place, so an interrupted
+/// download leaves the existing local file intact. `timeout` bounds each
+/// step, not the whole transfer.
 pub async fn download(
     sftp: &SftpSession,
     remote_path: &str,
@@ -109,30 +205,16 @@ pub async fn download(
     home_dir: &str,
     timeout: Duration,
 ) -> Result<()> {
-    tokio::time::timeout(timeout, async {
-        let resolved = resolve_remote_path(remote_path, home_dir);
-        let mut remote_file = sftp
-            .open(&resolved)
-            .await
-            .with_context(|| format!("SFTP download open failed for {}", resolved))?;
-        if let Some(parent) = local_path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
-        }
-        let mut local_file = tokio::fs::File::create(local_path)
-            .await
-            .with_context(|| format!("Cannot open {} for write", local_path.display()))?;
-        tokio::io::copy(&mut remote_file, &mut local_file)
-            .await
-            .with_context(|| format!("SFTP download stream failed for {}", resolved))?;
-        local_file
-            .flush()
-            .await
-            .with_context(|| format!("Failed to flush {}", local_path.display()))?;
-        let _ = remote_file.shutdown().await;
-        Ok(())
-    })
-    .await
-    .context("SFTP download timed out")?
+    let resolved = resolve_remote_path(remote_path, home_dir);
+    let mut remote_file = tokio::time::timeout(timeout, sftp.open(&resolved))
+        .await
+        .context("SFTP download open timed out")?
+        .with_context(|| format!("SFTP download open failed for {}", resolved))?;
+    write_local_atomic(&mut remote_file, local_path, timeout)
+        .await
+        .with_context(|| format!("SFTP download failed for {}", resolved))?;
+    let _ = remote_file.shutdown().await; // read handle; nothing to lose
+    Ok(())
 }
 
 /// Recursively create directories on the remote (best-effort; ignores already-exists errors).
@@ -227,5 +309,97 @@ mod tests {
         assert_eq!(sink.len(), SIZE);
         assert_eq!(sink[0], 0xAA);
         assert_eq!(sink[SIZE - 1], 0xBB);
+    }
+
+    #[test]
+    fn temp_sibling_stays_in_same_dir() {
+        assert_eq!(
+            temp_sibling("/a/b/f.txt"),
+            format!("/a/b/.f.txt.sshi-tmp.{}", std::process::id())
+        );
+        assert_eq!(
+            temp_sibling("f"),
+            format!(".f.sshi-tmp.{}", std::process::id())
+        );
+        assert_eq!(
+            temp_sibling("C:\\x\\f"),
+            format!("C:\\x\\.f.sshi-tmp.{}", std::process::id())
+        );
+    }
+
+    /// Reader that yields `ok` chunks, then fails or stalls forever.
+    struct Flaky {
+        ok: usize,
+        stall: bool,
+    }
+    impl tokio::io::AsyncRead for Flaky {
+        fn poll_read(
+            mut self: std::pin::Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            buf: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            use std::task::Poll;
+            if self.ok == 0 {
+                if self.stall {
+                    return Poll::Pending;
+                }
+                return Poll::Ready(Err(std::io::Error::other("link dropped")));
+            }
+            self.ok -= 1;
+            buf.put_slice(b"NEWDATA");
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    async fn interrupted_local_write_keeps_original_and_no_temp() {
+        let d = tempfile::tempdir().unwrap();
+        let dest = d.path().join("f");
+        std::fs::write(&dest, "ORIGINAL").unwrap();
+        for stall in [false, true] {
+            let mut r = Flaky { ok: 3, stall };
+            let err = write_local_atomic(&mut r, &dest, Duration::from_millis(50)).await;
+            assert!(err.is_err());
+            assert_eq!(std::fs::read_to_string(&dest).unwrap(), "ORIGINAL");
+            assert_eq!(
+                std::fs::read_dir(d.path()).unwrap().count(),
+                1,
+                "temp left behind"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn successful_local_write_replaces_dest() {
+        let d = tempfile::tempdir().unwrap();
+        let dest = d.path().join("sub/f");
+        let mut src: &[u8] = b"hello";
+        write_local_atomic(&mut src, &dest, Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "hello");
+        assert_eq!(std::fs::read_dir(d.path().join("sub")).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn idle_timeout_is_per_chunk_not_total() {
+        // 10 chunks 30ms apart = 300ms total, well over the 100ms idle limit.
+        let (mut tx, mut rx) = tokio::io::duplex(64);
+        tokio::spawn(async move {
+            for _ in 0..10 {
+                tokio::time::sleep(Duration::from_millis(30)).await;
+                tx.write_all(b"chunk").await.unwrap();
+            }
+        });
+        let mut sink = Vec::new();
+        let n = copy_idle(&mut rx, &mut sink, Duration::from_millis(100))
+            .await
+            .unwrap();
+        assert_eq!(n, 50);
+        let mut r = Flaky { ok: 0, stall: true };
+        let e = copy_idle(&mut r, &mut Vec::new(), Duration::from_millis(100))
+            .await
+            .unwrap_err();
+        assert!(e.to_string().contains("no progress"), "{e}");
     }
 }
