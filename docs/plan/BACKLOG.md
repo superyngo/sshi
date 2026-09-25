@@ -31,7 +31,7 @@ Landed, but the check needs a platform or environment not available locally.
 
 | Item | Closed by | Verifies when | Fallback |
 |---|---|---|---|
-| Closing the Windows console window quits the TUI cleanly and restores the terminal (B12) | HASH-B12 | Run `sshi` in Windows Terminal / conhost and click the window's close button; the next shell prompt is usable. The branch type-checks for `x86_64-pc-windows-msvc` (scratch crate); the full crate cannot be cross-checked here (C build scripts) | Register `SetConsoleCtrlHandler` directly via `windows-sys` |
+| Closing the Windows console window quits the TUI cleanly and restores the terminal (B12) | `67d823b` | Run `sshi` in Windows Terminal / conhost and click the window's close button; the next shell prompt is usable. The branch type-checks for `x86_64-pc-windows-msvc` (scratch crate); the full crate cannot be cross-checked here (C build scripts) | Register `SetConsoleCtrlHandler` directly via `windows-sys` |
 | 30 s SSH keepalive prevents idle drops | `e4a3ebe` | Run against a server with `ClientAliveInterval 10`, `ClientAliveCountMax 0` | Lower the interval |
 | WAL + `busy_timeout=5000` removes lock contention | `268cbc6` | CLI commands run while the TUI writes operation logs | Single-writer DB actor |
 | One cached SFTP channel per host across many files | `cce33f7` | Trace log of a 100+ file `sshi cp` shows one channel per host | Revert to channel-per-op |
@@ -61,7 +61,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B12 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | HASH-B12 — `tokio::signal::windows::{ctrl_close, ctrl_break}` added to `spawn_signal_listener`; the branch type-checks for `x86_64-pc-windows-msvc` (scratch crate, verbatim copy); real-Windows check under Pending verification |
+| B12 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `67d823b` — `tokio::signal::windows::{ctrl_close, ctrl_break}` added to `spawn_signal_listener`; the branch type-checks for `x86_64-pc-windows-msvc` (scratch crate, verbatim copy); real-Windows check under Pending verification |
 | B47 | View → List: sync rows not editable when there were no checks; layout mirrored in four functions | `b8c1d9c` — `view_tab::list_layout` (`ListRow`) drives `render_list_result`, `list_line_count`, `list_selectable_lines`, `list_entry_at_line`; tests `list_entry_at_line_sync_without_checks`, `e_on_list_sync_row_edits_it_without_checks` (fails on the old layout); real TUI (pyte): `e` on the sync row opens "Add/Edit Sync" (old: nothing) |
 | B74 | `$VISUAL`/`$EDITOR` values with arguments failed (whole value used as the program name) | `310bf46` — `commands::config::editor_command` (Unix `sh -c` for values with whitespace) used by `config::run` and `App::do_open_editor`; test `editor_with_arguments_runs_through_sh`; real binary: `VISUAL="fake --wait"` → editor got `--wait c.toml` (old: "Failed to open editor") |
 | B17 | Editor precedence differed: `sshi config` tried `$EDITOR` first, TUI `E` tried `$VISUAL` first | `0615950` — `commands::config::resolve_editor` (`editor_from`, pure, tested) used by `config::run` and `App::do_open_editor`; `cli.md`/`tui.md`/README updated; real binary: `VISUAL=fake EDITOR=false sshi config` opens fake (old binary ran `false`) |
