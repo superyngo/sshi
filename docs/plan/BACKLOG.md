@@ -18,7 +18,6 @@ this file existed are recorded in those source documents, not here.
 |---|---|---|---|---|---|---|---|
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
 | B6 | 2026-07-18 | 2026-09-25 | P2 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `src/tui/focus.rs` | S | Types wired in or deleted; allow removed |
-| B10 | 2026-07-18 | 2026-09-25 | P3 | Checkout metric extractors have no unit tests | `src/commands/checkout/mod.rs` `extract_metric_value` | S | Tests cover each metric for sh and PowerShell samples plus fallbacks |
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
 | B15 | 2026-09-25 | 2026-09-25 | P3 | `init --update` is a no-op whenever `config.toml` exists (`effective_update = update \|\| config_exists`) | `src/commands/init/mod.rs` `run` | S | Flag has a distinct effect, or is removed |
@@ -86,6 +85,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B10 | Checkout metric extractors had no unit tests | HASH-B10 — tests in `checkout::tests` for each metric (sh and PowerShell samples, fallbacks); no behaviour change |
 | B62 | Sync source-skip and `-v` unreachable/sftp-failed lines swapped host and status in `print_host_line` | `80a187f` — arguments swapped back in `decide_batch`, `sync_path_across`, `sync_inner`; real binary: `[h1 ] ⊘ does not have …` |
 | B60 | `output::printer` (and `log`/`checkout` tables) wrote ANSI colours with no TTY/`NO_COLOR` gate | `6fd0848` — `printer::should_color` (TTY + `NO_COLOR`), `format_host_line`; `log` and `checkout` gated too; real binary: piped `list`/`log`/`checkout` contain no `^[[` |
 | B18 | `distribute_pooled` acquired the global permit before the per-host one | `ae57ce5` — `distribute_pooled` uses `ConcurrencyLimiter::acquire`; test `test_distribute_pooled_acquires_per_host_first`; `ssh-transport.md` note updated |

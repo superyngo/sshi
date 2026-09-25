@@ -211,6 +211,18 @@ fn extract_battery(data: &serde_json::Value) -> String {
         if let Some(pct) = bat.get("percent").and_then(|v| v.as_u64()) {
             return format!("{}%", pct);
         }
+        // PowerShell format: JSON string or empty (desktop without battery)
+        if let Some(s) = bat.as_str() {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return "N/A".to_string();
+            }
+            if let Ok(p) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                if let Some(pct) = p.get("EstimatedChargeRemaining").and_then(|v| v.as_u64()) {
+                    return format!("{}%", pct);
+                }
+            }
+        }
         // present but no percent (desktop without battery info)
         return "-".to_string();
     }
@@ -281,6 +293,13 @@ pub(crate) fn extract_metric_value(data: &serde_json::Value, metric: &str) -> (S
                     }
                 }
                 if let Some(s) = v.as_str() {
+                    if let Ok(p) = serde_json::from_str::<serde_json::Value>(s) {
+                        if let Some(os) = p.get("OsName").and_then(|u| u.as_str()) {
+                            let short: String =
+                                os.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
+                            return (short, false);
+                        }
+                    }
                     let short: String = s.split_whitespace().take(3).collect::<Vec<_>>().join(" ");
                     return (short, false);
                 }
@@ -375,5 +394,417 @@ fn print_table_report(snapshots: &[HostSnapshot], columns: &DisplayColumns) {
         }
         line.push_str(&format!(" {}", last_seen));
         println!("{}", line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_extract_cpu_load() {
+        // sh sample: object with load1, load5, load15
+        let data = json!({ "cpu_load": { "load1": 1.25, "load5": 0.85, "load15": 0.55 } });
+        assert_eq!(
+            extract_metric_value(&data, "cpu_load"),
+            ("1.25".to_string(), false)
+        );
+
+        // PowerShell sample: string representation of float
+        let data = json!({ "cpu_load": "21.18" });
+        assert_eq!(
+            extract_metric_value(&data, "cpu_load"),
+            ("21.18".to_string(), false)
+        );
+
+        // Raw float sample
+        let data = json!({ "cpu_load": 2.75 });
+        assert_eq!(
+            extract_metric_value(&data, "cpu_load"),
+            ("2.75".to_string(), false)
+        );
+
+        // Fallbacks: empty, null, invalid string
+        assert_eq!(
+            extract_metric_value(&json!({}), "cpu_load"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "cpu_load": null }), "cpu_load"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "cpu_load": "not_a_number" }), "cpu_load"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_memory() {
+        // sh sample: normal usage (< 90%)
+        let data =
+            json!({ "memory": { "total_bytes": 16000000000u64, "used_bytes": 8000000000u64 } });
+        assert_eq!(
+            extract_metric_value(&data, "memory"),
+            ("50%".to_string(), false)
+        );
+
+        // sh sample: critical usage (> 90%)
+        let data = json!({ "memory": { "total_bytes": 10000u64, "used_bytes": 9500u64 } });
+        assert_eq!(
+            extract_metric_value(&data, "memory"),
+            ("95%".to_string(), true)
+        );
+
+        // PowerShell sample: JSON string with TotalVisibleMemorySize and FreePhysicalMemory (KB)
+        let data = json!({ "memory": r#"{"TotalVisibleMemorySize": 16777216, "FreePhysicalMemory": 8388608}"# });
+        assert_eq!(
+            extract_metric_value(&data, "memory"),
+            ("50%".to_string(), false)
+        );
+
+        // PowerShell sample: critical usage (> 90%)
+        let data =
+            json!({ "memory": r#"{"TotalVisibleMemorySize": 10000, "FreePhysicalMemory": 500}"# });
+        assert_eq!(
+            extract_metric_value(&data, "memory"),
+            ("95%".to_string(), true)
+        );
+
+        // Fallbacks: total 0, invalid json, null, missing
+        let zero_total = json!({ "memory": { "total_bytes": 0, "used_bytes": 0 } });
+        assert_eq!(
+            extract_metric_value(&zero_total, "memory"),
+            ("-".to_string(), false)
+        );
+        let bad_json = json!({ "memory": "not_json" });
+        assert_eq!(
+            extract_metric_value(&bad_json, "memory"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "memory": null }), "memory"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({}), "memory"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_disk() {
+        // sh sample: array of mounts, prioritizes root "/"
+        let data = json!({
+            "disk": [
+                { "mount": "/boot", "total_bytes": 1000000, "used_bytes": 990000 },
+                { "mount": "/", "total_bytes": 100000000u64, "used_bytes": 40000000u64 }
+            ]
+        });
+        assert_eq!(
+            extract_metric_value(&data, "disk"),
+            ("40%".to_string(), false)
+        );
+
+        // sh sample: critical usage (> 90%)
+        let data = json!({
+            "disk": [{ "mount": "/", "total_bytes": 100000u64, "used_bytes": 95000u64 }]
+        });
+        assert_eq!(
+            extract_metric_value(&data, "disk"),
+            ("95%".to_string(), true)
+        );
+
+        // sh sample: non-root fallback when no "/" mount
+        let data = json!({
+            "disk": [{ "mount": "/data", "total_bytes": 200u64, "used_bytes": 100u64 }]
+        });
+        assert_eq!(
+            extract_metric_value(&data, "disk"),
+            ("50%".to_string(), false)
+        );
+
+        // PowerShell sample: JSON string array of drives
+        let data = json!({
+            "disk": r#"[{"Name": "C", "Used": 40000000, "Free": 60000000}]"#
+        });
+        assert_eq!(
+            extract_metric_value(&data, "disk"),
+            ("40%".to_string(), false)
+        );
+
+        // PowerShell sample: critical usage (> 90%)
+        let data = json!({
+            "disk": r#"[{"Name": "C", "Used": 95000, "Free": 5000}]"#
+        });
+        assert_eq!(
+            extract_metric_value(&data, "disk"),
+            ("95%".to_string(), true)
+        );
+
+        // Fallbacks: empty array, invalid json, null, missing
+        assert_eq!(
+            extract_metric_value(&json!({ "disk": [] }), "disk"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "disk": "invalid" }), "disk"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "disk": null }), "disk"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({}), "disk"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_battery() {
+        // sh sample: battery present with percent
+        let data = json!({ "battery": { "present": true, "percent": 88 } });
+        assert_eq!(
+            extract_metric_value(&data, "battery"),
+            ("88%".to_string(), false)
+        );
+
+        // sh sample: battery not present (desktop)
+        let data = json!({ "battery": { "present": false } });
+        assert_eq!(
+            extract_metric_value(&data, "battery"),
+            ("N/A".to_string(), false)
+        );
+
+        // sh sample: present without percent
+        let data = json!({ "battery": { "present": true } });
+        assert_eq!(
+            extract_metric_value(&data, "battery"),
+            ("-".to_string(), false)
+        );
+
+        // PowerShell sample: JSON string with EstimatedChargeRemaining
+        let data = json!({ "battery": r#"{"EstimatedChargeRemaining": 85, "BatteryStatus": 2}"# });
+        assert_eq!(
+            extract_metric_value(&data, "battery"),
+            ("85%".to_string(), false)
+        );
+
+        // PowerShell sample: empty string for desktop
+        let data = json!({ "battery": "   " });
+        assert_eq!(
+            extract_metric_value(&data, "battery"),
+            ("N/A".to_string(), false)
+        );
+
+        // Fallback: missing or null
+        assert_eq!(
+            extract_metric_value(&json!({}), "battery"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "battery": null }), "battery"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_ip_address() {
+        // sh sample
+        let data = json!({ "ip_address": "192.168.1.50" });
+        assert_eq!(
+            extract_metric_value(&data, "ip_address"),
+            ("192.168.1.50".to_string(), false)
+        );
+
+        // PowerShell sample: space-separated IPs with whitespace
+        let data = json!({ "ip_address": " 192.168.1.50 10.0.0.5 \n" });
+        assert_eq!(
+            extract_metric_value(&data, "ip_address"),
+            ("192.168.1.50 10.0.0.5".to_string(), false)
+        );
+
+        // Fallback: empty, null, missing
+        assert_eq!(
+            extract_metric_value(&json!({ "ip_address": "" }), "ip_address"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "ip_address": "   " }), "ip_address"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "ip_address": null }), "ip_address"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({}), "ip_address"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_swap() {
+        // sh sample: normal usage
+        let data = json!({ "swap": { "total_bytes": 2048000u64, "used_bytes": 512000u64 } });
+        assert_eq!(
+            extract_metric_value(&data, "swap"),
+            ("25%".to_string(), false)
+        );
+
+        // sh sample: critical usage (> 90%)
+        let data = json!({ "swap": { "total_bytes": 1000u64, "used_bytes": 950u64 } });
+        assert_eq!(
+            extract_metric_value(&data, "swap"),
+            ("95%".to_string(), true)
+        );
+
+        // Fallback: total 0, null, missing
+        let zero = json!({ "swap": { "total_bytes": 0, "used_bytes": 0 } });
+        assert_eq!(
+            extract_metric_value(&zero, "swap"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({ "swap": null }), "swap"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({}), "swap"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_system_info() {
+        // sh sample: uname in object
+        let data = json!({
+            "system_info": { "uname": "Linux debian 5.10.0-8-amd64 #1 SMP PREEMPT Debian 5.10.46-4 (2021-08-03)" }
+        });
+        assert_eq!(
+            extract_metric_value(&data, "system_info"),
+            ("Linux debian 5.10.0-8-amd64".to_string(), false)
+        );
+
+        // PowerShell sample: JSON string with OsName
+        let data = json!({
+            "system_info": r#"{"OsName": "Microsoft Windows 11 Pro", "CsName": "PC", "OsVersion": "10.0.22631"}"#
+        });
+        assert_eq!(
+            extract_metric_value(&data, "system_info"),
+            ("Microsoft Windows 11".to_string(), false)
+        );
+
+        // Plain string sample
+        let data = json!({ "system_info": "FreeBSD 13.0-RELEASE FreeBSD" });
+        assert_eq!(
+            extract_metric_value(&data, "system_info"),
+            ("FreeBSD 13.0-RELEASE FreeBSD".to_string(), false)
+        );
+
+        // Fallbacks
+        assert_eq!(
+            extract_metric_value(&json!({ "system_info": null }), "system_info"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({}), "system_info"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_cpu_arch() {
+        // sh sample
+        let data = json!({ "cpu_arch": "x86_64" });
+        assert_eq!(
+            extract_metric_value(&data, "cpu_arch"),
+            ("x86_64".to_string(), false)
+        );
+
+        // PowerShell sample
+        let data = json!({ "cpu_arch": "  AMD64 \n" });
+        assert_eq!(
+            extract_metric_value(&data, "cpu_arch"),
+            ("AMD64".to_string(), false)
+        );
+
+        // Fallback
+        assert_eq!(
+            extract_metric_value(&json!({ "cpu_arch": null }), "cpu_arch"),
+            ("-".to_string(), false)
+        );
+        assert_eq!(
+            extract_metric_value(&json!({}), "cpu_arch"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_network() {
+        let data = json!({});
+        assert_eq!(
+            extract_metric_value(&data, "network"),
+            ("…".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_extract_custom_and_fallback_metric() {
+        // Custom string metric
+        let data = json!({ "docker_status": " active \n" });
+        assert_eq!(
+            extract_metric_value(&data, "docker_status"),
+            ("active".to_string(), false)
+        );
+
+        // Custom numeric metric
+        let data = json!({ "active_workers": 42 });
+        assert_eq!(
+            extract_metric_value(&data, "active_workers"),
+            ("42".to_string(), false)
+        );
+
+        // Missing custom metric
+        assert_eq!(
+            extract_metric_value(&json!({}), "unknown_metric"),
+            ("-".to_string(), false)
+        );
+    }
+
+    #[test]
+    fn test_metric_header_and_width() {
+        assert_eq!(metric_header("cpu_load"), "CPU Load");
+        assert_eq!(metric_header("memory"), "Memory");
+        assert_eq!(metric_header("disk"), "Disk");
+        assert_eq!(metric_header("battery"), "Battery");
+        assert_eq!(metric_header("ip_address"), "IP Address");
+        assert_eq!(metric_header("swap"), "Swap");
+        assert_eq!(metric_header("system_info"), "System");
+        assert_eq!(metric_header("cpu_arch"), "Arch");
+        assert_eq!(metric_header("network"), "Network");
+        assert_eq!(metric_header("custom_name"), "custom_name");
+
+        assert_eq!(metric_width("ip_address"), 18);
+        assert_eq!(metric_width("system_info"), 20);
+        assert_eq!(metric_width("cpu_load"), 10);
+        assert_eq!(metric_width("memory"), 8);
+        assert_eq!(metric_width("disk"), 8);
+        assert_eq!(metric_width("swap"), 8);
+        assert_eq!(metric_width("battery"), 8);
+        assert_eq!(metric_width("cpu_arch"), 8);
+        assert_eq!(metric_width("other"), 12);
+    }
+
+    #[test]
+    fn test_format_relative_time() {
+        assert_eq!(format_relative_time(0), "never");
+        let now = chrono::Utc::now().timestamp();
+        assert_eq!(format_relative_time(now - 10), "10s ago");
+        assert_eq!(format_relative_time(now - 120), "2m ago");
+        assert_eq!(format_relative_time(now - 7200), "2h ago");
+        assert_eq!(format_relative_time(now - 172800), "2d ago");
     }
 }
