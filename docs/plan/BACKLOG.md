@@ -21,7 +21,6 @@ this file existed are recorded in those source documents, not here.
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
 | B15 | 2026-09-25 | 2026-09-25 | P3 | `init --update` is a no-op whenever `config.toml` exists (`effective_update = update \|\| config_exists`) | `src/commands/init/mod.rs` `run` | S | Flag has a distinct effect, or is removed |
-| B16 | 2026-09-25 | 2026-09-25 | P3 | New-config comment template documents removed `groups`/`enable_hosts`/`enable_all` fields | `src/config/app.rs` `inject_config_comments` | S | Template mentions only fields present in `CheckEntry`/`SyncEntry` |
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
@@ -85,6 +84,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B16 | New-config comment template documented removed `groups`/`enable_hosts`/`enable_all` fields | HASH-B16 — `inject_config_comments` rewritten to current `CheckEntry`/`CheckPath`/`SyncEntry`/`Settings` fields; test `b16_template_mentions_only_existing_schema_fields` |
 | B10 | Checkout metric extractors had no unit tests | `8e6d4c8` — tests in `checkout::tests` for each metric (sh and PowerShell samples, fallbacks); no behaviour change |
 | B62 | Sync source-skip and `-v` unreachable/sftp-failed lines swapped host and status in `print_host_line` | `80a187f` — arguments swapped back in `decide_batch`, `sync_path_across`, `sync_inner`; real binary: `[h1 ] ⊘ does not have …` |
 | B60 | `output::printer` (and `log`/`checkout` tables) wrote ANSI colours with no TTY/`NO_COLOR` gate | `6fd0848` — `printer::should_color` (TTY + `NO_COLOR`), `format_host_line`; `log` and `checkout` gated too; real binary: piped `list`/`log`/`checkout` contain no `^[[` |

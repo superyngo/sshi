@@ -408,92 +408,59 @@ fn inject_config_comments(toml_str: &str) -> String {
 ";
 
     let check_comment = "\
-# [[check]] Available enabled values:
-# enabled = [
-#     \"online\",        # Check if host is online
-#     \"system_info\",   # System info (uname / systeminfo)
-#     \"cpu_arch\",      # CPU architecture
-#     \"memory\",        # Memory usage
-#     \"swap\",          # Swap usage
-#     \"disk\",          # Disk usage
-#     \"cpu_load\",      # CPU load
-#     \"network\",       # Network interface info
-#     \"battery\",       # Battery status
-#     \"ip_address\",    # IP address
-# ]
+# [[check]] Check tasks (selected with `check -n <name>`, or default when omitted)
 #
-# ── Scoping ──
-# groups = [\"web\"]       # Apply only to specified groups (used with --group/-g)
-#
-# ── Visibility controls (default: true) ──
-# enable_hosts = true     # Include this entry when using --host/-h mode
-#                         # Set to false to exclude from per-host checks
-# enable_all   = true     # Include this entry when using --all/-a mode
-#                         # Set to false to exclude from whole-fleet checks
-#
-# Note: When groups is non-empty, the entry is scoped to those groups
-#       and only selected with --group/-g (enable_hosts/enable_all are ignored).
-#       When groups is empty, the entry is unscoped and filtered by
-#       enable_hosts (--host/-h) or enable_all (--all/-a).
+# Fields:
+#   name = \"default\"         # Selection identifier and TUI label (optional)
+#   enabled = [              # Available metric probes:
+#       \"online\",            # Check if host is online
+#       \"system_info\",       # System info (uname / systeminfo)
+#       \"cpu_arch\",          # CPU architecture
+#       \"memory\",            # Memory usage
+#       \"swap\",              # Swap usage
+#       \"disk\",              # Disk usage
+#       \"cpu_load\",          # CPU load
+#       \"network\",           # Network interface info
+#       \"battery\",           # Battery status
+#       \"ip_address\",        # IP address
+#   ]
 #
 # [[check.path]] Custom path monitoring:
-#   path  = \"/var/log\"    # Path to monitor
-#   label = \"Logs\"        # Display label
+#   path  = \"/var/log\"       # Path to monitor
+#   label = \"Logs\"           # Display label
 #
 # Examples:
 # [[check]]
+# name = \"default\"
 # enabled = [\"online\", \"memory\", \"disk\", \"cpu_load\", \"ip_address\"]
 #
 # [[check]]
-# enabled = [\"online\", \"memory\", \"disk\", \"cpu_load\"]
-# groups = [\"webservers\"]
+# name = \"web-logs\"
+# enabled = [\"online\", \"disk\"]
 # [[check.path]]
 # path = \"/var/log/nginx\"
 # label = \"Nginx Logs\"
-#
-# [[check]]
-# enabled = [\"online\", \"disk\"]
-# enable_hosts = false    # Only run with --all or --group, not --host
 ";
 
     let sync_comment = "\
-# [[sync]] Sync settings:
+# [[sync]] Sync tasks (selected with `sync -n <name>`, or default when omitted)
 #
-# ── Unscoped sync (used with --all/-a when groups is empty) ──
-# [[sync]]
-# paths = [\"/etc/timezone\"]            # File paths to sync (multiple allowed)
-# recursive = false                    # Recursive sync (default: false)
-# mode = \"0644\"                        # File permissions (optional)
-# propagate_deletes = false            # Sync deletions (optional, default: false)
-# source = \"myhost\"                    # Fixed source host (optional, skips auto-selection)
+# Fields:
+#   name = \"nginx-config\"              # Selection identifier and TUI label (optional)
+#   paths = [\"/etc/timezone\"]          # File paths to sync (multiple allowed)
+#   recursive = false                  # Recursive directory sync (default: false)
+#   mode = \"0644\"                      # File permissions (optional)
+#   propagate_deletes = false          # Sync deletions (optional, default: false)
+#   source = \"myhost\"                  # Fixed source host (optional, skips auto-selection)
 #
-# ── Group sync (used with --group/-g) ──
+# Example:
 # [[sync]]
+# name = \"nginx-config\"
 # paths = [\"/etc/nginx/nginx.conf\", \"/etc/nginx/conf.d\"]
-# groups = [\"webservers\"]              # Target groups (matches host[].groups)
-#
-# ── Per-host sync (used with --host/-h) ──
-# [[sync]]
-# paths = [\"/etc/special.conf\"]
-# hosts = [\"special-host\"]             # Target hosts (matches host[].name)
-#
-# ── Visibility controls (default: true) ──
-# enable_hosts = true     # Include this entry when using --host/-h mode
-#                         # Set to false to exclude from per-host syncs
-# enable_all   = true     # Include this entry when using --all/-a mode
-#                         # Set to false to exclude from whole-fleet syncs
-#
-# Note: When groups is non-empty, the entry is scoped to those groups
-#       and only selected with --group/-g (enable_hosts/enable_all are ignored).
-#       When groups is empty, the entry is unscoped and filtered by
-#       enable_hosts (--host/-h) or enable_all (--all/-a).
-#
-# Example: group-only sync that won't run with --all or --host:
-# [[sync]]
-# paths = [\"/etc/nginx/nginx.conf\"]
-# groups = [\"webservers\"]
-# enable_hosts = false
-# enable_all = false
+# recursive = true
+# mode = \"0644\"
+# propagate_deletes = true
+# source = \"web-prod-1\"
 ";
 
     let mut result = String::new();
@@ -730,5 +697,136 @@ max_concurrency = 10  # max 50
             after.contains("# max 50"),
             "inline comment dropped:\n{after}"
         );
+    }
+
+    /// B16: template comments must only mention fields that actually exist in
+    /// the schema (CheckEntry, CheckPath, SyncEntry, Settings).
+    #[test]
+    fn b16_template_mentions_only_existing_schema_fields() {
+        use crate::config::schema::{CheckEntry, CheckPath, Settings, SyncEntry};
+        use std::collections::HashSet;
+
+        let template = inject_config_comments("");
+
+        // Removed legacy fields must not be present in the template.
+        assert!(
+            !template.contains("enable_hosts"),
+            "template contains enable_hosts"
+        );
+        assert!(
+            !template.contains("enable_all"),
+            "template contains enable_all"
+        );
+
+        // Collect all valid field names for each section.
+        let check_sample = CheckEntry {
+            name: Some("test".into()),
+            id: "123".into(),
+            enabled: vec!["online".into()],
+            path: vec![CheckPath {
+                path: "/var/log".into(),
+                label: "logs".into(),
+            }],
+        };
+        let check_json = serde_json::to_value(&check_sample).unwrap();
+        let mut check_valid_keys: HashSet<String> =
+            check_json.as_object().unwrap().keys().cloned().collect();
+        let check_path_json = serde_json::to_value(&check_sample.path[0]).unwrap();
+        check_valid_keys.extend(check_path_json.as_object().unwrap().keys().cloned());
+
+        let sync_sample = SyncEntry {
+            name: Some("test".into()),
+            id: "123".into(),
+            paths: vec!["/tmp".into()],
+            recursive: true,
+            mode: Some("0644".into()),
+            propagate_deletes: Some(false),
+            source: Some("host1".into()),
+        };
+        let sync_json = serde_json::to_value(&sync_sample).unwrap();
+        let sync_valid_keys: HashSet<String> =
+            sync_json.as_object().unwrap().keys().cloned().collect();
+
+        let settings_sample = Settings {
+            state_dir: Some(std::path::PathBuf::from("/custom/path")),
+            default_output_format: Some("json".into()),
+            ..Default::default()
+        };
+        let settings_json = serde_json::to_value(&settings_sample).unwrap();
+        let settings_valid_keys: HashSet<String> =
+            settings_json.as_object().unwrap().keys().cloned().collect();
+
+        enum Section {
+            None,
+            Settings,
+            Check,
+            Sync,
+        }
+        let mut current_section = Section::None;
+
+        for line in template.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("# [settings]") {
+                current_section = Section::Settings;
+                continue;
+            } else if trimmed.starts_with("# [[check]]") {
+                current_section = Section::Check;
+                continue;
+            } else if trimmed.starts_with("# [[sync]]") {
+                current_section = Section::Sync;
+                continue;
+            }
+
+            if let Some(comment_body) = trimmed.strip_prefix('#') {
+                let code_part = comment_body.split('#').next().unwrap_or("").trim();
+                if let Some((key, _val)) = code_part.split_once('=') {
+                    let key = key.trim();
+                    if !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    {
+                        match current_section {
+                            Section::Settings => {
+                                assert!(
+                                    settings_valid_keys.contains(key),
+                                    "Field '{key}' in settings template does not exist in Settings schema"
+                                );
+                            }
+                            Section::Check => {
+                                assert!(
+                                    check_valid_keys.contains(key),
+                                    "Field '{key}' in check template does not exist in CheckEntry/CheckPath schema"
+                                );
+                            }
+                            Section::Sync => {
+                                assert!(
+                                    sync_valid_keys.contains(key),
+                                    "Field '{key}' in sync template does not exist in SyncEntry schema"
+                                );
+                            }
+                            Section::None => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // Verify the example blocks in comments parse cleanly.
+        let check_example = r#"
+name = "default"
+enabled = ["online", "memory", "disk", "cpu_load", "ip_address"]
+"#;
+        let parsed_check: CheckEntry = toml::from_str(check_example).unwrap();
+        assert_eq!(parsed_check.name.as_deref(), Some("default"));
+
+        let sync_example = r#"
+name = "nginx-config"
+paths = ["/etc/nginx/nginx.conf", "/etc/nginx/conf.d"]
+recursive = true
+mode = "0644"
+propagate_deletes = true
+source = "web-prod-1"
+"#;
+        let parsed_sync: SyncEntry = toml::from_str(sync_example).unwrap();
+        assert_eq!(parsed_sync.name.as_deref(), Some("nginx-config"));
+        assert!(parsed_sync.recursive);
     }
 }
