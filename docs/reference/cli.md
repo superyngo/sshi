@@ -225,6 +225,11 @@ Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial
 - `-o, --out [PATH]`: Write structured **OperationReport** to `.json` or `.html`.
 - `-H, --help`: Print help.
 
+#### Directory recursion and symlinks
+When copying directories recursively:
+- Symbolic links are not followed (to avoid filesystem recursion loops) and are reported as warnings.
+- Unreadable directory entries or files produce an immediate operational error (exit code `1`) instead of being silently skipped.
+
 ---
 
 ### `run`

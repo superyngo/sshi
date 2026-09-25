@@ -280,6 +280,8 @@ fn plan_transfers(local: &str, remote: Option<&str>) -> Result<Vec<Transfer>> {
                 });
             }
         } else {
+            std::fs::File::open(&m)
+                .map_err(|e| anyhow::anyhow!("Cannot read file {}: {}", m.display(), e))?;
             let name = m
                 .file_name()
                 .and_then(|n| n.to_str())
@@ -348,18 +350,35 @@ fn expand_glob(local: &str) -> Result<Vec<PathBuf>> {
 }
 
 /// Recursively collect all regular files under `dir`.
+///
+/// Symlinks are not followed (to prevent recursion loops) and are logged as
+/// warnings. Unreadable entries or files return an error.
 fn walk_files(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut out = Vec::new();
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         let entries = std::fs::read_dir(&d)
             .map_err(|e| anyhow::anyhow!("Cannot read directory {}: {}", d.display(), e))?;
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                anyhow::anyhow!("Cannot read directory entry in {}: {}", d.display(), e)
+            })?;
             let p = entry.path();
-            match entry.file_type() {
-                Ok(ft) if ft.is_dir() => stack.push(p),
-                Ok(ft) if ft.is_file() => out.push(p),
-                _ => {}
+            let ft = entry
+                .file_type()
+                .map_err(|e| anyhow::anyhow!("Cannot read file type for {}: {}", p.display(), e))?;
+            if ft.is_symlink() {
+                tracing::warn!("skipping symlink: {}", p.display());
+                continue;
+            }
+            if ft.is_dir() {
+                stack.push(p);
+            } else if ft.is_file() {
+                std::fs::File::open(&p)
+                    .map_err(|e| anyhow::anyhow!("Cannot read file {}: {}", p.display(), e))?;
+                out.push(p);
+            } else {
+                tracing::warn!("skipping special file: {}", p.display());
             }
         }
     }
@@ -485,5 +504,38 @@ mod tests {
     #[test]
     fn missing_local_errors() {
         assert!(plan_transfers("/no/such/path/xyz", None).is_err());
+    }
+
+    #[test]
+    fn walk_files_skips_symlink_with_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("file.txt");
+        fs::write(&f, b"hello").unwrap();
+        let sym = dir.path().join("link.txt");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&f, &sym).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&f, &sym).unwrap();
+
+        let files = walk_files(dir.path()).unwrap();
+        assert_eq!(files, vec![f]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn walk_files_unreadable_file_errors() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("secret.txt");
+        fs::write(&f, b"secret").unwrap();
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let res = walk_files(dir.path());
+        assert!(res.is_err());
+        let err = res.unwrap_err().to_string();
+        assert!(err.contains("Cannot read file"));
+
+        // Restore permissions for cleanup
+        fs::set_permissions(&f, fs::Permissions::from_mode(0o644)).unwrap();
     }
 }
