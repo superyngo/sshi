@@ -17,7 +17,6 @@ this file existed are recorded in those source documents, not here.
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
-| B6 | 2026-07-18 | 2026-09-25 | P2 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `src/tui/focus.rs` | S | Types wired in or deleted; allow removed |
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
@@ -64,6 +63,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B6 | Unused focus-model types kept alive by `#![allow(dead_code)]` | HASH-B6 — `src/tui/focus.rs` deleted (no callers; its own tests went with it), `pub mod focus` removed; 447/289 tests pass |
 | B73 | sh `swap` probe was `free -b` only; macOS/BSD hosts never reported swap | `2f6ff2a` — `sh::command_for("swap")` falls back to `sysctl -n vm.swapusage`; `parse_bsd_swapusage` (K/M/G units); fixtures `macos_swap*.txt` + test; real binary: snapshot `swap` = `{"total_bytes":0,"used_bytes":0}` on the macOS rig (was `{}`) |
 | B30 | Dead SSH/SFTP sessions were never evicted or reconnected | `24df437` — `RusshSessionPool::handle` checks `Handle::is_closed`, reconnects once via `connect_one` (serialized; `Reconnect` keeps config/passphrase cache/auth bridge), `LazyCache::remove` drops old SFTP/rename channels; test `test_lazy_cache_remove_forces_reopen`; real binary: rig connections killed mid-sync → "reconnected" h1/h2, 499/500 synced (old: 71/500) |
 | B69 | `-v/--verbose` had almost no observable CLI effect; russh `log` records never reached the subscriber | `2f81e32` — `VERBOSE_FILTER` (`sshi=debug,russh=info,info`); `try_init` installs the `log`→tracing bridge; debug events in `connect_one`, `authenticate`, `RusshSessionPool::exec`; `Context::verbose` and its constructor params removed; real binary: `run -a -v` 5 → 13 lines (connect/auth/exec), `RUST_LOG=russh=debug` 151 lines (was WARN only) |
