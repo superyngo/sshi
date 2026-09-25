@@ -110,7 +110,8 @@ _Avoid_: ExecutionResult, CommandOutput, OperationResult.
 
 **OperationReport**:
 The serialized JSON/HTML structure written by `-o/--out`, recording operation metadata, the
-target filter, tasks, and per-host results (`src/output/report.rs`).
+target filter, tasks, and per-host results (`src/output/report.rs`; HTML rendering in
+`src/output/html.rs`).
 _Avoid_: RunReport, JsonOutput, ReportDocument.
 
 **DbHandle**:

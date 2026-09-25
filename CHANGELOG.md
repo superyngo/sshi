@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- refactor: HTML report rendering (`render_html_report`, `render_output_html`, `html_escape`) moved from `output::report` into its own `output::html` module; output unchanged (B9).
 - docs: backlog rows for B66, B43, B13, B14 and B36 had been inserted into the Open table instead of Done; moved to Done.
 - fix: `check`/`sync -n <name>` with a name that matches no entry now exits 1 listing the available names (was exit 0 with a misleading hint); an explicit `-c <path>` that does not exist is now an error, except for `init` and the TUI (was a silent empty config) (B36).
 - fix: removed the unimplemented `checkout --history` / `--since` flags (they were accepted but ignored, and `--since` never validated its value); `checkout --out` reports no longer carry them in `task` metadata (B14).
