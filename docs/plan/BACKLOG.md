@@ -16,7 +16,6 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
-| B53 | 2026-09-25 | 2026-09-25 | P3 | Operation scaffolding duplicated (five `App::execute_*`, four command cores); `*_core` returns an enum callers `unreachable!`; `App::handle_key` 1010 lines | `src/tui/app.rs`; `src/commands/{exec,run,cp,check}.rs` | L | One launch helper and one fan-out helper; typed core returns; `handle_key` split by tab/popup |
 
 ## Pending verification
 
@@ -54,6 +53,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B53 | Operation scaffolding duplicated (five `App::execute_*`, four command cores); `*_core` returned an enum callers `unreachable!`d; `App::handle_key` 1,010+ lines | HASH-B53 — commits `6a265eb` (typed `*_core` returns, `From<…> for CommandReport`), `b0562ee` (`FanOut`), `98506ce` (`launch_operation`) and this one (`handle_key` → `handle_popup_key` with seven layer handlers, `handle_navbar_key`, `handle_global_key`, `handle_{config,operate,view}_key`); 456/293 tests unchanged; real binary: run/exec/cp/check via CLI and TUI (launch, list `e`, form Esc, yank, help/info) behave as before |
 | B54 | Parallel implementations: TUI export vs CLI report builders (checkout), `resolve_target_names` vs `Context::resolve_hosts`, `Summary`/`SyncSummary` printing, Operate/View target rows, `parse_ssh_config`/`load_ssh_config` | `b079076` — each pair reduced to one function (see changelog); tests `checkout_operation_report_rows_and_summary`, `detail_lines_dedupe_and_cluster`; real binary: `checkout -a --out` and the TUI View export of the same rows produce identical JSON apart from `executed_at` |
 | B55 | Dead code and misleading comments (list in the 2026-09-25 code audit) | `6d70d8c` — modules `tui::tabs::operate_schema`, `tui::event` deleted; `collect_sync_paths` returns no scoping map; `InitPlan` keeps only `dry_run`/`skip`/`remove_stale_hosts`; `init::core::{stale_hosts, skip_list}`; `mkdir_p_sftp` checks `metadata` before failing; the `sync_state` log message and redundant vec-delete clamp were already gone with B19/B46; real binary: `cp` into `~/INTEG55/blocker/f.bin` (blocker is a file) → "SFTP mkdir failed for …/blocker" |
 | B46 | Config tab editors: Esc committed in the form, discarded in the direct popup; entry-form viewport height 0 and ignored hint rows; form/direct editors duplicated; mode state as `Option::unwrap()` | `7fd4641` — `list_editor_key` / `picker_key` + `EditorOutcome` shared by form and direct editors (duplicated handlers and `closing` flags removed); `form_list_height` / `editor_list_height` set by render, used by key handling; non-test `unwrap()`s in config_tab 32 → 0; tests `vec_editors_share_esc_discards_s_saves`, `entry_form_scrolls_with_sticky_cursor`; real TUI: form paths editor `d` then Esc keeps `[~/INTEG/only2.txt]` (old: saved `(none)`) |

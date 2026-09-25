@@ -1851,6 +1851,26 @@ impl App {
             return Ok(true);
         }
 
+        if let Some(handled) = self.handle_popup_key(key)? {
+            return Ok(handled);
+        }
+        if let Some(handled) = self.handle_navbar_key(key)? {
+            return Ok(handled);
+        }
+        if let Some(handled) = self.handle_global_key(key)? {
+            return Ok(handled);
+        }
+        match self.active_tab {
+            TabId::Config => self.handle_config_key(key),
+            TabId::Operate => self.handle_operate_key(key),
+            TabId::View => self.handle_view_key(key),
+        }
+    }
+
+    /// Modal layers in priority order (auth, export, active text inputs,
+    /// member picker, help, info, log overlay, results, running operation,
+    /// config popups). `None`: no modal layer is open, keep routing.
+    fn handle_popup_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
         // Auth popup takes highest priority after Ctrl+C.
         if let Some(popup) = self.popup.auth.as_mut() {
             match key.code {
@@ -1866,7 +1886,7 @@ impl App {
                     popup.input.handle_key(key);
                 }
             }
-            return Ok(true);
+            return Ok(Some(true));
         }
 
         // Export popup routing.
@@ -1888,399 +1908,49 @@ impl App {
                     popup.input.handle_key(key);
                 }
             }
-            return Ok(true);
+            return Ok(Some(true));
         }
 
         // §14.3: while an input field is active, suspend ALL other routing.
-        if self.active_tab == TabId::Operate {
-            let active_field: Option<&mut InputField> = match self.operate.focus {
-                OpField::Command if self.operate.run_command.mode == InputMode::Active => {
-                    Some(&mut self.operate.run_command)
-                }
-                OpField::Script if self.operate.exec_script.mode == InputMode::Active => {
-                    Some(&mut self.operate.exec_script)
-                }
-                OpField::SyncAdhocInput
-                    if self.operate.sync_adhoc_input.mode == InputMode::Active =>
-                {
-                    Some(&mut self.operate.sync_adhoc_input)
-                }
-                OpField::SyncSource if self.operate.sync_source_input.mode == InputMode::Active => {
-                    Some(&mut self.operate.sync_source_input)
-                }
-                OpField::CpLocal if self.operate.cp_local.mode == InputMode::Active => {
-                    Some(&mut self.operate.cp_local)
-                }
-                OpField::CpRemote if self.operate.cp_remote.mode == InputMode::Active => {
-                    Some(&mut self.operate.cp_remote)
-                }
-                OpField::CheckName if self.operate.check_name.mode == InputMode::Active => {
-                    Some(&mut self.operate.check_name)
-                }
-                OpField::SyncName if self.operate.sync_name.mode == InputMode::Active => {
-                    Some(&mut self.operate.sync_name)
-                }
-                OpField::Out if self.operate.out_input.mode == InputMode::Active => {
-                    Some(&mut self.operate.out_input)
-                }
-                _ => None,
-            };
-            if let Some(field) = active_field {
-                let changed = field.handle_key(key);
-                // If sync adhoc input just committed (Enter → mode Normal), add path to list.
-                if self.operate.operation == OperationKind::Sync
-                    && self.operate.sync_adhoc_input.mode == InputMode::Normal
-                    && !self.operate.sync_adhoc_input.value.is_empty()
-                {
-                    let path = std::mem::take(&mut self.operate.sync_adhoc_input.value);
-                    self.operate.sync_adhoc_files.push(path);
-                }
-                // Persist text fields when Enter commits them (mode just flipped to Normal).
-                if key.code == KeyCode::Enter {
-                    self.save_state();
-                }
-                return Ok(changed);
-            }
+        if let Some(handled) = self.handle_operate_input_key(key)? {
+            return Ok(Some(handled));
         }
 
         // §14.3: while a View text input is active, suspend ALL other routing.
-        if self.active_tab == TabId::View && self.view.op == ViewOperationKind::Log {
-            let active_view_field: Option<&mut InputField> = match self.view.focus {
-                ViewFocus::Specific(0) if self.view.log_last_input.mode == InputMode::Active => {
-                    Some(&mut self.view.log_last_input)
-                }
-                ViewFocus::Specific(3) if self.view.log_since_input.mode == InputMode::Active => {
-                    Some(&mut self.view.log_since_input)
-                }
-                ViewFocus::Specific(4) if self.view.log_host_input.mode == InputMode::Active => {
-                    Some(&mut self.view.log_host_input)
-                }
-                _ => None,
-            };
-            // Route the key to the active field, then end its borrow before
-            // touching other `self` fields (commit handling needs `self`).
-            let committed = if let Some(field) = active_view_field {
-                field.handle_key(key);
-                Some(field.mode == InputMode::Normal)
-            } else {
-                None
-            };
-            if let Some(committed) = committed {
-                // Only Enter commits; Esc cancels (value already restored) and
-                // must not trigger a redundant refresh.
-                if committed && key.code == KeyCode::Enter {
-                    if matches!(self.view.focus, ViewFocus::Specific(0)) {
-                        let trimmed = self.view.log_last_input.value.trim();
-                        if trimmed.is_empty() {
-                            // Empty input means "no limit" → 0 (all entries).
-                            self.view.log_last = 0;
-                            self.view.log_last_input.value = "0".to_string();
-                        } else {
-                            match trimmed.parse::<usize>() {
-                                Ok(v) => self.view.log_last = v,
-                                // Non-numeric input — revert to the active value.
-                                Err(_) => {
-                                    self.view.log_last_input.value = self.view.log_last.to_string()
-                                }
-                            }
-                        }
-                    }
-                    self.view.dirty = true;
-                }
-                return Ok(true);
-            }
+        if let Some(handled) = self.handle_view_input_key(key)? {
+            return Ok(Some(handled));
         }
 
         // Member picker (Operate target groups/hosts/skip/shell) is a focus
         // root: while open it consumes all keys until applied or cancelled.
-        if let Some(picker) = self.popup.member_picker.as_mut() {
-            match picker.handle_key(key) {
-                PickerResult::Continue => return Ok(true),
-                PickerResult::Cancelled => {
-                    self.popup.member_picker = None;
-                    return Ok(true);
-                }
-                PickerResult::Add => {
-                    // Name picker → jump to the Config add-entry form; remember
-                    // to reopen this picker once the entry is committed.
-                    let target = self.popup.member_picker.take().unwrap().target;
-                    self.open_add_entry_from_picker(target);
-                    return Ok(true);
-                }
-                PickerResult::Applied => {
-                    let picker = self.popup.member_picker.take().unwrap();
-                    let chosen = picker.chosen();
-                    match picker.target {
-                        PickerTarget::Groups => self.target_filter.groups = chosen,
-                        PickerTarget::Hosts => self.target_filter.hosts = chosen,
-                        PickerTarget::Skip => self.target_filter.skip = chosen,
-                        PickerTarget::Shell => {
-                            if let Some(name) = chosen.first() {
-                                self.target_filter.shell = match name.as_str() {
-                                    "powershell" => super::state::persist::ShellMode::PowerShell,
-                                    "cmd" => super::state::persist::ShellMode::Cmd,
-                                    _ => super::state::persist::ShellMode::Sh,
-                                };
-                            }
-                        }
-                        // Name pickers write the comma-separated value back into
-                        // the field the executor already reads; no target-filter
-                        // post-processing applies.
-                        PickerTarget::CheckNames => {
-                            self.operate.check_name.value = chosen.join(", ");
-                            return Ok(true);
-                        }
-                        PickerTarget::SyncNames => {
-                            self.operate.sync_name.value = chosen.join(", ");
-                            return Ok(true);
-                        }
-                        // Single source host; "(none)" or nothing clears it.
-                        PickerTarget::SyncSource => {
-                            self.operate.sync_source_input.value = match chosen.first() {
-                                Some(h) if h != "(none)" => h.clone(),
-                                _ => String::new(),
-                            };
-                            return Ok(true);
-                        }
-                    }
-                    // Deliberately no validate_filter() here: it would force an
-                    // emptied Groups/Hosts selection back to All. The picker only
-                    // offers valid options, so there is nothing to sanitise.
-                    self.save_state();
-                    self.apply_checkout_filter();
-                    self.view.dirty = true;
-                    return Ok(true);
-                }
-            }
+        if let Some(handled) = self.handle_member_picker_key(key)? {
+            return Ok(Some(handled));
         }
 
         // Help popup intercepts: Esc/? close it; Tab toggles Help/About;
         // arrow/pgup/pgdn scroll.
-        if self.help_open {
-            match key.code {
-                KeyCode::Esc | KeyCode::Char('?') => {
-                    self.help_open = false;
-                    return Ok(true);
-                }
-                KeyCode::Tab | KeyCode::BackTab => {
-                    self.help_section = self.help_section.next();
-                    self.help_vp = Viewport::new();
-                    return Ok(true);
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.help_vp.move_up();
-                    return Ok(true);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.help_vp.move_down();
-                    return Ok(true);
-                }
-                KeyCode::PageUp => {
-                    self.help_vp.page_up();
-                    return Ok(true);
-                }
-                KeyCode::PageDown => {
-                    self.help_vp.page_down();
-                    return Ok(true);
-                }
-                KeyCode::Home => {
-                    self.help_vp.home();
-                    return Ok(true);
-                }
-                KeyCode::End => {
-                    self.help_vp.end();
-                    return Ok(true);
-                }
-                _ => return Ok(false),
-            }
+        if let Some(handled) = self.handle_help_key(key)? {
+            return Ok(Some(handled));
         }
 
         // Info popup intercepts: Esc/i close it; Tab/i cycle sections; arrows scroll.
-        if self.info_open {
-            match key.code {
-                KeyCode::Esc => {
-                    self.info_open = false;
-                    return Ok(true);
-                }
-                KeyCode::Char('i') => {
-                    self.info_section = self.info_section.next();
-                    self.info_vp = Viewport::new();
-                    return Ok(true);
-                }
-                KeyCode::Tab | KeyCode::BackTab => {
-                    self.info_section = self.info_section.next();
-                    self.info_vp = Viewport::new();
-                    return Ok(true);
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.info_vp.move_up();
-                    return Ok(true);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.info_vp.move_down();
-                    return Ok(true);
-                }
-                KeyCode::PageUp => {
-                    self.info_vp.page_up();
-                    return Ok(true);
-                }
-                KeyCode::PageDown => {
-                    self.info_vp.page_down();
-                    return Ok(true);
-                }
-                KeyCode::Home => {
-                    self.info_vp.home();
-                    return Ok(true);
-                }
-                KeyCode::End => {
-                    self.info_vp.end();
-                    return Ok(true);
-                }
-                _ => return Ok(false),
-            }
+        if let Some(handled) = self.handle_info_key(key)? {
+            return Ok(Some(handled));
         }
 
         // Log overlay intercepts: Esc/L close it, scroll inside.
         if self.log_overlay_open {
-            return self.handle_log_overlay_key(key);
+            return self.handle_log_overlay_key(key).map(Some);
         }
 
         // Completed report popup: Esc / Enter dismisses; ↑↓/PgUp/PgDn scroll.
-        if self.completed_report.is_some() {
-            match key.code {
-                KeyCode::Esc | KeyCode::Enter => {
-                    self.completed_report = None;
-                    self.completed_view = None;
-                    self.popup.completed_report_scroll = 0;
-                    return Ok(true);
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    self.popup.completed_report_scroll =
-                        self.popup.completed_report_scroll.saturating_sub(1);
-                    return Ok(true);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    self.popup.completed_report_scroll =
-                        self.popup.completed_report_scroll.saturating_add(1);
-                    return Ok(true);
-                }
-                KeyCode::PageUp => {
-                    self.popup.completed_report_scroll =
-                        self.popup.completed_report_scroll.saturating_sub(10);
-                    return Ok(true);
-                }
-                KeyCode::PageDown => {
-                    self.popup.completed_report_scroll =
-                        self.popup.completed_report_scroll.saturating_add(10);
-                    return Ok(true);
-                }
-                KeyCode::Home => {
-                    self.popup.completed_report_scroll = 0;
-                    return Ok(true);
-                }
-                KeyCode::End => {
-                    // Jump far enough down; render will clamp to actual content.
-                    self.popup.completed_report_scroll = usize::MAX / 2;
-                    return Ok(true);
-                }
-                _ => return Ok(false),
-            }
+        if let Some(handled) = self.handle_results_key(key)? {
+            return Ok(Some(handled));
         }
 
         // Running operation: Esc cancels (cooperatively).
-        if let Some(op) = self.running_op.as_ref() {
-            if key.code == KeyCode::Esc {
-                op.cancel.cancel();
-                return Ok(true);
-            }
-            // While running, ignore most keys except 1/2/3 tab switches, Ctrl+C,
-            // and Up/Down which scroll the progress popup.
-            match key.code {
-                KeyCode::Char('1') => {
-                    self.goto_tab(TabId::Config);
-                    return Ok(true);
-                }
-                KeyCode::Char('2') => {
-                    self.goto_tab(TabId::Operate);
-                    return Ok(true);
-                }
-                KeyCode::Char('3') => {
-                    self.goto_tab(TabId::View);
-                    return Ok(true);
-                }
-                KeyCode::Tab => {
-                    self.navbar_focused = false;
-                    self.goto_tab(self.active_tab.next());
-                    return Ok(true);
-                }
-                KeyCode::BackTab => {
-                    self.navbar_focused = false;
-                    self.goto_tab(self.active_tab.prev());
-                    return Ok(true);
-                }
-                KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::Operate => {
-                    // Enable manual scroll: lock to current position if auto-scrolling.
-                    let outcomes_len = self
-                        .running_op
-                        .as_ref()
-                        .map_or(0, |o| o.host_outcomes.len());
-                    let current = self
-                        .popup
-                        .progress_scroll
-                        .unwrap_or(outcomes_len.saturating_sub(12));
-                    self.popup.progress_scroll = Some(current.saturating_sub(1));
-                    return Ok(true);
-                }
-                KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::Operate => {
-                    let outcomes_len = self
-                        .running_op
-                        .as_ref()
-                        .map_or(0, |o| o.host_outcomes.len());
-                    let current = self
-                        .popup
-                        .progress_scroll
-                        .unwrap_or(outcomes_len.saturating_sub(12));
-                    let max_start = outcomes_len.saturating_sub(12);
-                    let next = (current + 1).min(max_start);
-                    // If scrolled to the auto-scroll position, clear manual scroll.
-                    if next >= max_start {
-                        self.popup.progress_scroll = None;
-                    } else {
-                        self.popup.progress_scroll = Some(next);
-                    }
-                    return Ok(true);
-                }
-                KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
-                    if self.active_tab == TabId::Operate =>
-                {
-                    // Page size matches the 12-row progress window.
-                    let outcomes_len = self
-                        .running_op
-                        .as_ref()
-                        .map_or(0, |o| o.host_outcomes.len());
-                    let max_start = outcomes_len.saturating_sub(12);
-                    let current = self.popup.progress_scroll.unwrap_or(max_start);
-                    match key.code {
-                        KeyCode::PageUp => {
-                            self.popup.progress_scroll = Some(current.saturating_sub(12));
-                        }
-                        KeyCode::PageDown => {
-                            let next = (current + 12).min(max_start);
-                            if next >= max_start {
-                                self.popup.progress_scroll = None;
-                            } else {
-                                self.popup.progress_scroll = Some(next);
-                            }
-                        }
-                        KeyCode::Home => self.popup.progress_scroll = Some(0),
-                        // End resumes auto-scroll to the latest output.
-                        KeyCode::End => self.popup.progress_scroll = None,
-                        _ => {}
-                    }
-                    return Ok(true);
-                }
-                _ => return Ok(false),
-            }
+        if let Some(handled) = self.handle_running_op_key(key)? {
+            return Ok(Some(handled));
         }
 
         // §popup-guard: while any config popup is open, suspend all global shortcuts.
@@ -2289,87 +1959,501 @@ impl App {
                 .config_tab
                 .handle_key(key, Arc::make_mut(&mut self.config));
             self.after_config_key();
-            return Ok(handled);
+            return Ok(Some(handled));
         }
+        Ok(None)
+    }
 
-        // NavBar focus: intercept keys when tab bar has focus.
-        if self.navbar_focused {
-            match key.code {
-                KeyCode::Left | KeyCode::Char('h') => {
-                    self.active_tab = self.active_tab.prev();
-                    return Ok(true);
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    self.active_tab = self.active_tab.next();
-                    return Ok(true);
-                }
-                KeyCode::Tab => {
-                    self.active_tab = self.active_tab.next();
-                    return Ok(true);
-                }
-                KeyCode::BackTab => {
-                    self.active_tab = self.active_tab.prev();
-                    return Ok(true);
-                }
-                KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
-                    self.navbar_descend();
-                    return Ok(true);
-                }
-                KeyCode::Esc => {
-                    // In NavBar: Config stays, Operate/View cycle to TopField.
-                    match self.active_tab {
-                        TabId::Config => {
-                            self.navbar_focused = false;
-                        }
-                        TabId::Operate => {
-                            self.navbar_focused = false;
-                            self.operate.focus = OpField::OpRadio;
-                            self.operate.esc_level = EscLevel::TopField;
-                        }
-                        TabId::View => {
-                            self.navbar_focused = false;
-                            self.view.focus = ViewFocus::OpSelector;
-                            self.view.esc_level = EscLevel::TopField;
+    /// Operate text inputs: while one is active it gets every key (§14.3).
+    fn handle_operate_input_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        if !(self.active_tab == TabId::Operate) {
+            return Ok(None);
+        }
+        let active_field: Option<&mut InputField> = match self.operate.focus {
+            OpField::Command if self.operate.run_command.mode == InputMode::Active => {
+                Some(&mut self.operate.run_command)
+            }
+            OpField::Script if self.operate.exec_script.mode == InputMode::Active => {
+                Some(&mut self.operate.exec_script)
+            }
+            OpField::SyncAdhocInput if self.operate.sync_adhoc_input.mode == InputMode::Active => {
+                Some(&mut self.operate.sync_adhoc_input)
+            }
+            OpField::SyncSource if self.operate.sync_source_input.mode == InputMode::Active => {
+                Some(&mut self.operate.sync_source_input)
+            }
+            OpField::CpLocal if self.operate.cp_local.mode == InputMode::Active => {
+                Some(&mut self.operate.cp_local)
+            }
+            OpField::CpRemote if self.operate.cp_remote.mode == InputMode::Active => {
+                Some(&mut self.operate.cp_remote)
+            }
+            OpField::CheckName if self.operate.check_name.mode == InputMode::Active => {
+                Some(&mut self.operate.check_name)
+            }
+            OpField::SyncName if self.operate.sync_name.mode == InputMode::Active => {
+                Some(&mut self.operate.sync_name)
+            }
+            OpField::Out if self.operate.out_input.mode == InputMode::Active => {
+                Some(&mut self.operate.out_input)
+            }
+            _ => None,
+        };
+        if let Some(field) = active_field {
+            let changed = field.handle_key(key);
+            // If sync adhoc input just committed (Enter → mode Normal), add path to list.
+            if self.operate.operation == OperationKind::Sync
+                && self.operate.sync_adhoc_input.mode == InputMode::Normal
+                && !self.operate.sync_adhoc_input.value.is_empty()
+            {
+                let path = std::mem::take(&mut self.operate.sync_adhoc_input.value);
+                self.operate.sync_adhoc_files.push(path);
+            }
+            // Persist text fields when Enter commits them (mode just flipped to Normal).
+            if key.code == KeyCode::Enter {
+                self.save_state();
+            }
+            return Ok(Some(changed));
+        }
+        Ok(None)
+    }
+
+    /// View → Log text inputs: while one is active it gets every key (§14.3).
+    fn handle_view_input_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        if !(self.active_tab == TabId::View && self.view.op == ViewOperationKind::Log) {
+            return Ok(None);
+        }
+        let active_view_field: Option<&mut InputField> = match self.view.focus {
+            ViewFocus::Specific(0) if self.view.log_last_input.mode == InputMode::Active => {
+                Some(&mut self.view.log_last_input)
+            }
+            ViewFocus::Specific(3) if self.view.log_since_input.mode == InputMode::Active => {
+                Some(&mut self.view.log_since_input)
+            }
+            ViewFocus::Specific(4) if self.view.log_host_input.mode == InputMode::Active => {
+                Some(&mut self.view.log_host_input)
+            }
+            _ => None,
+        };
+        // Route the key to the active field, then end its borrow before
+        // touching other `self` fields (commit handling needs `self`).
+        let committed = if let Some(field) = active_view_field {
+            field.handle_key(key);
+            Some(field.mode == InputMode::Normal)
+        } else {
+            None
+        };
+        if let Some(committed) = committed {
+            // Only Enter commits; Esc cancels (value already restored) and
+            // must not trigger a redundant refresh.
+            if committed && key.code == KeyCode::Enter {
+                if matches!(self.view.focus, ViewFocus::Specific(0)) {
+                    let trimmed = self.view.log_last_input.value.trim();
+                    if trimmed.is_empty() {
+                        // Empty input means "no limit" → 0 (all entries).
+                        self.view.log_last = 0;
+                        self.view.log_last_input.value = "0".to_string();
+                    } else {
+                        match trimmed.parse::<usize>() {
+                            Ok(v) => self.view.log_last = v,
+                            // Non-numeric input — revert to the active value.
+                            Err(_) => {
+                                self.view.log_last_input.value = self.view.log_last.to_string()
+                            }
                         }
                     }
-                    return Ok(true);
                 }
-                KeyCode::Char('1') => {
-                    self.goto_tab(TabId::Config);
-                    self.navbar_descend();
-                    return Ok(true);
+                self.view.dirty = true;
+            }
+            return Ok(Some(true));
+        }
+        Ok(None)
+    }
+
+    /// Member picker (target groups/hosts/skip/shell): a focus root that consumes every key until applied or cancelled.
+    fn handle_member_picker_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        let Some(picker) = self.popup.member_picker.as_mut() else {
+            return Ok(None);
+        };
+        match picker.handle_key(key) {
+            PickerResult::Continue => Ok(Some(true)),
+            PickerResult::Cancelled => {
+                self.popup.member_picker = None;
+                Ok(Some(true))
+            }
+            PickerResult::Add => {
+                // Name picker → jump to the Config add-entry form; remember
+                // to reopen this picker once the entry is committed.
+                let target = self.popup.member_picker.take().unwrap().target;
+                self.open_add_entry_from_picker(target);
+                Ok(Some(true))
+            }
+            PickerResult::Applied => {
+                let picker = self.popup.member_picker.take().unwrap();
+                let chosen = picker.chosen();
+                match picker.target {
+                    PickerTarget::Groups => self.target_filter.groups = chosen,
+                    PickerTarget::Hosts => self.target_filter.hosts = chosen,
+                    PickerTarget::Skip => self.target_filter.skip = chosen,
+                    PickerTarget::Shell => {
+                        if let Some(name) = chosen.first() {
+                            self.target_filter.shell = match name.as_str() {
+                                "powershell" => super::state::persist::ShellMode::PowerShell,
+                                "cmd" => super::state::persist::ShellMode::Cmd,
+                                _ => super::state::persist::ShellMode::Sh,
+                            };
+                        }
+                    }
+                    // Name pickers write the comma-separated value back into
+                    // the field the executor already reads; no target-filter
+                    // post-processing applies.
+                    PickerTarget::CheckNames => {
+                        self.operate.check_name.value = chosen.join(", ");
+                        return Ok(Some(true));
+                    }
+                    PickerTarget::SyncNames => {
+                        self.operate.sync_name.value = chosen.join(", ");
+                        return Ok(Some(true));
+                    }
+                    // Single source host; "(none)" or nothing clears it.
+                    PickerTarget::SyncSource => {
+                        self.operate.sync_source_input.value = match chosen.first() {
+                            Some(h) if h != "(none)" => h.clone(),
+                            _ => String::new(),
+                        };
+                        return Ok(Some(true));
+                    }
                 }
-                KeyCode::Char('2') => {
-                    self.goto_tab(TabId::Operate);
-                    self.navbar_descend();
-                    return Ok(true);
-                }
-                KeyCode::Char('3') => {
-                    self.goto_tab(TabId::View);
-                    self.navbar_descend();
-                    return Ok(true);
-                }
-                KeyCode::Char('q') => {
-                    self.should_quit = true;
-                    return Ok(true);
-                }
-                KeyCode::Char('?') => {
-                    self.open_help_popup();
-                    return Ok(true);
-                }
-                KeyCode::Char('i') => {
-                    self.cycle_info_popup();
-                    return Ok(true);
-                }
-                KeyCode::Char('L') => {
-                    self.toggle_log_overlay();
-                    return Ok(true);
-                }
-                _ => return Ok(false),
+                // Deliberately no validate_filter() here: it would force an
+                // emptied Groups/Hosts selection back to All. The picker only
+                // offers valid options, so there is nothing to sanitise.
+                self.save_state();
+                self.apply_checkout_filter();
+                self.view.dirty = true;
+                Ok(Some(true))
             }
         }
+    }
 
+    /// Help popup: Esc/? close, Tab toggles Help/About, arrows/PgUp/PgDn scroll.
+    fn handle_help_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        if !(self.help_open) {
+            return Ok(None);
+        }
         match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => {
+                self.help_open = false;
+                Ok(Some(true))
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.help_section = self.help_section.next();
+                self.help_vp = Viewport::new();
+                Ok(Some(true))
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.help_vp.move_up();
+                Ok(Some(true))
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.help_vp.move_down();
+                Ok(Some(true))
+            }
+            KeyCode::PageUp => {
+                self.help_vp.page_up();
+                Ok(Some(true))
+            }
+            KeyCode::PageDown => {
+                self.help_vp.page_down();
+                Ok(Some(true))
+            }
+            KeyCode::Home => {
+                self.help_vp.home();
+                Ok(Some(true))
+            }
+            KeyCode::End => {
+                self.help_vp.end();
+                Ok(Some(true))
+            }
+            _ => Ok(Some(false)),
+        }
+    }
+
+    /// Info popup: Esc/i close, Tab/i cycle sections, arrows scroll.
+    fn handle_info_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        if !(self.info_open) {
+            return Ok(None);
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.info_open = false;
+                Ok(Some(true))
+            }
+            KeyCode::Char('i') => {
+                self.info_section = self.info_section.next();
+                self.info_vp = Viewport::new();
+                Ok(Some(true))
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                self.info_section = self.info_section.next();
+                self.info_vp = Viewport::new();
+                Ok(Some(true))
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.info_vp.move_up();
+                Ok(Some(true))
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.info_vp.move_down();
+                Ok(Some(true))
+            }
+            KeyCode::PageUp => {
+                self.info_vp.page_up();
+                Ok(Some(true))
+            }
+            KeyCode::PageDown => {
+                self.info_vp.page_down();
+                Ok(Some(true))
+            }
+            KeyCode::Home => {
+                self.info_vp.home();
+                Ok(Some(true))
+            }
+            KeyCode::End => {
+                self.info_vp.end();
+                Ok(Some(true))
+            }
+            _ => Ok(Some(false)),
+        }
+    }
+
+    /// Completed-report popup: Esc/Enter dismiss, arrows/PgUp/PgDn scroll.
+    fn handle_results_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        if self.completed_report.is_none() {
+            return Ok(None);
+        }
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter => {
+                self.completed_report = None;
+                self.completed_view = None;
+                self.popup.completed_report_scroll = 0;
+                Ok(Some(true))
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.popup.completed_report_scroll =
+                    self.popup.completed_report_scroll.saturating_sub(1);
+                Ok(Some(true))
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.popup.completed_report_scroll =
+                    self.popup.completed_report_scroll.saturating_add(1);
+                Ok(Some(true))
+            }
+            KeyCode::PageUp => {
+                self.popup.completed_report_scroll =
+                    self.popup.completed_report_scroll.saturating_sub(10);
+                Ok(Some(true))
+            }
+            KeyCode::PageDown => {
+                self.popup.completed_report_scroll =
+                    self.popup.completed_report_scroll.saturating_add(10);
+                Ok(Some(true))
+            }
+            KeyCode::Home => {
+                self.popup.completed_report_scroll = 0;
+                Ok(Some(true))
+            }
+            KeyCode::End => {
+                // Jump far enough down; render will clamp to actual content.
+                self.popup.completed_report_scroll = usize::MAX / 2;
+                Ok(Some(true))
+            }
+            _ => Ok(Some(false)),
+        }
+    }
+
+    /// Running operation: Esc cancels (cooperatively), tab jumps and progress scrolling.
+    fn handle_running_op_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        let Some(op) = self.running_op.as_ref() else {
+            return Ok(None);
+        };
+        if key.code == KeyCode::Esc {
+            op.cancel.cancel();
+            return Ok(Some(true));
+        }
+        // While running, ignore most keys except 1/2/3 tab switches, Ctrl+C,
+        // and Up/Down which scroll the progress popup.
+        match key.code {
+            KeyCode::Char('1') => {
+                self.goto_tab(TabId::Config);
+                Ok(Some(true))
+            }
+            KeyCode::Char('2') => {
+                self.goto_tab(TabId::Operate);
+                Ok(Some(true))
+            }
+            KeyCode::Char('3') => {
+                self.goto_tab(TabId::View);
+                Ok(Some(true))
+            }
+            KeyCode::Tab => {
+                self.navbar_focused = false;
+                self.goto_tab(self.active_tab.next());
+                Ok(Some(true))
+            }
+            KeyCode::BackTab => {
+                self.navbar_focused = false;
+                self.goto_tab(self.active_tab.prev());
+                Ok(Some(true))
+            }
+            KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::Operate => {
+                // Enable manual scroll: lock to current position if auto-scrolling.
+                let outcomes_len = self
+                    .running_op
+                    .as_ref()
+                    .map_or(0, |o| o.host_outcomes.len());
+                let current = self
+                    .popup
+                    .progress_scroll
+                    .unwrap_or(outcomes_len.saturating_sub(12));
+                self.popup.progress_scroll = Some(current.saturating_sub(1));
+                Ok(Some(true))
+            }
+            KeyCode::Down | KeyCode::Char('j') if self.active_tab == TabId::Operate => {
+                let outcomes_len = self
+                    .running_op
+                    .as_ref()
+                    .map_or(0, |o| o.host_outcomes.len());
+                let current = self
+                    .popup
+                    .progress_scroll
+                    .unwrap_or(outcomes_len.saturating_sub(12));
+                let max_start = outcomes_len.saturating_sub(12);
+                let next = (current + 1).min(max_start);
+                // If scrolled to the auto-scroll position, clear manual scroll.
+                if next >= max_start {
+                    self.popup.progress_scroll = None;
+                } else {
+                    self.popup.progress_scroll = Some(next);
+                }
+                Ok(Some(true))
+            }
+            KeyCode::PageUp | KeyCode::PageDown | KeyCode::Home | KeyCode::End
+                if self.active_tab == TabId::Operate =>
+            {
+                // Page size matches the 12-row progress window.
+                let outcomes_len = self
+                    .running_op
+                    .as_ref()
+                    .map_or(0, |o| o.host_outcomes.len());
+                let max_start = outcomes_len.saturating_sub(12);
+                let current = self.popup.progress_scroll.unwrap_or(max_start);
+                match key.code {
+                    KeyCode::PageUp => {
+                        self.popup.progress_scroll = Some(current.saturating_sub(12));
+                    }
+                    KeyCode::PageDown => {
+                        let next = (current + 12).min(max_start);
+                        if next >= max_start {
+                            self.popup.progress_scroll = None;
+                        } else {
+                            self.popup.progress_scroll = Some(next);
+                        }
+                    }
+                    KeyCode::Home => self.popup.progress_scroll = Some(0),
+                    // End resumes auto-scroll to the latest output.
+                    KeyCode::End => self.popup.progress_scroll = None,
+                    _ => {}
+                }
+                Ok(Some(true))
+            }
+            _ => Ok(Some(false)),
+        }
+    }
+
+    /// Keys while the tab bar has focus (`None` when it does not).
+    fn handle_navbar_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        if !self.navbar_focused {
+            return Ok(None);
+        }
+        match key.code {
+            KeyCode::Left | KeyCode::Char('h') => {
+                self.active_tab = self.active_tab.prev();
+                Ok(Some(true))
+            }
+            KeyCode::Right | KeyCode::Char('l') => {
+                self.active_tab = self.active_tab.next();
+                Ok(Some(true))
+            }
+            KeyCode::Tab => {
+                self.active_tab = self.active_tab.next();
+                Ok(Some(true))
+            }
+            KeyCode::BackTab => {
+                self.active_tab = self.active_tab.prev();
+                Ok(Some(true))
+            }
+            KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
+                self.navbar_descend();
+                Ok(Some(true))
+            }
+            KeyCode::Esc => {
+                // In NavBar: Config stays, Operate/View cycle to TopField.
+                match self.active_tab {
+                    TabId::Config => {
+                        self.navbar_focused = false;
+                    }
+                    TabId::Operate => {
+                        self.navbar_focused = false;
+                        self.operate.focus = OpField::OpRadio;
+                        self.operate.esc_level = EscLevel::TopField;
+                    }
+                    TabId::View => {
+                        self.navbar_focused = false;
+                        self.view.focus = ViewFocus::OpSelector;
+                        self.view.esc_level = EscLevel::TopField;
+                    }
+                }
+                Ok(Some(true))
+            }
+            KeyCode::Char('1') => {
+                self.goto_tab(TabId::Config);
+                self.navbar_descend();
+                Ok(Some(true))
+            }
+            KeyCode::Char('2') => {
+                self.goto_tab(TabId::Operate);
+                self.navbar_descend();
+                Ok(Some(true))
+            }
+            KeyCode::Char('3') => {
+                self.goto_tab(TabId::View);
+                self.navbar_descend();
+                Ok(Some(true))
+            }
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+                Ok(Some(true))
+            }
+            KeyCode::Char('?') => {
+                self.open_help_popup();
+                Ok(Some(true))
+            }
+            KeyCode::Char('i') => {
+                self.cycle_info_popup();
+                Ok(Some(true))
+            }
+            KeyCode::Char('L') => {
+                self.toggle_log_overlay();
+                Ok(Some(true))
+            }
+            _ => Ok(Some(false)),
+        }
+    }
+
+    /// Keys that work from every tab (`q`, `?`, `i`, `L`, Esc, `1`–`3`, Tab);
+    /// `None` for anything else.
+    fn handle_global_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
+        let handled = match key.code {
             // ── Global keys (always first; work from any tab) ──────────────
             KeyCode::Char('q') => {
                 self.should_quit = true;
@@ -2390,14 +2474,14 @@ impl App {
             KeyCode::Esc => {
                 if self.error.is_some() {
                     self.error = None;
-                    return Ok(true);
+                    return Ok(Some(true));
                 }
                 match self.active_tab {
                     // Config tab: unchanged 2-way toggle (NavBar ↔ content).
                     TabId::Config => {
                         if !self.navbar_focused {
                             self.navbar_focused = true;
-                            return Ok(true);
+                            return Ok(Some(true));
                         }
                     }
                     // Operate tab: 3-way cycle NavBar → OpRadio → content → NavBar.
@@ -2432,7 +2516,7 @@ impl App {
                                 }
                             }
                         }
-                        return Ok(true);
+                        return Ok(Some(true));
                     }
                     // View tab: 3-way cycle NavBar → OpSelector → content → NavBar.
                     TabId::View => {
@@ -2470,7 +2554,7 @@ impl App {
                                 }
                             }
                         }
-                        return Ok(true);
+                        return Ok(Some(true));
                     }
                 }
                 Ok(false)
@@ -2480,7 +2564,7 @@ impl App {
                     self.error = Some(
                         "Config save failed — fix the error before switching tabs.".to_string(),
                     );
-                    return Ok(true);
+                    return Ok(Some(true));
                 }
                 self.goto_tab(TabId::Config);
                 Ok(true)
@@ -2490,7 +2574,7 @@ impl App {
                     self.error = Some(
                         "Config save failed — fix the error before switching tabs.".to_string(),
                     );
-                    return Ok(true);
+                    return Ok(Some(true));
                 }
                 self.goto_tab(TabId::Operate);
                 Ok(true)
@@ -2500,7 +2584,7 @@ impl App {
                     self.error = Some(
                         "Config save failed — fix the error before switching tabs.".to_string(),
                     );
-                    return Ok(true);
+                    return Ok(Some(true));
                 }
                 self.goto_tab(TabId::View);
                 Ok(true)
@@ -2579,6 +2663,14 @@ impl App {
                 Ok(true)
             }
 
+            _ => return Ok(None),
+        };
+        handled.map(Some)
+    }
+
+    /// Config tab keys (after popups, the tab bar and global keys).
+    fn handle_config_key(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
             // ── Config tab (§8.6, §12.2, Phase 4+7) ───────────────────────────
             // E opens external editor (§7.4 4-stage flow).
             KeyCode::Char('E') if self.active_tab == TabId::Config => {
@@ -2646,6 +2738,13 @@ impl App {
                 Ok(handled)
             }
 
+            _ => Ok(false),
+        }
+    }
+
+    /// Operate tab keys (after popups, the tab bar and global keys).
+    fn handle_operate_key(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
             // ── Operate tab (unified linear field walk) ─────────────────────
             KeyCode::Up | KeyCode::Char('k') if self.active_tab == TabId::Operate => {
                 self.operate_move_focus(-1);
@@ -2817,6 +2916,13 @@ impl App {
                 Ok(true)
             }
 
+            _ => Ok(false),
+        }
+    }
+
+    /// View tab keys (after popups, the tab bar and global keys).
+    fn handle_view_key(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
             // ── View tab ───────────────────────────────────────────────
             KeyCode::Left if self.active_tab == TabId::View => {
                 if self.view.focus == ViewFocus::OpSelector {
