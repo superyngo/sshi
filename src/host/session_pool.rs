@@ -503,7 +503,7 @@ impl RusshSessionPool {
     }
 
     /// Upload a local file to a remote host via SFTP. The first upload into
-    /// a directory also sweeps abandoned `.sshi-tmp.<pid>` files there (B65).
+    /// a directory also sweeps abandoned `.sshi-tmp.<pid>[-<n>]` files there (B65).
     pub async fn upload(
         &self,
         host: &crate::config::schema::HostEntry,

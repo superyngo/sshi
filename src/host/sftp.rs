@@ -91,31 +91,41 @@ where
     }
 }
 
-/// Suffix marker of upload temp files: `<dir>/.<name>.sshi-tmp.<pid>`.
+/// Suffix marker of upload temp files: `<dir>/.<name>.sshi-tmp.<pid>-<n>`.
 const TEMP_MARKER: &str = ".sshi-tmp.";
 
-/// Sibling temp name for `dest`: `<dir>/.<name>.sshi-tmp.<pid>`.
+/// Sibling temp name for `dest`: `<dir>/.<name>.sshi-tmp.<pid>-<n>`. The
+/// per-upload counter keeps concurrent uploads of one path apart — e.g. to
+/// several hosts sharing an NFS home, which would otherwise write the same
+/// temp file and fail or corrupt each other (B77).
 fn temp_sibling(dest: &str) -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let (dir, name) = match dest.rfind(['/', '\\']) {
         Some(i) => dest.split_at(i + 1),
         None => ("", dest),
     };
-    format!("{dir}.{name}{TEMP_MARKER}{}", std::process::id())
+    format!("{dir}.{name}{TEMP_MARKER}{}-{n}", std::process::id())
 }
 
 /// A temp file left by another sshi process that died mid-upload (SIGKILL):
-/// our name pattern, a pid other than ours, and not modified for `max_age`
-/// seconds (so a concurrent run's live temp file is never touched).
+/// our name pattern (`<pid>-<n>`, or the older bare `<pid>`), a pid other
+/// than ours, and not modified for `max_age` seconds (so a concurrent run's
+/// live temp file is never touched).
 fn is_stale_temp(file_name: &str, mtime: Option<u32>, now: u64, max_age: u64) -> bool {
-    let Some((base, pid)) = file_name.rsplit_once(TEMP_MARKER) else {
+    let Some((base, tag)) = file_name.rsplit_once(TEMP_MARKER) else {
         return false;
     };
-    let own = std::process::id().to_string();
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let (pid, counter_ok) = match tag.split_once('-') {
+        Some((pid, n)) => (pid, digits(n)),
+        None => (tag, true),
+    };
     base.len() > 1
         && base.starts_with('.')
-        && !pid.is_empty()
-        && pid.bytes().all(|b| b.is_ascii_digit())
-        && pid != own
+        && digits(pid)
+        && counter_ok
+        && pid != std::process::id().to_string()
         && mtime.is_some_and(|m| now.saturating_sub(u64::from(m)) >= max_age)
 }
 
@@ -458,17 +468,22 @@ mod tests {
 
     #[test]
     fn temp_sibling_stays_in_same_dir() {
-        assert_eq!(
-            temp_sibling("/a/b/f.txt"),
-            format!("/a/b/.f.txt.sshi-tmp.{}", std::process::id())
-        );
-        assert_eq!(
-            temp_sibling("f"),
-            format!(".f.sshi-tmp.{}", std::process::id())
-        );
-        assert_eq!(
-            temp_sibling("C:\\x\\f"),
-            format!("C:\\x\\.f.sshi-tmp.{}", std::process::id())
+        let pid = std::process::id();
+        assert!(temp_sibling("/a/b/f.txt").starts_with(&format!("/a/b/.f.txt.sshi-tmp.{pid}-")));
+        assert!(temp_sibling("f").starts_with(&format!(".f.sshi-tmp.{pid}-")));
+        assert!(temp_sibling("C:\\x\\f").starts_with(&format!("C:\\x\\.f.sshi-tmp.{pid}-")));
+    }
+
+    /// B77: two uploads of one path in one process never share a temp file.
+    #[test]
+    fn temp_sibling_is_unique_per_upload() {
+        let a = temp_sibling("/shared/home/f.bin");
+        let b = temp_sibling("/shared/home/f.bin");
+        assert_ne!(a, b);
+        let name = a.rsplit('/').next().unwrap();
+        assert!(
+            !is_stale_temp(name, Some(0), u64::MAX, 3600),
+            "own pid is never stale"
         );
     }
 
@@ -477,8 +492,14 @@ mod tests {
     fn stale_temp_detection() {
         let now = 10_000;
         let old = Some(1_000);
-        let other = format!(".f.txt{TEMP_MARKER}{}", std::process::id() + 1);
+        let other = format!(".f.txt{TEMP_MARKER}{}-7", std::process::id() + 1);
         assert!(is_stale_temp(&other, old, now, 3600));
+        let legacy = format!(".f.txt{TEMP_MARKER}{}", std::process::id() + 1);
+        assert!(
+            is_stale_temp(&legacy, old, now, 3600),
+            "pre-B77 bare-pid names still swept"
+        );
+        assert!(!is_stale_temp(".f.txt.sshi-tmp.123-x", old, now, 3600));
         // Fresh (a concurrent run may still be writing it) or no mtime: kept.
         assert!(!is_stale_temp(&other, Some(9_000), now, 3600));
         assert!(!is_stale_temp(&other, None, now, 3600));
