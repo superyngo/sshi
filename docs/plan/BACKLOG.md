@@ -97,7 +97,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B67 | Tests opened the real per-user state DB (`db::open(None)`); parallel migrations raced on a fresh file (CI failure) | HASH-B67 — `list` / `navbar_focus_tests` use `open_in_memory` + `migrate_for_test`; 40/40 parallel runs pass (were 38/40 failing) |
+| B67 | Tests opened the real per-user state DB (`db::open(None)`); parallel migrations raced on a fresh file (CI failure) | `91583f5` — `list` / `navbar_focus_tests` use `open_in_memory` + `migrate_for_test`; 40/40 parallel runs pass (were 38/40 failing) |
 | B5 | Recursive sync wrote DB rows one auto-commit each | `3d44f34` — `SyncRows` + shared `flush_sync_rows` (one transaction); 500-file run: same rows, time unchanged (~9.9 s) |
 | B33 | "newest" picked the source by host reply order on equal mtimes | `1f22bfe` — tie with different contents is a conflict (`newest_tie_hosts` via `skip_conflict_hosts`); option A chosen by user |
 | B32 | Sync metadata collection silently dropped a host whose query failed | `59fe57a` — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |
