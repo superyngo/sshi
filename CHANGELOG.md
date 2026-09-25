@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: with `conflict_strategy = "newest"`, hosts that share the newest mtime but hold different contents are now reported as a conflict and left untouched, instead of one being picked by reply order and silently overwriting the other (B33).
 - fix: `sync` no longer silently drops a host whose metadata query fails — it is reported as failed (exit 3) with the reason, instead of the run claiming success while that host was never checked or updated; one unreadable file no longer fails a PowerShell/cmd host's whole batch (B32).
 - fix: a TUI password/passphrase popup left unanswered now fails that host after 120 s instead of stalling the operation (and every host waiting to prompt) forever; popups whose operation stopped waiting close on their own (B7).
 - fix(security): the TUI password/passphrase popup keeps no undo or kill-ring copies of the typed text and zeroizes its buffer on Enter, Esc and close. Verified by unit tests; process memory was not inspected on the real binary (B2).

@@ -606,10 +606,10 @@ async fn decide_batch(
             }
             decs
         } else {
-            if let Some(hosts) =
+            if let Some((hosts, reason)) =
                 skip_conflict_hosts(&scoped_found, &ctx.config.settings.conflict_strategy)
             {
-                record_conflict_skip(summary, path, &hosts, verbose);
+                record_conflict_skip(summary, path, &hosts, reason, verbose);
                 continue;
             }
             make_decisions(
@@ -1001,11 +1001,11 @@ async fn sync_path_across(
         }
         decs
     } else {
-        if let Some(hosts) = skip_conflict_hosts(
+        if let Some((hosts, reason)) = skip_conflict_hosts(
             &collect_result.found,
             &ctx.config.settings.conflict_strategy,
         ) {
-            record_conflict_skip(summary, path, &hosts, !quiet);
+            record_conflict_skip(summary, path, &hosts, reason, !quiet);
             return Ok(());
         }
         make_decisions(
@@ -1167,7 +1167,13 @@ mod integration_tests;
 
 /// Report a path left untouched because its copies differ and
 /// `conflict_strategy = skip` (B25: previously counted as in sync).
-fn record_conflict_skip(summary: &mut SyncSummary, path: &str, hosts: &[String], show: bool) {
+fn record_conflict_skip(
+    summary: &mut SyncSummary,
+    path: &str,
+    hosts: &[String],
+    reason: &str,
+    show: bool,
+) {
     let hosts = hosts.join(", ");
     if show {
         printer::print_host_line(
@@ -1176,11 +1182,7 @@ fn record_conflict_skip(summary: &mut SyncSummary, path: &str, hosts: &[String],
             &format!("conflict on '{}' between {}", path, hosts),
         );
     }
-    summary.add_skip_with_reason(
-        path,
-        &hosts,
-        "contents differ between hosts (conflict_strategy = skip)",
-    );
+    summary.add_skip_with_reason(path, &hosts, reason);
 }
 
 /// Re-key pool failures (keyed by `ssh_host`) by config host `name`, so the

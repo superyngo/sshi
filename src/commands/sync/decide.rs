@@ -10,12 +10,35 @@ use super::types::{FileInfo, SkipInfo, SyncDecision};
 pub(crate) fn skip_conflict_hosts(
     file_infos: &[FileInfo],
     strategy: &ConflictStrategy,
-) -> Option<Vec<String>> {
-    if *strategy != ConflictStrategy::Skip {
-        return None;
+) -> Option<(Vec<String>, &'static str)> {
+    match strategy {
+        ConflictStrategy::Skip => {
+            let hashes: std::collections::HashSet<_> = file_infos.iter().map(|f| &f.hash).collect();
+            (hashes.len() > 1).then(|| {
+                (
+                    file_infos.iter().map(|f| f.host.clone()).collect(),
+                    "contents differ between hosts (conflict_strategy = skip)",
+                )
+            })
+        }
+        ConflictStrategy::Newest => newest_tie_hosts(file_infos).map(|mut hosts| {
+            hosts.sort();
+            (
+                hosts,
+                "equal newest mtime but different contents (conflict_strategy = newest)",
+            )
+        }),
     }
-    let hashes: std::collections::HashSet<_> = file_infos.iter().map(|f| &f.hash).collect();
-    (hashes.len() > 1).then(|| file_infos.iter().map(|f| f.host.clone()).collect())
+}
+
+/// Hosts sharing the newest mtime when their contents differ (or a hash is
+/// unknown): "newest" cannot order them, so the file is a conflict (B33).
+fn newest_tie_hosts(file_infos: &[FileInfo]) -> Option<Vec<String>> {
+    let max = file_infos.iter().map(|f| f.mtime).max()?;
+    let tied: Vec<&FileInfo> = file_infos.iter().filter(|f| f.mtime == max).collect();
+    let first = &tied[0].hash;
+    let differ = tied.iter().any(|f| f.hash.is_empty() || f.hash != *first);
+    (tied.len() > 1 && differ).then(|| tied.iter().map(|f| f.host.clone()).collect())
 }
 
 pub(crate) fn make_decisions(
@@ -38,6 +61,9 @@ pub(crate) fn make_decisions(
 
     match strategy {
         ConflictStrategy::Newest => {
+            if newest_tie_hosts(file_infos).is_some() {
+                return Vec::new(); // callers report it via `skip_conflict_hosts`
+            }
             let source = file_infos.iter().max_by_key(|f| f.mtime).unwrap();
 
             let mut targets: Vec<String> = file_infos

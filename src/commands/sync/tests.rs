@@ -304,49 +304,18 @@ fn test_newest_mtime_wins_as_source() {
     assert!(d.reason.contains("3000"));
 }
 
-/// When all mtimes are equal, max_by_key still picks one deterministically
+/// B33: equal newest mtimes with different contents are a conflict, not a
+/// source pick (which used to depend on host reply order).
 #[test]
-fn test_equal_mtimes_picks_a_source() {
+fn test_equal_mtimes_are_a_conflict() {
     let infos = vec![
         make_file_info_mtime("host-a", "hash_x", 5000),
         make_file_info_mtime("host-b", "hash_y", 5000),
         make_file_info_mtime("host-c", "hash_y", 5000),
     ];
-    let missing: Vec<String> = vec![];
-    let decisions = make_decisions(
-        &infos,
-        &ConflictStrategy::Newest,
-        "~/.bashrc",
-        false,
-        &missing,
-    );
-    assert_eq!(decisions.len(), 1);
-    let d = &decisions[0];
-    assert!(
-        d.source_host == "host-a" || d.source_host == "host-b" || d.source_host == "host-c",
-        "one of the tied hosts should be picked as source"
-    );
-    assert_eq!(
-        d.synced_hosts.len(),
-        1,
-        "only the host matching source hash (but not source) is synced"
-    );
-    let non_source = [
-        String::from("host-a"),
-        String::from("host-b"),
-        String::from("host-c"),
-    ]
-    .into_iter()
-    .filter(|h| *h != d.source_host)
-    .collect::<Vec<_>>();
-    assert!(
-        d.target_hosts.len() + d.synced_hosts.len() == 2,
-        "targets + synced should cover the two non-source hosts"
-    );
-    let mut all_non_source = d.target_hosts.clone();
-    all_non_source.extend(d.synced_hosts.iter().cloned());
-    all_non_source.sort();
-    assert_eq!(all_non_source, non_source);
+    assert!(make_decisions(&infos, &ConflictStrategy::Newest, "~/.bashrc", false, &[]).is_empty());
+    let (hosts, _) = super::decide::skip_conflict_hosts(&infos, &ConflictStrategy::Newest).unwrap();
+    assert_eq!(hosts, ["host-a", "host-b", "host-c"]);
 }
 
 /// Fixed source override selects the specified host regardless of mtime
@@ -376,7 +345,7 @@ fn test_fixed_source_overrides_mtime() {
 fn test_missing_hosts_become_targets() {
     let infos = vec![
         make_file_info("host-a", "~/.bashrc", "hash1"),
-        make_file_info("host-b", "~/.bashrc", "hash2"),
+        make_file_info_mtime("host-b", "hash2", 1001),
     ];
     let missing = vec!["host-c".to_string(), "host-d".to_string()];
     let decisions = make_decisions(
@@ -397,7 +366,7 @@ fn test_missing_hosts_become_targets() {
 fn test_missing_hosts_not_pushed_when_flag_off() {
     let infos = vec![
         make_file_info("host-a", "~/.bashrc", "hash1"),
-        make_file_info("host-b", "~/.bashrc", "hash2"),
+        make_file_info_mtime("host-b", "hash2", 1001),
     ];
     let missing = vec!["host-c".to_string()];
     let decisions = make_decisions(
@@ -551,14 +520,58 @@ fn test_skip_conflict_hosts_reports_conflict() {
         make_file_info("host-b", "~/.bashrc", "hash1"),
     ];
     assert_eq!(
-        skip_conflict_hosts(&differ, &ConflictStrategy::Skip),
+        skip_conflict_hosts(&differ, &ConflictStrategy::Skip).map(|c| c.0),
         Some(vec!["host-a".to_string(), "host-b".to_string()])
     );
     assert_eq!(skip_conflict_hosts(&same, &ConflictStrategy::Skip), None);
-    assert_eq!(
-        skip_conflict_hosts(&differ, &ConflictStrategy::Newest),
-        None
-    );
+    let newer = vec![
+        make_file_info_mtime("host-a", "hash1", 1000),
+        make_file_info_mtime("host-b", "hash2", 1001),
+    ];
+    assert_eq!(skip_conflict_hosts(&newer, &ConflictStrategy::Newest), None);
+    assert_eq!(skip_conflict_hosts(&same, &ConflictStrategy::Newest), None);
+}
+
+/// B33: under `newest`, equal newest mtimes with different contents are a
+/// conflict for every arrival order; a strictly newer file still wins.
+#[test]
+fn test_newest_tie_is_conflict_regardless_of_order() {
+    use super::decide::skip_conflict_hosts;
+    let base = [
+        make_file_info_mtime("a", "h1", 1000),
+        make_file_info_mtime("b", "h2", 1000),
+        make_file_info_mtime("c", "h3", 900),
+    ];
+    let orders = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    for o in orders {
+        let infos: Vec<FileInfo> = o.iter().map(|&i| base[i].clone()).collect();
+        let (hosts, reason) = skip_conflict_hosts(&infos, &ConflictStrategy::Newest).unwrap();
+        assert_eq!(hosts, ["a", "b"], "order {o:?}");
+        assert!(reason.contains("equal newest mtime"));
+        assert!(make_decisions(&infos, &ConflictStrategy::Newest, "p", false, &[]).is_empty());
+    }
+    // Unknown hash on a tie is not assumed equal.
+    let nohash = [
+        make_file_info_mtime("a", "", 1000),
+        make_file_info_mtime("b", "", 1000),
+    ];
+    assert!(skip_conflict_hosts(&nohash, &ConflictStrategy::Newest).is_some());
+    // Strictly newer still wins, whatever the order.
+    let win = [
+        make_file_info_mtime("a", "h1", 1000),
+        make_file_info_mtime("b", "h2", 1001),
+    ];
+    for infos in [win.to_vec(), win.iter().rev().cloned().collect()] {
+        let d = make_decisions(&infos, &ConflictStrategy::Newest, "p", false, &[]);
+        assert_eq!(d[0].source_host, "b");
+    }
 }
 
 /// B63: pool failures keyed by `ssh_host` are reported under the config name.

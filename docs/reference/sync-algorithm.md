@@ -168,6 +168,7 @@ When hashes differ across reachable hosts, the configured `ConflictStrategy` dic
 - **Target Hosts**: Every reachable host with a differing hash (`f.hash != source.hash`), plus any missing hosts if `push_missing` is enabled.
 - **Synced Hosts**: Hosts that already match the source hash (`f.hash == source.hash`).
 - **Reason**: Formatted as `"newest mtime: <timestamp>"` (or `"in sync on reachable hosts, pushing to N missing"`).
+- **Ties**: If two or more hosts share the newest `mtime` (whole seconds) and their contents differ, or a tied host's hash is unknown (`NOHASH`), "newest" cannot order them. The file is skipped as a conflict (`skip_conflict_hosts` → `newest_tie_hosts`) with reason `equal newest mtime but different contents (conflict_strategy = newest)`, listing the tied hosts; nothing is overwritten. Resolve with `--source`. Equal mtimes with equal contents stay in sync.
 
 #### 2. `ConflictStrategy::Skip`
 - **Conflict Handling**: If more than one distinct hash exists across reachable hosts (`hashes.len() > 1`), `sshi` emits **no** `SyncDecision` and leaves every copy unmodified. The caller detects this case first via `decide::skip_conflict_hosts` and records the path as **skipped** in the summary with the reason "contents differ between hosts" and the hosts involved — it is never counted as in sync.
