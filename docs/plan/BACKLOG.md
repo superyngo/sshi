@@ -109,7 +109,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B25 | Sync with `conflict_strategy = skip` counted conflicting files as in sync | HASH-B25 — `skip_conflict_hosts` + skip summary entry |
+| B25 | Sync with `conflict_strategy = skip` counted conflicting files as in sync | `2ae1102` — `skip_conflict_hosts` + skip summary entry |
 | B23 | TUI Config tab stripped trailing `s`/`d`/`%` from every text field on edit (`prod` → `pro`) | `fa9ee9d` — `strip_unit` limited to U64 fields |
 | B22 | `checkout --combined-view` applied the 50-snapshot lookback globally, so busy hosts starved others into "offline" | `980b31f` — per-host `ROW_NUMBER()` window |
 | B21 | Stdout previews byte-sliced: `sshi log` and View → Log panicked on non-ASCII output | `d143b31` — shared `util::truncate` |
