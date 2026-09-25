@@ -64,7 +64,6 @@ impl FieldDescriptor {
         }
     }
 
-    #[allow(dead_code)]
     pub fn readonly(key: &str, value: String) -> Self {
         Self {
             key: key.to_string(),
@@ -181,10 +180,9 @@ pub fn check_fields(c: &CheckEntry) -> Vec<FieldDescriptor> {
         FieldDescriptor::vec_field("enabled", fmt_vec(&c.enabled), FieldKind::CheckEnabled),
     ];
     for (i, p) in c.path.iter().enumerate() {
-        f.push(FieldDescriptor::scalar(
+        f.push(FieldDescriptor::readonly(
             &format!("path:{i}"),
-            format!("{} → {}", p.label, p.path),
-            FieldKind::String,
+            format!("{} → {} (read-only)", p.label, p.path),
         ));
     }
     f
@@ -219,18 +217,22 @@ pub fn sync_fields(s: &SyncEntry) -> Vec<FieldDescriptor> {
 
 // ── Apply (key-routed, complete) ────────────────────────────────────────────
 
-pub fn apply_settings(config: &mut AppConfig, key: &str, val: &str) {
+pub fn apply_settings(config: &mut AppConfig, key: &str, val: &str) -> Result<(), String> {
     let s = &mut config.settings;
     match key {
         "default_timeout" => {
-            if let Ok(v) = strip_suffix(val, 's').parse::<u64>() {
-                s.default_timeout = v;
-            }
+            let stripped = strip_suffix(val.trim(), 's').trim();
+            let v = stripped.parse::<u64>().map_err(|_| {
+                format!("Invalid timeout '{val}': expected a positive integer (seconds)")
+            })?;
+            s.default_timeout = v;
         }
         "data_retention_days" => {
-            if let Ok(v) = strip_suffix(val, 'd').parse::<u64>() {
-                s.data_retention_days = v;
-            }
+            let stripped = strip_suffix(val.trim(), 'd').trim();
+            let v = stripped.parse::<u64>().map_err(|_| {
+                format!("Invalid retention days '{val}': expected a positive integer (days)")
+            })?;
+            s.data_retention_days = v;
         }
         "conflict_strategy" => {
             s.conflict_strategy = match val {
@@ -240,14 +242,18 @@ pub fn apply_settings(config: &mut AppConfig, key: &str, val: &str) {
         }
         "propagate_deletes" => s.propagate_deletes = val == "true",
         "max_concurrency" => {
-            if let Ok(v) = val.parse::<usize>() {
-                s.max_concurrency = v;
-            }
+            let trimmed = val.trim();
+            let v = trimmed.parse::<usize>().map_err(|_| {
+                format!("Invalid max concurrency '{val}': expected a positive integer")
+            })?;
+            s.max_concurrency = v;
         }
         "max_per_host_concurrency" => {
-            if let Ok(v) = val.parse::<usize>() {
-                s.max_per_host_concurrency = v;
-            }
+            let trimmed = val.trim();
+            let v = trimmed.parse::<usize>().map_err(|_| {
+                format!("Invalid max per-host concurrency '{val}': expected a positive integer")
+            })?;
+            s.max_per_host_concurrency = v;
         }
         "state_dir" => {
             s.state_dir = if val.is_empty() {
@@ -266,6 +272,7 @@ pub fn apply_settings(config: &mut AppConfig, key: &str, val: &str) {
         "skipped_hosts" => s.skipped_hosts = parse_bracket_list(val),
         _ => {}
     }
+    Ok(())
 }
 
 pub fn apply_host(host: &mut HostEntry, key: &str, val: &str) {
@@ -482,7 +489,37 @@ mod tests {
             }, // duplicate label OK
         ];
         let f = check_fields(&c);
-        assert!(f.iter().any(|d| d.key == "path:0"));
-        assert!(f.iter().any(|d| d.key == "path:1"));
+        assert!(f
+            .iter()
+            .any(|d| d.key == "path:0" && !d.editable && d.display_value.contains("(read-only)")));
+        assert!(f
+            .iter()
+            .any(|d| d.key == "path:1" && !d.editable && d.display_value.contains("(read-only)")));
+    }
+
+    #[test]
+    fn apply_settings_numeric_validation() {
+        let mut config = AppConfig::default();
+        // Bad numbers return Err
+        assert!(apply_settings(&mut config, "default_timeout", "abc").is_err());
+        assert!(apply_settings(&mut config, "default_timeout", "-1").is_err());
+        assert!(apply_settings(&mut config, "data_retention_days", "bad").is_err());
+        assert!(apply_settings(&mut config, "max_concurrency", "xyz").is_err());
+        assert!(apply_settings(&mut config, "max_per_host_concurrency", "foo").is_err());
+
+        // Good numbers return Ok and update settings
+        assert!(apply_settings(&mut config, "default_timeout", "15s").is_ok());
+        assert_eq!(config.settings.default_timeout, 15);
+        assert!(apply_settings(&mut config, "default_timeout", "42").is_ok());
+        assert_eq!(config.settings.default_timeout, 42);
+
+        assert!(apply_settings(&mut config, "data_retention_days", "90d").is_ok());
+        assert_eq!(config.settings.data_retention_days, 90);
+
+        assert!(apply_settings(&mut config, "max_concurrency", "8").is_ok());
+        assert_eq!(config.settings.max_concurrency, 8);
+
+        assert!(apply_settings(&mut config, "max_per_host_concurrency", "3").is_ok());
+        assert_eq!(config.settings.max_per_host_concurrency, 3);
     }
 }

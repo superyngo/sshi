@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: the Config tab silently discarded edits to `[[check.path]]` rows (no editor existed) and unparseable numeric settings; path rows are now shown read-only, and a bad number shows an error and keeps the editor open (B45).
 - fix: the comment template written into a new `config.toml` documented removed `[[check]]`/`[[sync]]` fields (`groups`, `hosts`, `enable_hosts`, `enable_all`); it now lists only fields the schema accepts, and a test fails if the template names an unknown field (B16).
 - test: unit tests for `extract_metric_value` cover every metric for sh and PowerShell sample outputs plus fallbacks (B10).
 - fix: sync's "source does not have path" lines and the `-v` unreachable/sftp-failed lines passed host and status to `print_host_line` in swapped order, printing the status word as the host name with a `·` glyph; they now name the host and show `⊘`/`✗` (B62).

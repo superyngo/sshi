@@ -781,7 +781,7 @@ impl ConfigTabState {
                                 Some("Name is required and cannot be cleared.".to_string());
                         } else if !is_empty {
                             self.editing_field_index = sel;
-                            self.commit_inline_edit("", config);
+                            let _ = self.commit_inline_edit("", config);
                             self.mark_dirty(config);
                         }
                         return true;
@@ -793,7 +793,7 @@ impl ConfigTabState {
                     if let Some(f) = fields.get(self.field_vp.selected) {
                         if let Some(new_val) = cycle_option_value(&f.kind, &f.display_value) {
                             self.editing_field_index = self.field_vp.selected;
-                            self.commit_inline_edit(&new_val, config);
+                            let _ = self.commit_inline_edit(&new_val, config);
                             self.mark_dirty(config);
                             return true;
                         }
@@ -806,7 +806,7 @@ impl ConfigTabState {
                     if let Some(f) = fields.get(field_idx) {
                         if let Some(new_val) = cycle_option_value(&f.kind, &f.display_value) {
                             self.editing_field_index = field_idx;
-                            self.commit_inline_edit(&new_val, config);
+                            let _ = self.commit_inline_edit(&new_val, config);
                             self.mark_dirty(config);
                             return true;
                         }
@@ -915,9 +915,14 @@ impl ConfigTabState {
                 // the edit is rejected and the old value kept.
                 if let Some(err) = self.validate_inline_name(&input.value, config) {
                     self.pending_error = Some(err);
+                    input.mode = InputMode::Active;
                     return true;
                 }
-                self.commit_inline_edit(&input.value, config);
+                if let Err(err) = self.commit_inline_edit(&input.value, config) {
+                    self.pending_error = Some(err);
+                    input.mode = InputMode::Active;
+                    return true;
+                }
                 self.mark_dirty(config);
             }
             return true;
@@ -1007,10 +1012,14 @@ impl ConfigTabState {
         None
     }
 
-    fn commit_inline_edit(&mut self, new_value: &str, config: &mut AppConfig) {
+    fn commit_inline_edit(
+        &mut self,
+        new_value: &str,
+        config: &mut AppConfig,
+    ) -> Result<(), String> {
         let item = match self.items.get(self.sidebar_vp.selected) {
             Some(i) => i.clone(),
-            None => return,
+            None => return Ok(()),
         };
         let idx = self.editing_field_index;
         // Look up the key from the current schema. The index→key indirection
@@ -1021,7 +1030,7 @@ impl ConfigTabState {
                     .get(idx)
                     .map(|f| f.key.clone())
                 {
-                    apply_settings(config, &key, new_value);
+                    apply_settings(config, &key, new_value)?;
                 }
             }
             SidebarItem::Host(i) => {
@@ -1053,6 +1062,7 @@ impl ConfigTabState {
             }
             _ => {}
         }
+        Ok(())
     }
 
     fn handle_entry_form_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
@@ -2311,7 +2321,7 @@ impl ConfigTabState {
                       // wipe the field_vp cursor.
         self.mark_dirty(config);
         self.editing_field_index = field_index;
-        self.commit_inline_edit(display_value, config);
+        let _ = self.commit_inline_edit(display_value, config);
     }
 
     fn handle_direct_vec_editor_key(&mut self, key: KeyEvent, config: &mut AppConfig) -> bool {
@@ -3766,5 +3776,69 @@ mod tests {
         state.sidebar_vp.selected = 0;
         let crumb = state.breadcrumb(&config);
         assert_eq!(crumb, "Config > Syncs > Sync #100 > ?");
+    }
+    #[test]
+    fn path_rows_are_readonly_and_cannot_activate_inline_edit() {
+        let mut config = AppConfig::default();
+        config.check.clear();
+        config.check.push(crate::config::schema::CheckEntry {
+            name: Some("c1".to_string()),
+            id: "c-1".to_string(),
+            enabled: vec![],
+            path: vec![crate::config::schema::CheckPath {
+                label: "app".to_string(),
+                path: "/var/app".to_string(),
+            }],
+        });
+        let mut state = ConfigTabState::new(&config, None);
+        let sid = state
+            .items
+            .iter()
+            .position(|it| matches!(it, SidebarItem::Check(0)))
+            .unwrap();
+        state.sidebar_vp.selected = sid;
+        state.zone = ConfigZone::FieldTable;
+
+        let fields = state.current_descriptors(&config);
+        let path_idx = fields.iter().position(|f| f.key == "path:0").unwrap();
+        assert!(!fields[path_idx].editable);
+        assert!(fields[path_idx].display_value.contains("(read-only)"));
+
+        state.field_vp.selected = path_idx;
+        assert!(!state.activate_inline_edit(&config));
+        assert!(state.editing_field.is_none());
+    }
+
+    #[test]
+    fn numeric_settings_bad_input_shows_error_and_keeps_editor_open() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut config = AppConfig::default();
+        let orig_timeout = config.settings.default_timeout;
+        let mut state = ConfigTabState::new(&config, None);
+        state.sidebar_vp.selected = 0;
+        state.zone = ConfigZone::FieldTable;
+
+        state.field_vp.selected = 0;
+        assert!(state.activate_inline_edit(&config));
+        assert!(state.editing_field.is_some());
+        if let Some(input) = &mut state.editing_field {
+            input.value = "abc".to_string();
+        }
+
+        let enter_key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        let handled = state.handle_key(enter_key, &mut config);
+        assert!(handled);
+
+        assert!(
+            state.editing_field.is_some(),
+            "editor must stay open on bad number"
+        );
+        assert_eq!(
+            state.editing_field.as_ref().unwrap().mode,
+            InputMode::Active
+        );
+        assert!(state.pending_error.is_some());
+        assert_eq!(config.settings.default_timeout, orig_timeout);
     }
 }
