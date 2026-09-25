@@ -35,7 +35,7 @@ These options apply globally before subcommand dispatch:
 | Option | Description |
 |---|---|
 | `-c, --config <PATH>` | Explicit path to the configuration file (default: `config.toml` in the platform config directory — see [config-schema.md](config-schema.md)). |
-| `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. Note: `-v` is top-level only and must precede the subcommand (e.g. `sshi -v check --all`); it is not accepted after subcommands. |
+| `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. Global: accepted before or after the subcommand (e.g. `sshi -v check --all` or `sshi check --all -v`). |
 | `-h, --help` | Print top-level help and exit with code `0`. |
 | `-V, --version` | Print version information and exit with code `0`. |
 
@@ -91,7 +91,7 @@ sshi <command> [TARGETS] --out [PATH]
 
 ## Flag matrix
 
-The following table summarizes all flags across every subcommand. Note that `-v, --verbose` is a top-level option placed before the subcommand (e.g. `sshi -v check --all`); it is not accepted after subcommands. The global `-c, --config` option is accepted both before and after subcommands.
+The following table summarizes all flags across every subcommand. The global `-v, --verbose` and `-c, --config` options are accepted both before and after subcommands.
 
 | Flag | `init` | `check` | `checkout` | `sync` | `cp` | `run` | `exec` | `config` | `list` | `log` |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|

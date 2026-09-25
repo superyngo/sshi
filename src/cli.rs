@@ -14,7 +14,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 )]
 pub struct Cli {
     /// Enable verbose output
-    #[arg(short = 'v', long)]
+    #[arg(short = 'v', long, global = true)]
     pub verbose: bool,
 
     /// Path to config file (default: config.toml in $XDG_CONFIG_HOME/sshi or the platform config dir)
@@ -292,6 +292,19 @@ mod tests {
                 assert_eq!(target.skip, vec!["h1".to_string(), "h2".to_string()]);
             }
             _ => panic!("expected Check"),
+        }
+    }
+
+    /// B13: `-v` is accepted before or after the subcommand.
+    #[test]
+    fn verbose_is_global() {
+        for args in [
+            &["sshi", "check", "-a", "-v"][..],
+            &["sshi", "-v", "check", "-a"][..],
+            &["sshi", "sync", "--verbose", "-a"][..],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            assert!(cli.verbose, "{args:?}");
         }
     }
 

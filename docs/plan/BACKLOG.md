@@ -16,6 +16,7 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
+| B13 | `-v/--verbose` rejected after the subcommand | HASH-B13 — `global = true` on `Cli::verbose`; real binary `check -a -v` accepted |
 | B43 | Config save panicked on inline `settings`, replaced a symlinked config, skipped fsync, dropped unknown per-entry keys | `45fee17` — inline table converted; symlink canonicalized; `sync_all` before persist; unknown keys merged by `id`/`name`; real binary `init` verified |
 | B66 | Recursive `[[sync]]` without `source` never expanded the directory (sync failed or copied nothing) | `3148ae4` — per-host recursive expansion + `union_dir_expansions`; real binary: 500/500 files copied, split-content case converges |
 | B3 | 2026-05-21 | 2026-09-25 | P2 | Config tab breadcrumb indexes `config.host/check/sync[*i]` directly in the FieldTable branch; stale index panics | `src/tui/tabs/config_tab.rs` `breadcrumb` | S | Uses `.get(*i)` with fallback; stale index renders without panic |
@@ -26,7 +27,6 @@ this file existed are recorded in those source documents, not here.
 | B10 | 2026-07-18 | 2026-09-25 | P3 | Checkout metric extractors have no unit tests | `src/commands/checkout/mod.rs` `extract_metric_value` | S | Tests cover each metric for sh and PowerShell samples plus fallbacks |
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
-| B13 | 2026-09-25 | 2026-09-25 | P2 | `-v/--verbose` is not `global`, so `sshi check -a -v` is rejected | `src/cli.rs` `Cli::verbose` | S | `-v` accepted before or after the subcommand |
 | B14 | 2026-09-25 | 2026-09-25 | P2 | `checkout --history` and `--since` are parsed but ignored | `src/commands/checkout/mod.rs` `run` (`_history`, `_since`) | M | Flags change output, or are removed from the CLI and docs |
 | B15 | 2026-09-25 | 2026-09-25 | P3 | `init --update` is a no-op whenever `config.toml` exists (`effective_update = update \|\| config_exists`) | `src/commands/init/mod.rs` `run` | S | Flag has a distinct effect, or is removed |
 | B16 | 2026-09-25 | 2026-09-25 | P3 | New-config comment template documents removed `groups`/`enable_hosts`/`enable_all` fields | `src/config/app.rs` `inject_config_comments` | S | Template mentions only fields present in `CheckEntry`/`SyncEntry` |
@@ -62,6 +62,7 @@ this file existed are recorded in those source documents, not here.
 | B64 | 2026-09-25 | 2026-09-25 | P3 | `cargo audit` after B57: rsa Marvin RUSTSEC-2023-0071 (no upstream fix; via russh/ssh-key), anyhow 1.0.102 unsound `downcast_mut` RUSTSEC-2026-0190 (not called by sshi), lru RUSTSEC-2026-0002/0253 + paste RUSTSEC-2024-0436 (via ratatui 0.29), number_prefix RUSTSEC-2025-0119 (via indicatif 0.17) | `Cargo.toml` ratatui, indicatif | M | ratatui and indicatif upgraded; rsa and anyhow recorded as accepted until upstream fixes |
 | B65 | 2026-09-25 | 2026-09-25 | P3 | Remote SFTP overwrite is remove-then-rename (brief window with no file) because russh-sftp 2.1.1 lacks `posix-rename@openssh.com` | `src/host/sftp.rs` `upload` | S | Upgrade russh-sftp (or send the extension) and replace atomically; SIGKILL-left `.sshi-tmp` files swept |
 | B68 | 2026-09-25 | 2026-09-25 | P3 | TUI tests build `App` via `App::new`, whose `persist::state_file_path` resolves the real state dir and runs the B44 legacy migration (copies the user's `~/.local/state/sshi` into the active state dir) | `src/tui/app.rs` `App::new` (test `minimal_app`); `src/tui/state/persist.rs` | S | Tests pass an explicit temp state path; no test touches the user's state dirs |
+| B69 | 2026-09-25 | 2026-09-25 | P3 | `-v/--verbose` has almost no observable CLI effect: `Context::verbose` is never read outside tests; the sync `tracing::debug!` events only fire in the TUI-only `SyncOutputStyle::Quiet` path; russh logs via the `log` crate, which the tracing subscriber does not bridge. Even `RUST_LOG=trace` shows only WARN lines on a real `sync` run | `src/main.rs` `init_tracing`; `src/commands/mod.rs` `Context::verbose`; `src/commands/sync/mod.rs` | S | Decide what `-v` should show (e.g. bridge `log` via `tracing-log`, emit per-host connect/auth debug); a `-v` run shows extra diagnostics |
 
 ## Pending verification
 
