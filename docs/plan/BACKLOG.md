@@ -99,7 +99,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B2 | TUI auth popup kept the typed credential in plain `String`s (value, undo/kill rings), never zeroized | HASH-B2 — `InputField::new_secret` + `wipe`; `AuthPopup` wipes on submit/cancel/drop; unit-test verified only |
+| B2 | TUI auth popup kept the typed credential in plain `String`s (value, undo/kill rings), never zeroized | `99be018` — `InputField::new_secret` + `wipe`; `AuthPopup` wipes on submit/cancel/drop; unit-test verified only |
 | B56 | No CI since `83aea4d`; headless build warned (unused imports in `commands::checkout`) | `f51974e` — `.github/workflows/ci.yml` (ubuntu+macos × default/headless, `-D warnings`); re-exports gated on `tui` |
 | B28 | Per-host `PassphraseCache`, overlapping CLI prompts, TUI popup replaced by a second request (rejected-unencrypted-key prompts were already fixed by B20) | `f885002` — `SharedPassphraseCache` + `unlock_key` under one lock; `PopupState::push_auth`/`next_auth` queue |
 | B29 | `SecretString` derived `Debug`, printing the secret | `84a2cbf` — redacting `Debug` impl; `test_secret_string_debug` |
