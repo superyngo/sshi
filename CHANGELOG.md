@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- feat!: `check`, `run`, `exec`, `cp` and `sync` exit `3` when some hosts fail and `4` when all fail (previously always `0`); decided in ADR 0004 (B35). Scripts that relied on exit `0` after host failures must now handle `3`/`4`.
 - fix: `sync` with `conflict_strategy = skip` now reports conflicting files as skipped (with the hosts and reason) instead of counting them as in sync (B25).
 - fix: TUI Config tab no longer strips trailing `s`, `d` or `%` from text fields when editing opens (`prod` stayed `pro` on Enter); only unit-suffixed numeric fields (`30s`, `90d`) are stripped (B23).
 - fix: `checkout --combined-view` looks back 50 snapshots per host instead of 50 in total, so a host with fewer snapshots is no longer shown offline (B22).

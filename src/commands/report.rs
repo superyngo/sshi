@@ -141,6 +141,55 @@ pub enum CommandReport {
     List(ListReport),
 }
 
+/// Tally of per-host results for a finished multi-host command; decides the
+/// process exit code (ADR 0004).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HostOutcome {
+    pub succeeded: usize,
+    pub failed: usize,
+}
+
+impl HostOutcome {
+    fn add(&mut self, status: HostStatus) {
+        match status {
+            HostStatus::Online | HostStatus::Partial => self.succeeded += 1,
+            HostStatus::Offline
+            | HostStatus::Unreachable
+            | HostStatus::TimedOut
+            | HostStatus::Error => self.failed += 1,
+            HostStatus::Skipped => {}
+        }
+    }
+
+    /// `0` no host failed, `3` some failed, `4` all failed (ADR 0004).
+    pub fn exit_code(self) -> i32 {
+        match (self.failed, self.succeeded) {
+            (0, _) => 0,
+            (_, 0) => 4,
+            _ => 3,
+        }
+    }
+}
+
+impl CommandReport {
+    /// Per-host success/failure tally; `Log` and `List` have no host outcome.
+    pub fn host_outcome(&self) -> HostOutcome {
+        let statuses: Vec<HostStatus> = match self {
+            CommandReport::Check(r) => r.hosts.iter().map(|h| h.status).collect(),
+            CommandReport::Run(r) => r.hosts.iter().map(|h| h.status).collect(),
+            CommandReport::Exec(r) => r.hosts.iter().map(|h| h.status).collect(),
+            CommandReport::Sync(r) => r.hosts.iter().map(|h| h.status).collect(),
+            CommandReport::Cp(r) => r.hosts.iter().map(|h| h.status).collect(),
+            CommandReport::Log(_) | CommandReport::List(_) => Vec::new(),
+        };
+        let mut outcome = HostOutcome::default();
+        for s in statuses {
+            outcome.add(s);
+        }
+        outcome
+    }
+}
+
 // ── Log ──────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
@@ -296,4 +345,30 @@ pub struct SyncReport {
     pub paths: Vec<String>,
     pub targets: Vec<String>,
     pub hosts: Vec<SyncHostResult>,
+}
+
+#[cfg(test)]
+mod host_outcome_tests {
+    use super::{HostOutcome, HostStatus};
+
+    fn outcome(statuses: &[HostStatus]) -> HostOutcome {
+        let mut o = HostOutcome::default();
+        for s in statuses {
+            o.add(*s);
+        }
+        o
+    }
+
+    #[test]
+    fn exit_code_follows_adr_0004() {
+        use HostStatus::*;
+        assert_eq!(outcome(&[]).exit_code(), 0);
+        assert_eq!(outcome(&[Online, Partial, Skipped]).exit_code(), 0);
+        assert_eq!(outcome(&[Online, Unreachable]).exit_code(), 3);
+        assert_eq!(
+            outcome(&[Unreachable, TimedOut, Error, Offline]).exit_code(),
+            4
+        );
+        assert_eq!(outcome(&[Skipped, Offline]).exit_code(), 4);
+    }
 }

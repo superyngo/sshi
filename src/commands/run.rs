@@ -13,7 +13,8 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
 use super::report::{
-    printer_sink_simple, CommandReport, HostStatus, ProgressSink, RunHostResult, RunReport,
+    printer_sink_simple, CommandReport, HostOutcome, HostStatus, ProgressSink, RunHostResult,
+    RunReport,
 };
 use super::Context;
 
@@ -189,7 +190,7 @@ pub async fn run(
     sudo: bool,
     dry_run: bool,
     output: &crate::cli::OutputArgs,
-) -> Result<()> {
+) -> Result<HostOutcome> {
     if dry_run {
         let display = if sudo {
             shell::sudo_wrap(ShellType::Sh, command)
@@ -201,7 +202,7 @@ pub async fn run(
         for host in &hosts {
             printer::print_host_line(&host.name, "ok", "would execute");
         }
-        return Ok(());
+        return Ok(HostOutcome::default());
     }
 
     let sink = printer_sink_simple();
@@ -231,5 +232,5 @@ pub async fn run(
         ctx.config.settings.default_output_format.as_deref(),
     )?;
 
-    Ok(())
+    Ok(raw.host_outcome())
 }

@@ -15,8 +15,8 @@ use crate::output::summary::Summary;
 use crate::state::retention;
 
 use super::report::{
-    printer_sink_with_partial, CheckHostResult, CheckReport, CommandReport, HostStatus,
-    ProgressSink,
+    printer_sink_with_partial, CheckHostResult, CheckReport, CommandReport, HostOutcome,
+    HostStatus, ProgressSink,
 };
 use super::Context;
 
@@ -315,7 +315,7 @@ pub async fn run(
     names: &[String],
     dry_run: bool,
     output: &crate::cli::OutputArgs,
-) -> Result<()> {
+) -> Result<HostOutcome> {
     if dry_run {
         let hosts = ctx.resolve_hosts()?;
         let configs = build_host_check_configs(ctx, &hosts, names);
@@ -331,7 +331,7 @@ pub async fn run(
                 _ => printer::print_host_line(&host.name, "skip", "no checks apply"),
             }
         }
-        return Ok(());
+        return Ok(HostOutcome::default());
     }
 
     let host_configs_empty_hint = {
@@ -342,7 +342,7 @@ pub async fn run(
     };
     if host_configs_empty_hint {
         println!("No check entries matched the current filter. Add [[check]] to config.toml.");
-        return Ok(());
+        return Ok(HostOutcome::default());
     }
 
     let sink = printer_sink_with_partial();
@@ -379,7 +379,7 @@ pub async fn run(
         ctx.config.settings.default_output_format.as_deref(),
     )?;
 
-    Ok(())
+    Ok(raw.host_outcome())
 }
 
 /// Build per-host check configuration from the `--name`-selected entries.

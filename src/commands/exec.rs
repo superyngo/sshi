@@ -14,7 +14,8 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
 use super::report::{
-    printer_sink_with_skip, CommandReport, ExecHostResult, ExecReport, HostStatus, ProgressSink,
+    printer_sink_with_skip, CommandReport, ExecHostResult, ExecReport, HostOutcome, HostStatus,
+    ProgressSink,
 };
 use super::Context;
 
@@ -210,7 +211,7 @@ pub async fn run(
     keep: bool,
     dry_run: bool,
     output: &crate::cli::OutputArgs,
-) -> Result<()> {
+) -> Result<HostOutcome> {
     let script_path = crate::util::expand_tilde(Path::new(script));
 
     if dry_run {
@@ -239,7 +240,7 @@ pub async fn run(
                 printer::print_host_line(&host.name, "skip", "shell mismatch");
             }
         }
-        return Ok(());
+        return Ok(HostOutcome::default());
     }
 
     let sink = printer_sink_with_skip();
@@ -270,7 +271,7 @@ pub async fn run(
         ctx.config.settings.default_output_format.as_deref(),
     )?;
 
-    Ok(())
+    Ok(raw.host_outcome())
 }
 
 async fn exec_on_host_pooled(

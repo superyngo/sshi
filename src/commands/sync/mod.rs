@@ -12,7 +12,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::sync::Semaphore;
 
-use crate::commands::report::{CommandReport, ProgressSink};
+use crate::commands::report::{CommandReport, HostOutcome, ProgressSink};
 use crate::config::schema::HostEntry;
 use crate::host::pool::SshPool;
 use crate::host::session_pool::{RusshSessionPool, SessionPool};
@@ -37,7 +37,7 @@ pub async fn run(
     names: &[String],
     cli_source: Option<&str>,
     output: &crate::cli::OutputArgs,
-) -> Result<()> {
+) -> Result<HostOutcome> {
     let report = sync_inner(
         ctx,
         dry_run,
@@ -55,7 +55,7 @@ pub async fn run(
         "sync",
         ctx.config.settings.default_output_format.as_deref(),
     )?;
-    Ok(())
+    Ok(report.host_outcome())
 }
 
 pub async fn sync_core(

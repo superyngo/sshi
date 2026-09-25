@@ -16,7 +16,8 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
 use super::report::{
-    printer_sink_with_partial, CommandReport, CpHostResult, CpReport, HostStatus, ProgressSink,
+    printer_sink_with_partial, CommandReport, CpHostResult, CpReport, HostOutcome, HostStatus,
+    ProgressSink,
 };
 use super::Context;
 
@@ -199,7 +200,7 @@ pub async fn run(
     remote: Option<&str>,
     dry_run: bool,
     output: &crate::cli::OutputArgs,
-) -> Result<()> {
+) -> Result<HostOutcome> {
     if dry_run {
         let transfers = plan_transfers(local, remote)?;
         let remote_base = remote.unwrap_or("~");
@@ -215,7 +216,7 @@ pub async fn run(
         for host in &hosts {
             printer::print_host_line(&host.name, "ok", "would copy");
         }
-        return Ok(());
+        return Ok(HostOutcome::default());
     }
 
     let sink = printer_sink_with_partial();
@@ -242,7 +243,7 @@ pub async fn run(
         ctx.config.settings.default_output_format.as_deref(),
     )?;
 
-    Ok(())
+    Ok(raw.host_outcome())
 }
 
 /// Expand the local argument into concrete per-file transfers with their remote

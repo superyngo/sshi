@@ -83,6 +83,17 @@ fn init_tracing(verbose: bool, _silent: bool) {
     fmt().with_env_filter(filter).with_target(false).init();
 }
 
+/// Exit `3` (some hosts failed) or `4` (all failed) per ADR 0004; `Ok` otherwise.
+fn exit_on_host_failures(outcome: sshi::commands::report::HostOutcome) -> Result<()> {
+    let code = outcome.exit_code();
+    if code != 0 {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        std::process::exit(code);
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     enable_ansi_support();
@@ -138,7 +149,9 @@ async fn main() -> Result<()> {
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::check::run(&ctx, &name, dry_run, &output).await
+            commands::check::run(&ctx, &name, dry_run, &output)
+                .await
+                .and_then(exit_on_host_failures)
         }
         Commands::Checkout {
             target,
@@ -159,7 +172,9 @@ async fn main() -> Result<()> {
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::sync::run(&ctx, dry_run, &paths, &name, source.as_deref(), &output).await
+            commands::sync::run(&ctx, dry_run, &paths, &name, source.as_deref(), &output)
+                .await
+                .and_then(exit_on_host_failures)
         }
         Commands::Cp {
             target,
@@ -169,7 +184,9 @@ async fn main() -> Result<()> {
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::cp::run(&ctx, &local, remote.as_deref(), dry_run, &output).await
+            commands::cp::run(&ctx, &local, remote.as_deref(), dry_run, &output)
+                .await
+                .and_then(exit_on_host_failures)
         }
         Commands::Run {
             target,
@@ -179,7 +196,9 @@ async fn main() -> Result<()> {
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::run::run(&ctx, &command, sudo, dry_run, &output).await
+            commands::run::run(&ctx, &command, sudo, dry_run, &output)
+                .await
+                .and_then(exit_on_host_failures)
         }
         Commands::Exec {
             target,
@@ -190,7 +209,9 @@ async fn main() -> Result<()> {
             output,
         } => {
             let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
-            commands::exec::run(&ctx, &script, sudo, keep, dry_run, &output).await
+            commands::exec::run(&ctx, &script, sudo, keep, dry_run, &output)
+                .await
+                .and_then(exit_on_host_failures)
         }
         Commands::Log {
             last,

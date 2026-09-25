@@ -342,13 +342,20 @@ The CLI adheres to the following exit code contract:
 | `0` | Success | Normal successful completion, clean TUI exit, dry-run completion, or `--help`/`--version` display. |
 | `1` | Operational failure | Fatal error during command setup, semantic target validation failure (e.g. missing target selector, mutually exclusive target flags), runtime execution failure (e.g. configuration file unreadable, local script missing), or TUI feature disabled. |
 | `2` | Usage / Non-TTY error | Command-line syntax error (unrecognized flags, missing required positional arguments), or bare `sshi` invoked in a non-TTY or unsuitable terminal environment (`$TERM` empty or `"dumb"`). |
+| `3` | Some hosts failed | A multi-host command (`check`, `run`, `exec`, `cp`, `sync`) finished, at least one host failed and at least one succeeded. See [Partial host failures](#partial-host-failures). |
+| `4` | All hosts failed | A multi-host command finished, at least one host failed and none succeeded. |
 
 ### Partial host failures
 
-In multi-host operations (`check`, `sync`, `cp`, `run`, `exec`), individual host connectivity failures, command errors, or probe timeouts do **not** cause the CLI process to abort or exit with a non-zero code. 
+In multi-host operations (`check`, `sync`, `cp`, `run`, `exec`), an individual host's connectivity failure, command error or probe timeout does **not** abort the run; every other host still completes.
 
 Instead:
 1. Per-host progress and errors stream to `stdout` / `stderr`.
 2. A post-execution summary is printed (e.g. `2 succeeded, 1 failed, 0 skipped`).
 3. Individual failures are recorded in the SQLite database and included in `-o/--out` reports.
-4. The process exits with `0` as long as the overall orchestration completed successfully.
+4. The exit code reflects the per-host results ([ADR 0004](../adr/0004-host-failure-exit-codes.md), `CommandReport::host_outcome`):
+   - `0`: no host failed. Skipped hosts do not count.
+   - `3`: some hosts failed and at least one succeeded.
+   - `4`: every host that ran failed.
+
+   A host fails when its status is `offline` (including a remote command that exited non-zero), `unreachable`, `timedout` or `error`; `online` and `partial` count as success. `--dry-run` for `check`, `run`, `exec` and `cp` contacts no host and exits `0`; `sync --dry-run` connects to compare files, so its host failures count. `init`, `checkout`, `list`, `log` and `config` never use `3` or `4`.

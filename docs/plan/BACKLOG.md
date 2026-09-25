@@ -46,7 +46,6 @@ this file existed are recorded in those source documents, not here.
 | B32 | 2026-09-25 | 2026-09-25 | P2 | Batch metadata collection silently drops a host whose batch exits non-zero | `src/commands/sync/collect.rs` `batch_collect_all_metadata`, `collect_file_metadata` | S | Failed host recorded in the summary; one unreadable file does not abort the host's batch |
 | B33 | 2026-09-25 | 2026-09-25 | P2 | Newest source choice is nondeterministic on equal mtimes | `src/commands/sync/decide.rs` `make_decisions` | S | Deterministic tie-break (mtime, then hash, then host) or tie reported as conflict |
 | B34 | 2026-09-25 | 2026-09-25 | P2 | Recursive sync runs one exec per host per file and uses legacy `distribute`, bypassing per-host limits | `src/commands/sync/mod.rs` `run_recursive_entries`, `sync_path_across`; `src/commands/sync/distribute.rs` `distribute` | M | Recursive entries use the batch collector and `distribute_pooled`; exec count O(hosts), not O(hosts × files) |
-| B35 | 2026-09-25 | 2026-09-25 | P2 | Exit status is 0 when every host fails (documented in `reference/cli.md`); scripts cannot detect fleet failure | `src/main.rs`; command wrappers in `src/commands/` | S | **Decided 2026-09-25: non-zero exit when hosts fail — `3` some hosts failed, `4` all failed.** ADR records the code; implemented and documented |
 | B36 | 2026-09-25 | 2026-09-25 | P2 | Unknown `-n` names exit 0 with a wrong hint; missing explicit `-c` path silently becomes an empty config | `src/commands/mod.rs` `select_named`; `src/config/app.rs` `load` | S | `check -a -n typo` exits 1 naming available entries; `-c missing.toml` errors except for `init` |
 | B37 | 2026-09-25 | 2026-09-25 | P2 | Per-host outcome policy diverges: log-write failure aborts `exec`/`run` but warns in `cp`/`check`; `Partial` = skip/success/failure by command; `cp` log rows omit errors; `check` unreachable writes outside its transaction | `src/commands/{exec,run,cp,check}.rs`; `src/commands/report.rs` `printer_sink_with_partial` | M | One shared log-write helper and one `Partial` mapping used by all four commands |
 | B38 | 2026-09-25 | 2026-09-25 | P2 | Recursive `cp` silently skips symlinks and unreadable entries | `src/commands/cp.rs` `walk_files` | S | Symlinks followed or reported; unreadable entries reported, not dropped |
@@ -74,6 +73,7 @@ this file existed are recorded in those source documents, not here.
 | B60 | 2026-09-25 | 2026-09-25 | P3 | `output::printer` writes ANSI colours with no TTY/`NO_COLOR` gate | `src/output/printer.rs` `print_host_line` | S | Piped output has no escape codes; `NO_COLOR` honoured |
 | B61 | 2026-09-25 | 2026-09-25 | P3 | Enums/catalogs re-spelled: shell strings in Config tab, `ShellMode` label ×3, check catalog ×2, script-extension mapping ×2 | `src/tui/tabs/config_tab.rs` `SHELL_VARIANTS`; `src/tui/tabs/config_schema.rs` `CHECK_ENABLED_OPTIONS`; `src/config/schema.rs` `AppConfig::default`; `src/commands/exec.rs` | S | Each derived from one source |
 | B62 | 2026-09-25 | 2026-09-25 | P3 | Sync "source does not have path" lines call `printer::print_host_line("skip", &source, …)` with host and status swapped, so the host lands in the status slot and renders as a `·` with no name (found while fixing B25) | `src/commands/sync/mod.rs` fixed-source skip branches | S | Source-skip lines render `⊘` and name the source host |
+| B63 | 2026-09-25 | 2026-09-25 | P2 | Sync report marks a failed host `online` when its config `name` differs from `ssh_host`: the pool keys failures by `ssh_host`, `build_sync_report` matches by name. Wrong `--out` status and, since ADR 0004, a wrong exit code (reproduced: host `dead` → `127.0.0.1:1`, `sync -a` exits 0 instead of 3) | `src/commands/sync/mod.rs` failed-host collection; `src/commands/sync/report.rs` `build_sync_report` | S | Unreachable host with name ≠ `ssh_host` reported `unreachable`; `sync -a` exits 3 |
 
 ## Pending verification
 
@@ -109,6 +109,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B35 | Exit status was 0 when every host failed | HASH-B35 — ADR 0004: `3` some hosts failed, `4` all failed |
 | B25 | Sync with `conflict_strategy = skip` counted conflicting files as in sync | `2ae1102` — `skip_conflict_hosts` + skip summary entry |
 | B23 | TUI Config tab stripped trailing `s`/`d`/`%` from every text field on edit (`prod` → `pro`) | `fa9ee9d` — `strip_unit` limited to U64 fields |
 | B22 | `checkout --combined-view` applied the 50-snapshot lookback globally, so busy hosts starved others into "offline" | `980b31f` — per-host `ROW_NUMBER()` window |
