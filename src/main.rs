@@ -134,7 +134,8 @@ async fn main() -> Result<()> {
             timeout,
             ..
         } => {
-            let ctx = commands::Context::new_without_targets(cli.verbose, cfg, timeout).await?;
+            let ctx =
+                commands::Context::new_without_targets(cli.verbose, cfg, timeout, true).await?;
             commands::init::run(&ctx, update, dry_run, skip).await
         }
         Commands::Config { .. } => commands::config::run(cfg).await,
@@ -220,7 +221,7 @@ async fn main() -> Result<()> {
             output,
             ..
         } => {
-            let ctx = commands::Context::new_without_targets(cli.verbose, cfg, None).await?;
+            let ctx = commands::Context::new_without_targets(cli.verbose, cfg, None, false).await?;
             commands::log::run(&ctx, last, since, host, action, errors, &output).await
         }
     }

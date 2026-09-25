@@ -38,6 +38,7 @@ pub async fn run(
     cli_source: Option<&str>,
     output: &crate::cli::OutputArgs,
 ) -> Result<HostOutcome> {
+    ctx.ensure_sync_names(names)?;
     let report = sync_inner(
         ctx,
         dry_run,

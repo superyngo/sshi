@@ -316,6 +316,7 @@ pub async fn run(
     dry_run: bool,
     output: &crate::cli::OutputArgs,
 ) -> Result<HostOutcome> {
+    ctx.ensure_check_names(names)?;
     if dry_run {
         let hosts = ctx.resolve_hosts()?;
         let configs = build_host_check_configs(ctx, &hosts, names);

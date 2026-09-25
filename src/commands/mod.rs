@@ -56,7 +56,7 @@ impl Context {
         target: &TargetArgs,
         config_path: Option<&Path>,
     ) -> Result<Self> {
-        let config = crate::config::app::load(config_path)?.unwrap_or_default();
+        let config = load_config(config_path, false)?;
         let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
         let db = DbHandle::new(conn);
         let timeout = target.timeout.unwrap_or(config.settings.default_timeout);
@@ -109,12 +109,14 @@ impl Context {
     }
 
     /// Create a context without target args (for commands like init, config, log).
+    /// `allow_missing_config`: a missing explicit `-c` file is OK (`init` creates it).
     pub async fn new_without_targets(
         verbose: bool,
         config_path: Option<&Path>,
         timeout_override: Option<u64>,
+        allow_missing_config: bool,
     ) -> Result<Self> {
-        let config = crate::config::app::load(config_path)?.unwrap_or_default();
+        let config = load_config(config_path, allow_missing_config)?;
         let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
         let db = DbHandle::new(conn);
         let timeout = timeout_override.unwrap_or(config.settings.default_timeout);
@@ -237,6 +239,66 @@ impl Context {
             None,
             "sync",
         )
+    }
+
+    /// B36: error if an explicit `-n` name matches no `[[check]]` entry.
+    pub fn ensure_check_names(&self, names: &[String]) -> Result<()> {
+        let avail: Vec<&str> = self
+            .config
+            .check
+            .iter()
+            .filter_map(|e| e.name.as_deref())
+            .collect();
+        ensure_names_exist("check", &avail, names)
+    }
+
+    /// B36: error if an explicit `-n` name matches no `[[sync]]` entry.
+    pub fn ensure_sync_names(&self, names: &[String]) -> Result<()> {
+        let avail: Vec<&str> = self
+            .config
+            .sync
+            .iter()
+            .filter_map(|e| e.name.as_deref())
+            .collect();
+        ensure_names_exist("sync", &avail, names)
+    }
+}
+
+/// Error naming every requested name absent from `available` (B36).
+fn ensure_names_exist(kind: &str, available: &[&str], names: &[String]) -> Result<()> {
+    let unknown: Vec<&str> = names
+        .iter()
+        .map(String::as_str)
+        .filter(|n| !available.contains(n))
+        .collect();
+    if unknown.is_empty() {
+        return Ok(());
+    }
+    let avail = if available.is_empty() {
+        "none".to_string()
+    } else {
+        available.join(", ")
+    };
+    anyhow::bail!(
+        "no [[{kind}]] entry named '{}' (available: {avail})",
+        unknown.join("', '")
+    )
+}
+
+/// Load the config; with an explicit `-c` path that does not exist, error
+/// unless `allow_missing` (B36). The default path may be missing (empty config).
+fn load_config(config_path: Option<&Path>, allow_missing: bool) -> Result<AppConfig> {
+    match crate::config::app::load(config_path)? {
+        Some(c) => Ok(c),
+        None if config_path.is_some() && !allow_missing => {
+            let p = crate::config::app::resolve_path(config_path)?;
+            anyhow::bail!(
+                "Config file not found at {}\nRun 'sshi -c {} init' to create it.",
+                p.display(),
+                p.display()
+            )
+        }
+        None => Ok(AppConfig::default()),
     }
 }
 
@@ -371,6 +433,34 @@ mod tests {
             shell: ShellType::Sh,
             proxy_jump: None,
         }
+    }
+
+    /// B36: an explicit `-n` name that matches no entry is an error listing
+    /// the available names; known names and no names are fine.
+    #[test]
+    fn ensure_names_exist_rejects_unknown() {
+        let avail = ["default", "extra"];
+        let err = ensure_names_exist("check", &avail, &["typo".to_string()]).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("'typo'") && msg.contains("default, extra"),
+            "{msg}"
+        );
+        assert!(ensure_names_exist("check", &avail, &["extra".to_string()]).is_ok());
+        assert!(ensure_names_exist("check", &avail, &[]).is_ok());
+        let none = ensure_names_exist("sync", &[], &["x".to_string()]).unwrap_err();
+        assert!(none.to_string().contains("available: none"), "{none}");
+    }
+
+    /// B36: a missing explicit `-c` path is an error unless the caller allows
+    /// it (`init`); the default path (no `-c`) is not affected by this check.
+    #[test]
+    fn load_config_missing_explicit_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.toml");
+        let err = load_config(Some(&missing), false).unwrap_err();
+        assert!(err.to_string().contains("Config file not found"), "{err}");
+        assert!(load_config(Some(&missing), true).unwrap().host.is_empty());
     }
 
     #[test]
