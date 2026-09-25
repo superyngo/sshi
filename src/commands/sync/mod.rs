@@ -22,11 +22,11 @@ use crate::output::summary::SyncSummary;
 use super::Context;
 
 use collect::{
-    batch_collect_all_metadata, collect_file_metadata, collect_sync_paths, expand_directory_paths,
-    requested_sync_paths, scope_collect_result, union_dir_expansions,
+    batch_collect_all_metadata, collect_sync_paths, expand_directory_paths, requested_sync_paths,
+    scope_collect_result, union_dir_expansions,
 };
 use decide::{make_decisions, make_decisions_fixed_source, skip_conflict_hosts};
-use distribute::{distribute, distribute_pooled};
+use distribute::distribute_pooled;
 use report::build_sync_report;
 use types::{DirExpandResult, HostPathMap, PathSourceMap, RecursiveEntry, SyncDecision};
 
@@ -295,11 +295,12 @@ async fn sync_inner(
     )
     .await?;
 
-    // ── Phase 4: recursive entries (per-file flow) ─────────────────────────
+    // ── Phase 4: recursive entries (batch flow) ───────────────────────────
     run_recursive_entries(
         ctx,
         &reachable_hosts,
         &recursive_entries,
+        &pool.limiter,
         &sessions,
         dry_run,
         push_missing,
@@ -820,6 +821,7 @@ async fn run_recursive_entries(
     ctx: &Context,
     reachable_hosts: &[Arc<HostEntry>],
     recursive_entries: &[RecursiveEntry<'_>],
+    limiter: &crate::host::concurrency::ConcurrencyLimiter,
     sessions: &Arc<dyn SessionPool>,
     dry_run: bool,
     push_missing: bool,
@@ -921,26 +923,29 @@ async fn run_recursive_entries(
             paths
         };
 
-        for path in &expanded_paths {
-            let res = sync_path_across(
-                ctx,
-                &scoped_hosts,
-                path,
-                label,
-                dry_run,
-                push_missing,
-                *effective_source,
-                Arc::clone(sessions),
-                summary,
-                !verbose,
-                &mut rows,
-            )
-            .await;
-            if let Err(e) = res {
-                // Keep the rows of transfers that already happened.
-                flush_sync_rows(ctx, rows).await?;
-                return Err(e);
-            }
+        if expanded_paths.is_empty() {
+            continue;
+        }
+
+        let res = sync_path_across(
+            ctx,
+            &scoped_hosts,
+            &expanded_paths,
+            limiter,
+            label,
+            dry_run,
+            push_missing,
+            *effective_source,
+            Arc::clone(sessions),
+            summary,
+            !verbose,
+            &mut rows,
+        )
+        .await;
+        if let Err(e) = res {
+            // Keep the rows of transfers that already happened.
+            flush_sync_rows(ctx, rows).await?;
+            return Err(e);
         }
     }
 
@@ -1009,7 +1014,8 @@ fn record_collect_failures(failed: &[(String, String)], summary: &mut SyncSummar
 async fn sync_path_across(
     ctx: &Context,
     hosts: &[Arc<HostEntry>],
-    path: &str,
+    paths: &[String],
+    limiter: &crate::host::concurrency::ConcurrencyLimiter,
     group_name: &str,
     dry_run: bool,
     push_missing: bool,
@@ -1019,186 +1025,193 @@ async fn sync_path_across(
     quiet: bool,
     rows: &mut SyncRows,
 ) -> Result<()> {
-    let collect_result = collect_file_metadata(
-        hosts,
-        path,
-        ctx.timeout,
-        ctx.concurrency(),
-        Arc::clone(&sessions),
-    )
-    .await?;
-    record_collect_failures(&collect_result.failed, summary, !quiet);
-
-    if collect_result.found.is_empty() {
-        if !collect_result.missing.is_empty() {
-            if !quiet {
-                println!("  {}: file not found on any reachable host", path);
-            } else {
-                tracing::debug!(path, "file not found on any reachable host");
-            }
-        } else if !quiet {
-            println!("  {}: no data collected", path);
-        } else {
-            tracing::debug!(path, "no data collected");
-        }
+    if paths.is_empty() {
         return Ok(());
     }
 
-    let decisions = if let Some(src) = source_override {
-        let (decs, skip_info) = make_decisions_fixed_source(
-            &collect_result.found,
-            path,
-            push_missing,
-            &collect_result.missing,
-            src,
-        )?;
-        if let Some((source, skipped_path)) = skip_info {
-            if !quiet {
-                printer::print_host_line(
-                    &source,
-                    "skip",
-                    &format!("does not have '{}'", skipped_path),
-                );
+    let batch_result =
+        batch_collect_all_metadata(hosts, paths, ctx.timeout, ctx.concurrency(), &sessions).await?;
+    record_collect_failures(&batch_result.failed, summary, !quiet);
+
+    for path in paths {
+        let Some(collect_result) = batch_result.per_file.get(path) else {
+            continue;
+        };
+
+        if collect_result.found.is_empty() {
+            if !collect_result.missing.is_empty() {
+                if !quiet {
+                    println!("  {}: file not found on any reachable host", path);
+                } else {
+                    tracing::debug!(path, "file not found on any reachable host");
+                }
+            } else if !quiet {
+                println!("  {}: no data collected", path);
             } else {
-                tracing::debug!(host = %source, path = %skipped_path, "source does not have path, skipping");
+                tracing::debug!(path, "no data collected");
             }
-            summary.add_skip_with_reason(
-                &skipped_path,
-                &source,
-                &format!("source '{}' does not have '{}'", source, skipped_path),
-            );
-            return Ok(());
-        }
-        decs
-    } else {
-        if let Some((hosts, reason)) = skip_conflict_hosts(
-            &collect_result.found,
-            &ctx.config.settings.conflict_strategy,
-        ) {
-            record_conflict_skip(summary, path, &hosts, reason, !quiet);
-            return Ok(());
-        }
-        make_decisions(
-            &collect_result.found,
-            &ctx.config.settings.conflict_strategy,
-            path,
-            push_missing,
-            &collect_result.missing,
-        )
-    };
-
-    if decisions.is_empty() {
-        let hosts_list: Vec<&str> = collect_result
-            .found
-            .iter()
-            .map(|f| f.host.as_str())
-            .collect();
-        if !quiet {
-            println!("  {} (all in sync)", path);
-            printer::print_host_line("passed", "ok", &hosts_list.join(", "));
-        } else {
-            tracing::debug!(path, hosts = %hosts_list.join(", "), "all in sync");
-        }
-        summary.file_in_sync(&hosts_list);
-        return Ok(());
-    }
-
-    for decision in &decisions {
-        let mut all_targets: Vec<&str> = decision.synced_hosts.iter().map(|s| s.as_str()).collect();
-        all_targets.extend(decision.target_hosts.iter().map(|s| s.as_str()));
-        if !quiet {
-            println!(
-                "  {} → source: {} → targets: [{}] ({})",
-                decision.path,
-                decision.source_host,
-                all_targets.join(", "),
-                decision.reason
-            );
-        } else {
-            tracing::debug!(
-                path = %decision.path, source = %decision.source_host,
-                targets = %all_targets.join(", "), reason = %decision.reason
-            );
-        }
-
-        if !decision.synced_hosts.is_empty() {
-            if !quiet {
-                printer::print_host_line("passed", "ok", &decision.synced_hosts.join(", "));
-            } else {
-                tracing::debug!(hosts = %decision.synced_hosts.join(", "), "already in sync");
-            }
-        }
-
-        if dry_run {
             continue;
         }
 
-        match distribute(
-            hosts,
-            decision,
-            ctx.timeout,
-            ctx.concurrency(),
-            Arc::clone(&sessions),
-        )
-        .await
-        {
-            Ok((succeeded, failed_uploads)) => {
-                if !succeeded.is_empty() {
-                    if !quiet {
-                        printer::print_host_line("synced", "ok", &succeeded.join(", "));
-                    } else {
-                        tracing::debug!(hosts = %succeeded.join(", "), "synced");
-                    }
-
-                    let now = chrono::Utc::now().timestamp();
-                    for target in &succeeded {
-                        rows.sync_state.push((
-                            group_name.to_string(),
-                            target.clone(),
-                            decision.path.clone(),
-                            now,
-                        ));
-                    }
-                    rows.op_log.push((
-                        now,
-                        decision.source_host.clone(),
-                        format!("sync {}", decision.path),
-                    ));
+        let decisions = if let Some(src) = source_override {
+            let (decs, skip_info) = make_decisions_fixed_source(
+                &collect_result.found,
+                path,
+                push_missing,
+                &collect_result.missing,
+                src,
+            )?;
+            if let Some((source, skipped_path)) = skip_info {
+                if !quiet {
+                    printer::print_host_line(
+                        &source,
+                        "skip",
+                        &format!("does not have '{}'", skipped_path),
+                    );
+                } else {
+                    tracing::debug!(
+                        host = %source,
+                        path = %skipped_path,
+                        "source does not have path, skipping"
+                    );
                 }
+                summary.add_skip_with_reason(
+                    &skipped_path,
+                    &source,
+                    &format!("source '{}' does not have '{}'", source, skipped_path),
+                );
+                continue;
+            }
+            decs
+        } else {
+            if let Some((conflict_hosts, reason)) = skip_conflict_hosts(
+                &collect_result.found,
+                &ctx.config.settings.conflict_strategy,
+            ) {
+                record_conflict_skip(summary, path, &conflict_hosts, reason, !quiet);
+                continue;
+            }
+            make_decisions(
+                &collect_result.found,
+                &ctx.config.settings.conflict_strategy,
+                path,
+                push_missing,
+                &collect_result.missing,
+            )
+        };
 
-                if !failed_uploads.is_empty() {
-                    let failed_names: Vec<&str> =
-                        failed_uploads.iter().map(|(n, _)| n.as_str()).collect();
-                    if !quiet {
-                        printer::print_host_line("failed", "error", &failed_names.join(", "));
-                    } else {
-                        tracing::warn!(hosts = %failed_names.join(", "), "upload failed");
-                    }
-                }
+        if decisions.is_empty() {
+            let hosts_list: Vec<&str> = collect_result
+                .found
+                .iter()
+                .map(|f| f.host.as_str())
+                .collect();
+            if !quiet {
+                println!("  {} (all in sync)", path);
+                printer::print_host_line("passed", "ok", &hosts_list.join(", "));
+            } else {
+                tracing::debug!(path, hosts = %hosts_list.join(", "), "all in sync");
+            }
+            summary.file_in_sync(&hosts_list);
+            continue;
+        }
 
-                summary.complete_file(
-                    &decision.path,
-                    &decision.synced_hosts,
-                    &succeeded,
-                    &failed_uploads,
+        for decision in &decisions {
+            let mut all_targets: Vec<&str> =
+                decision.synced_hosts.iter().map(|s| s.as_str()).collect();
+            all_targets.extend(decision.target_hosts.iter().map(|s| s.as_str()));
+            if !quiet {
+                println!(
+                    "  {} → source: {} → targets: [{}] ({})",
+                    decision.path,
+                    decision.source_host,
+                    all_targets.join(", "),
+                    decision.reason
+                );
+            } else {
+                tracing::debug!(
+                    path = %decision.path,
+                    source = %decision.source_host,
+                    targets = %all_targets.join(", "),
+                    reason = %decision.reason
                 );
             }
-            Err(e) => {
+
+            if !decision.synced_hosts.is_empty() {
                 if !quiet {
-                    printer::print_host_line("failed", "error", &decision.source_host);
+                    printer::print_host_line("passed", "ok", &decision.synced_hosts.join(", "));
                 } else {
-                    tracing::warn!(host = %decision.source_host, error = %e, "download from source failed");
+                    tracing::debug!(hosts = %decision.synced_hosts.join(", "), "already in sync");
                 }
-                let all_failed: Vec<(String, String)> =
-                    std::iter::once((decision.source_host.clone(), e.to_string()))
-                        .chain(
-                            decision
-                                .target_hosts
-                                .iter()
-                                .map(|t| (t.clone(), format!("source download failed: {}", e))),
-                        )
-                        .collect();
-                summary.complete_file(&decision.path, &decision.synced_hosts, &[], &all_failed);
+            }
+
+            if dry_run {
+                continue;
+            }
+
+            match distribute_pooled(hosts, decision, ctx.timeout, limiter, &sessions).await {
+                Ok((succeeded, failed_uploads)) => {
+                    if !succeeded.is_empty() {
+                        if !quiet {
+                            printer::print_host_line("synced", "ok", &succeeded.join(", "));
+                        } else {
+                            tracing::debug!(hosts = %succeeded.join(", "), "synced");
+                        }
+
+                        let now = chrono::Utc::now().timestamp();
+                        for target in &succeeded {
+                            rows.sync_state.push((
+                                group_name.to_string(),
+                                target.clone(),
+                                decision.path.clone(),
+                                now,
+                            ));
+                        }
+                        rows.op_log.push((
+                            now,
+                            decision.source_host.clone(),
+                            format!("sync {}", decision.path),
+                        ));
+                    }
+
+                    if !failed_uploads.is_empty() {
+                        let failed_names: Vec<&str> =
+                            failed_uploads.iter().map(|(n, _)| n.as_str()).collect();
+                        if !quiet {
+                            printer::print_host_line("failed", "error", &failed_names.join(", "));
+                        } else {
+                            tracing::warn!(hosts = %failed_names.join(", "), "upload failed");
+                        }
+                    }
+
+                    summary.complete_file(
+                        &decision.path,
+                        &decision.synced_hosts,
+                        &succeeded,
+                        &failed_uploads,
+                    );
+                }
+                Err(e) => {
+                    if !quiet {
+                        printer::print_host_line("failed", "error", &decision.source_host);
+                    } else {
+                        tracing::warn!(
+                            host = %decision.source_host,
+                            error = %e,
+                            "download from source failed"
+                        );
+                    }
+                    let all_failed: Vec<(String, String)> =
+                        std::iter::once((decision.source_host.clone(), e.to_string()))
+                            .chain(
+                                decision
+                                    .target_hosts
+                                    .iter()
+                                    .map(|t| (t.clone(), format!("source download failed: {}", e))),
+                            )
+                            .collect();
+                    summary.complete_file(&decision.path, &decision.synced_hosts, &[], &all_failed);
+                }
             }
         }
     }
@@ -1209,7 +1222,6 @@ async fn sync_path_across(
 
     Ok(())
 }
-
 #[cfg(test)]
 mod tests;
 

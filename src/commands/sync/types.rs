@@ -20,6 +20,7 @@ pub(crate) struct CollectResult {
     pub(crate) missing: Vec<String>,
     /// Hosts whose metadata query failed: `(host, reason)`. Their state is
     /// unknown, so they are neither source nor target.
+    #[allow(dead_code)]
     pub(crate) failed: Vec<(String, String)>,
 }
 
@@ -61,5 +62,6 @@ pub(crate) struct SingleFileResult {
 pub(crate) struct BatchCollectResult {
     pub(crate) per_file: HashMap<String, CollectResult>,
     /// Hosts whose batch query failed: `(host, reason)`.
+    #[allow(dead_code)]
     pub(crate) failed: Vec<(String, String)>,
 }

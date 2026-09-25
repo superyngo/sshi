@@ -98,123 +98,61 @@ pub(crate) fn scope_collect_result(
     }
 }
 
-pub(crate) async fn collect_file_metadata(
-    hosts: &[Arc<HostEntry>],
-    path: &str,
-    timeout: u64,
-    concurrency: usize,
-    sessions: Arc<dyn SessionPool>,
-) -> Result<CollectResult> {
-    let semaphore = Arc::new(Semaphore::new(concurrency));
-    let mut set = tokio::task::JoinSet::new();
-
-    for host in hosts {
-        let sem = semaphore.clone();
-        let host = Arc::clone(host);
-        let file_path = path.to_string();
-        let sessions = Arc::clone(&sessions);
-        set.spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
-
-            let cmd = match host.shell {
-                ShellType::PowerShell => {
-                    let ps_path = if let Some(stripped) = file_path.strip_prefix("~/") {
-                        let rest = stripped.replace('/', "\\").replace('\'', "''");
-                        format!("\"$HOME\" + '\\{}'", rest)
-                    } else {
-                        format!("'{}'", file_path.replace('\'', "''"))
-                    };
-                    format!(
-                        "$f={p}; \
-                         $i=Get-Item $f -ErrorAction SilentlyContinue; \
-                         if ($i) {{ \
-                           [int64](($i.LastWriteTimeUtc-[datetime]\"1970-01-01\").TotalSeconds), $i.Length -join \" \"; \
-                           $h=Get-FileHash $f -Algorithm SHA256 -ErrorAction SilentlyContinue; if ($h) {{ $h.Hash.ToLower() }} else {{ \"NOHASH\" }} \
-                         }}",
-                        p = ps_path
-                    )
-                }
-                ShellType::Sh => {
-                    let escaped = if let Some(stripped) = file_path.strip_prefix("~/") {
-                        format!("$HOME/'{}'", stripped.replace('\'', "'\\''"))
-                    } else {
-                        format!("'{}'", file_path.replace('\'', "'\\''"))
-                    };
-                    format!(
-                        "stat -c '%Y %s' {p} 2>/dev/null || stat -f '%m %z' {p} 2>/dev/null; \
-                         (sha256sum {p} 2>/dev/null || shasum -a 256 {p} 2>/dev/null) || true",
-                        p = escaped
-                    )
-                }
-                ShellType::Cmd => {
-                    let escaped = file_path.replace('\'', "''");
-                    format!(
-                        "powershell -NoProfile -Command \"\
-                         $i=Get-Item '{p}' -ErrorAction SilentlyContinue; \
-                         if ($i) {{ \
-                           [int64](($i.LastWriteTimeUtc-[datetime]'1970-01-01').TotalSeconds), $i.Length -join ' '; \
-                           $h=Get-FileHash '{p}' -Algorithm SHA256 -ErrorAction SilentlyContinue; if ($h) {{ $h.Hash.ToLower() }} else {{ 'NOHASH' }} \
-                         }}\"",
-                        p = escaped
-                    )
-                }
-            };
-
-            match sessions.exec(&host.ssh_host, &cmd, timeout).await {
-                Ok(output) if !output.success => {
-                    (host.name.clone(), None, false, Some(exec_failure(&output)))
-                }
-                Ok(output) => {
-                    let lines: Vec<&str> = output.stdout.lines().collect();
-                    let stat_parts: Vec<&str> = lines
-                        .first()
-                        .map(|l| l.split_whitespace().collect())
-                        .unwrap_or_default();
-                    let mtime: Option<i64> = stat_parts.first().and_then(|s| s.parse().ok());
-
-                    if let Some(mtime) = mtime {
-                        let hash = lines
-                            .get(1)
-                            .and_then(|l| l.split_whitespace().next())
-                            .unwrap_or("")
-                            .to_string();
-                        (host.name.clone(), Some(FileInfo {
-                            host: host.name.clone(),
-                            mtime,
-                            hash,
-                        }), false, None)
-                    } else {
-                        (host.name.clone(), None, true, None)
-                    }
-                }
-                Err(e) => {
-                    (host.name.clone(), None, false, Some(format!("{e:#}")))
-                }
-            }
-        });
+/// Largest metadata command (bytes) sent in one exec, per remote shell. A
+/// recursive entry can list thousands of files, but the command reaches the
+/// remote as a single shell argument: Linux caps one argv string at 128 KiB,
+/// Windows caps a `CreateProcess` line at 32 767 and `cmd.exe` at 8 191 chars.
+pub(crate) fn batch_cmd_budget(shell: ShellType) -> usize {
+    match shell {
+        ShellType::Sh => 32 * 1024,
+        ShellType::PowerShell => 16 * 1024,
+        ShellType::Cmd => 6 * 1024,
     }
-
-    let mut found = Vec::new();
-    let mut missing = Vec::new();
-    let mut failed = Vec::new();
-    while let Some(joined) = set.join_next().await {
-        let (host_name, info, is_missing, err) = joined.context("task panic")?;
-        if let Some(e) = err {
-            failed.push((host_name, e));
-        } else if let Some(fi) = info {
-            found.push(fi);
-        } else if is_missing {
-            missing.push(host_name);
-        }
-    }
-
-    Ok(CollectResult {
-        found,
-        missing,
-        failed,
-    })
 }
 
+/// Split `paths` into consecutive chunks whose metadata command fits `budget`
+/// bytes (a single path that alone exceeds it still gets its own chunk).
+/// Exponential then binary search keeps this O(n log n) command builds' worth.
+pub(crate) fn chunk_paths(paths: &[String], shell: ShellType, budget: usize) -> Vec<&[String]> {
+    let fits = |chunk: &[String]| build_batch_metadata_cmd(chunk, shell).len() <= budget;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while start < paths.len() {
+        // `good` always fits (or is the forced single path); `bad` never does.
+        let mut good = start + 1;
+        let mut bad = None;
+        let mut step = 1;
+        while bad.is_none() && good < paths.len() {
+            let probe = (good + step).min(paths.len());
+            if fits(&paths[start..probe]) {
+                good = probe;
+                step *= 2;
+            } else {
+                bad = Some(probe);
+            }
+        }
+        if let Some(mut bad) = bad {
+            while good + 1 < bad {
+                let mid = good + (bad - good) / 2;
+                if fits(&paths[start..mid]) {
+                    good = mid;
+                } else {
+                    bad = mid;
+                }
+            }
+        }
+        chunks.push(&paths[start..good]);
+        start = good;
+    }
+    chunks
+}
+
+/// Collect metadata for every path on every host with one exec per host per
+/// chunk ([`chunk_paths`]). A host whose query fails in any chunk is reported
+/// in `failed` and contributes no data at all (as when the batch was one exec).
+///
+/// Each chunk gets `timeout` seconds per path it hashes: the same total bound
+/// the per-file queries had, so batching never times out where they did not.
 pub(crate) async fn batch_collect_all_metadata(
     hosts: &[Arc<HostEntry>],
     paths: &[String],
@@ -229,20 +167,25 @@ pub(crate) async fn batch_collect_all_metadata(
         let sem = semaphore.clone();
         let host = Arc::clone(host);
         let paths = paths.to_vec();
-        let cmd = build_batch_metadata_cmd(&paths, host.shell);
         let sessions = Arc::clone(sessions);
 
         set.spawn(async move {
             let _permit = sem.acquire().await.unwrap();
-            let result = sessions.exec(&host.ssh_host, &cmd, timeout).await;
-            match result {
-                Ok(output) if output.success => {
-                    let parsed = parse_batch_metadata_output(&output.stdout, &paths, &host.name);
-                    (host.name.clone(), Ok(parsed))
+            let mut parsed = HashMap::new();
+            for chunk in chunk_paths(&paths, host.shell, batch_cmd_budget(host.shell)) {
+                let cmd = build_batch_metadata_cmd(chunk, host.shell);
+                let chunk_timeout = timeout.saturating_mul(chunk.len() as u64);
+                match sessions.exec(&host.ssh_host, &cmd, chunk_timeout).await {
+                    Ok(output) if output.success => parsed.extend(parse_batch_metadata_output(
+                        &output.stdout,
+                        chunk,
+                        &host.name,
+                    )),
+                    Ok(output) => return (host.name.clone(), Err(exec_failure(&output))),
+                    Err(e) => return (host.name.clone(), Err(format!("{e:#}"))),
                 }
-                Ok(output) => (host.name.clone(), Err(exec_failure(&output))),
-                Err(e) => (host.name.clone(), Err(format!("{e:#}"))),
             }
+            (host.name.clone(), Ok(parsed))
         });
     }
 
@@ -663,5 +606,53 @@ mod tests {
             !cmd.contains("\"$(echo PWNED)\""),
             "found double-quoted malicious token in cmd: {cmd}"
         );
+    }
+
+    /// B34: a recursive entry's thousands of paths are split so every exec'd
+    /// command fits the per-shell budget, and every path is still collected.
+    #[tokio::test]
+    async fn batch_collect_chunks_commands_under_budget() {
+        use crate::host::session_pool::RemoteOutput;
+        use crate::host::session_pool_mock::MockSessionPool;
+        let paths: Vec<String> = (0..5000)
+            .map(|i| format!("~/very/long/nested/directory/structure/file_{i:05}.txt"))
+            .collect();
+        for shell in [ShellType::Sh, ShellType::PowerShell, ShellType::Cmd] {
+            let budget = batch_cmd_budget(shell);
+            let chunks = chunk_paths(&paths, shell, budget);
+            assert!(chunks.len() > 1, "{shell:?}");
+            assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), paths.len());
+            for chunk in &chunks {
+                assert!(build_batch_metadata_cmd(chunk, shell).len() <= budget);
+            }
+            // Greedy: adding the next path to a chunk would overflow it.
+            let first = chunks[0].len();
+            assert!(build_batch_metadata_cmd(&paths[..first + 1], shell).len() > budget);
+        }
+        // A single path larger than the budget still gets its own chunk.
+        let huge = vec!["x".repeat(100), "y".to_string()];
+        let chunks = chunk_paths(&huge, ShellType::Sh, 10);
+        assert_eq!(chunks.len(), 2);
+
+        let ok = RemoteOutput {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: Some(0),
+            success: true,
+        };
+        let mock =
+            Arc::new(MockSessionPool::new(vec!["h1".into()]).with_exec("h1", "---FILE:", ok));
+        let sessions: Arc<dyn SessionPool> = mock.clone();
+        let hosts = vec![Arc::new(HostEntry::placeholder("h1", "h1"))];
+        let result = batch_collect_all_metadata(&hosts, &paths, 5, 2, &sessions)
+            .await
+            .unwrap();
+        assert_eq!(result.per_file.len(), paths.len());
+        let calls = mock.exec_calls();
+        let expected = chunk_paths(&paths, ShellType::Sh, batch_cmd_budget(ShellType::Sh)).len();
+        assert_eq!(calls.len(), expected);
+        assert!(calls
+            .iter()
+            .all(|(_, cmd)| cmd.len() <= batch_cmd_budget(ShellType::Sh)));
     }
 }

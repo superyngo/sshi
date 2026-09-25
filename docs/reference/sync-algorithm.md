@@ -33,7 +33,7 @@ The sync workflow runs across four primary phases:
 ┌────────────────────────────────────────────────────────┐
 │ 4. Recursive Entries (commands::sync::mod)             │
 │    - Iterate recursive sync entries (recursive = true) │
-│    - Run per-file sync flow via sync_path_across       │
+│    - Run batch sync flow via sync_path_across          │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -227,8 +227,8 @@ After successful distribution:
 
 ## Phase 4: Recursive Entries (`run_recursive_entries`)
 
-Entries configured with `recursive = true` bypass the batched collect/decide/distribute pipeline. In Phase 4 (`commands::sync::run_recursive_entries`):
+Entries configured with `recursive = true` are processed in Phase 4 (`commands::sync::run_recursive_entries`):
 
 1. **Directory Expansion**: Expands directory contents on the source host (or, when no fixed source is specified, expands on every host in the entry's scope in parallel and takes the union via `union_dir_expansions`, so a file present on any host is synced; a directory empty on every host is skipped, and a path that is a directory nowhere is synced as a single file).
-2. **Per-File Synchronization**: Executes `sync_path_across` sequentially for each expanded file path, collecting metadata (`collect_file_metadata`), making individual `SyncDecision` evaluations, and executing `distribute_pooled`.
+2. **Batch Metadata Collection & Pooled Distribution**: Executes `sync_path_across` for all expanded file paths of the entry, batch-collecting metadata (`batch_collect_all_metadata`: one exec per host per chunk — `chunk_paths` keeps each command under a per-shell budget, `batch_cmd_budget`: 32 KiB sh, 16 KiB PowerShell, 6 KiB cmd — with a timeout of `timeout` seconds per path in the chunk), evaluating `SyncDecision`s per path, and executing transfers via `distribute_pooled` under `ConcurrencyLimiter` per-host and global caps.
 3. **Recording**: Each synchronized file adds its `sync_state` / `operation_log` rows to a `SyncRows` buffer; `flush_sync_rows` writes them in one transaction after the last recursive entry (or before returning an error, so completed transfers are still recorded). The batch path uses the same helper. Progress updates still go to the caller's `ProgressSink` per file.

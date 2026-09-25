@@ -5,8 +5,7 @@ use crate::config::schema::{ConflictStrategy, ShellType};
 
 use super::collect::{
     batch_collect_all_metadata, build_batch_metadata_cmd, build_dir_expand_cmd,
-    collect_file_metadata, parse_batch_metadata_output, parse_dir_expand_output,
-    union_dir_expansions,
+    parse_batch_metadata_output, parse_dir_expand_output, union_dir_expansions,
 };
 use super::decide::{make_decisions, make_decisions_fixed_source};
 use super::types::{DirExpandResult, FileInfo};
@@ -633,7 +632,6 @@ async fn failed_metadata_hosts_are_reported_not_dropped() {
                 "---FILE:",
                 out("---FILE:/x\n1700000000 1\nNOHASH\n", 0),
             )
-            .with_exec("a", "stat", out("1700000000 1\n", 0))
             .with_exec("b", "", out("", 7)),
         // "c" has no canned response → exec error
     );
@@ -653,20 +651,6 @@ async fn failed_metadata_hosts_are_reported_not_dropped() {
     let f = failed_hosts(&batch.failed);
     assert_eq!(f[0], ("b".into(), "exit 7: boom".into()));
     assert_eq!(f[1].0, "c");
-
-    let single = collect_file_metadata(&hosts, "/x", 5, 4, Arc::clone(&pool))
-        .await
-        .unwrap();
-    assert_eq!(single.found.len(), 1);
-    assert!(
-        single.missing.is_empty(),
-        "failed host must not count as missing"
-    );
-    let f = failed_hosts(&single.failed);
-    assert_eq!(
-        f.iter().map(|x| x.0.as_str()).collect::<Vec<_>>(),
-        ["b", "c"]
-    );
 }
 
 /// B32: one unreadable file must not make a PowerShell/cmd batch exit non-zero.

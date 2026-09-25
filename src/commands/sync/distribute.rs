@@ -1,70 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use tokio::sync::Semaphore;
 
 use crate::config::schema::HostEntry;
 use crate::host::concurrency::ConcurrencyLimiter;
 use crate::host::session_pool::SessionPool;
 
 use super::types::SyncDecision;
-
-pub(crate) async fn distribute(
-    hosts: &[Arc<HostEntry>],
-    decision: &SyncDecision,
-    timeout: u64,
-    concurrency: usize,
-    sessions: Arc<dyn SessionPool>,
-) -> Result<(Vec<String>, Vec<(String, String)>)> {
-    let source = hosts
-        .iter()
-        .find(|h| h.name == decision.source_host)
-        .ok_or_else(|| anyhow::anyhow!("Source host not found: {}", decision.source_host))?;
-
-    let temp_dir = tempfile::tempdir()?;
-    let local_temp = temp_dir.path().join("sshi_relay");
-    sessions
-        .download(source, &decision.path, &local_temp, timeout)
-        .await?;
-
-    let semaphore = Arc::new(Semaphore::new(concurrency));
-    let mut set = tokio::task::JoinSet::new();
-
-    for target_name in &decision.target_hosts {
-        let target = hosts
-            .iter()
-            .find(|h| h.name == *target_name)
-            .ok_or_else(|| anyhow::anyhow!("Target host not found: {}", target_name))?;
-
-        let sem = semaphore.clone();
-        let target = Arc::clone(target);
-        let local_temp = local_temp.clone();
-        let remote_path = decision.path.clone();
-        let target_name = target_name.clone();
-        let sessions = Arc::clone(&sessions);
-
-        set.spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
-
-            let result = sessions
-                .upload(&target, &local_temp, &remote_path, timeout)
-                .await;
-            (target_name, result)
-        });
-    }
-
-    let mut succeeded = Vec::new();
-    let mut failed = Vec::new();
-    while let Some(joined) = set.join_next().await {
-        let (target_name, result) = joined.context("task panic")?;
-        match result {
-            Ok(()) => succeeded.push(target_name),
-            Err(e) => failed.push((target_name, e.to_string())),
-        }
-    }
-
-    Ok((succeeded, failed))
-}
 
 pub(crate) async fn distribute_pooled(
     hosts: &[Arc<HostEntry>],

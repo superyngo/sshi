@@ -46,6 +46,7 @@ struct State {
     download_errors: HashMap<(String, String), String>,
     uploads: Vec<UploadCall>,
     downloads: Vec<DownloadCall>,
+    exec_calls: Vec<(String, String)>,
 }
 
 struct ExecResponse {
@@ -70,6 +71,7 @@ impl MockSessionPool {
                 download_errors: HashMap::new(),
                 uploads: Vec::new(),
                 downloads: Vec::new(),
+                exec_calls: Vec::new(),
             }),
         }
     }
@@ -151,6 +153,11 @@ impl MockSessionPool {
     pub fn downloads(&self) -> Vec<DownloadCall> {
         self.state.lock().unwrap().downloads.clone()
     }
+
+    /// Snapshot of recorded exec calls: `(host_alias, cmd)`, in invocation order.
+    pub fn exec_calls(&self) -> Vec<(String, String)> {
+        self.state.lock().unwrap().exec_calls.clone()
+    }
 }
 
 #[async_trait]
@@ -161,7 +168,8 @@ impl SessionPool for MockSessionPool {
         cmd: &str,
         _timeout_secs: u64,
     ) -> anyhow::Result<RemoteOutput> {
-        let s = self.state.lock().unwrap();
+        let mut s = self.state.lock().unwrap();
+        s.exec_calls.push((host_alias.to_string(), cmd.to_string()));
         for resp in &s.exec_responses {
             if resp.host == host_alias && cmd.contains(resp.cmd_substring.as_str()) {
                 return Ok(resp.output.clone());

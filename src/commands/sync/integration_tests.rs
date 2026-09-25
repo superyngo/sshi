@@ -60,19 +60,6 @@ fn sh_batch_output(path: &str, mtime: i64, size: u64, hash: &str) -> RemoteOutpu
     }
 }
 
-/// Build a canned per-file metadata output that mimics what the production
-/// `collect_file_metadata` would produce on a sh host. The mock matches by
-/// substring "stat " so we don't have to reconstruct the exact command.
-/// Format: `<mtime> <size>\n<hash>\n`.
-fn sh_per_file_output(mtime: i64, size: u64, hash: &str) -> RemoteOutput {
-    RemoteOutput {
-        stdout: format!("{mtime} {size}\n{hash}\n"),
-        stderr: String::new(),
-        exit_code: Some(0),
-        success: true,
-    }
-}
-
 /// Build a `SyncDecision` for `decide_batch`/`distribute_batch` tests.
 fn make_decision(path: &str, source: &str, targets: &[&str]) -> SyncDecision {
     SyncDecision {
@@ -331,12 +318,19 @@ async fn sync_path_across_distributes_newest_to_older() {
 
     let ctx = build_ctx();
     let hosts = vec![sh_host("host-a"), sh_host("host-b")];
+    let limiter = ConcurrencyLimiter::new(10, 4, &["host-a".to_string(), "host-b".to_string()]);
     let mock = Arc::new(
         MockSessionPool::new(vec!["host-a".into(), "host-b".into()])
-            // collect_file_metadata uses the per-file sh command starting
-            // with "stat " (NOT the batch ---FILE: command).
-            .with_exec("host-a", "stat ", sh_per_file_output(1000, 100, "hash-a"))
-            .with_exec("host-b", "stat ", sh_per_file_output(3000, 100, "hash-b"))
+            .with_exec(
+                "host-a",
+                "---FILE:",
+                sh_batch_output("$HOME/.bashrc", 1000, 100, "hash-a"),
+            )
+            .with_exec(
+                "host-b",
+                "---FILE:",
+                sh_batch_output("$HOME/.bashrc", 3000, 100, "hash-b"),
+            )
             // download from host-b (the selected source) writes bytes to temp.
             .with_download_bytes("host-b", "~/.bashrc", b"newer-content".to_vec()),
     );
@@ -347,7 +341,8 @@ async fn sync_path_across_distributes_newest_to_older() {
     sync_path_across(
         &ctx,
         &hosts,
-        "~/.bashrc",
+        &["~/.bashrc".to_string()],
+        &limiter,
         "test-group",
         false, // dry_run
         true,  // push_missing
@@ -379,10 +374,19 @@ async fn sync_path_across_in_sync_no_io() {
 
     let ctx = build_ctx();
     let hosts = vec![sh_host("host-a"), sh_host("host-b")];
+    let limiter = ConcurrencyLimiter::new(10, 4, &["host-a".to_string(), "host-b".to_string()]);
     let mock = Arc::new(
         MockSessionPool::new(vec!["host-a".into(), "host-b".into()])
-            .with_exec("host-a", "stat ", sh_per_file_output(1000, 100, "same"))
-            .with_exec("host-b", "stat ", sh_per_file_output(1000, 100, "same")),
+            .with_exec(
+                "host-a",
+                "---FILE:",
+                sh_batch_output("$HOME/.bashrc", 1000, 100, "same"),
+            )
+            .with_exec(
+                "host-b",
+                "---FILE:",
+                sh_batch_output("$HOME/.bashrc", 1000, 100, "same"),
+            ),
     );
     let sessions: Arc<dyn SessionPool> = mock.clone();
     let mut summary = SyncSummary::default();
@@ -391,7 +395,8 @@ async fn sync_path_across_in_sync_no_io() {
     sync_path_across(
         &ctx,
         &hosts,
-        "~/.bashrc",
+        &["~/.bashrc".to_string()],
+        &limiter,
         "test-group",
         false,
         true,
@@ -415,12 +420,14 @@ async fn run_recursive_entries_empty_returns_noop() {
     let hosts = vec![sh_host("host-a"), sh_host("host-b")];
     let sessions: Arc<dyn SessionPool> =
         Arc::new(MockSessionPool::new(vec!["host-a".into(), "host-b".into()]));
+    let limiter = ConcurrencyLimiter::new(10, 4, &["host-a".to_string(), "host-b".to_string()]);
     let mut summary = SyncSummary::default();
 
     run_recursive_entries(
         &ctx,
         &hosts,
         &[],
+        &limiter,
         &sessions,
         false,
         true,
@@ -451,12 +458,19 @@ async fn run_recursive_entries_without_source_unions_expansions() {
         MockSessionPool::new(vec!["host-a".into(), "host-b".into()])
             .with_exec("host-a", "---PATH:", ok("---PATH:~/tree\nDIR\n~/tree/a\n"))
             .with_exec("host-b", "---PATH:", ok("---PATH:~/tree\nDIR\n~/tree/b\n"))
-            .with_exec("host-a", "'tree/a'", ok("100 1\naaaa\n"))
-            .with_exec("host-a", "'tree/b'", ok(""))
-            .with_exec("host-b", "'tree/a'", ok(""))
-            .with_exec("host-b", "'tree/b'", ok("200 1\nbbbb\n")),
+            .with_exec(
+                "host-a",
+                "---FILE:",
+                ok("---FILE:~/tree/a\n100 1\naaaa\n---FILE:~/tree/b\nMISSING\n"),
+            )
+            .with_exec(
+                "host-b",
+                "---FILE:",
+                ok("---FILE:~/tree/a\nMISSING\n---FILE:~/tree/b\n200 1\nbbbb\n"),
+            ),
     );
     let sessions: Arc<dyn SessionPool> = mock.clone();
+    let limiter = ConcurrencyLimiter::new(10, 4, &["host-a".to_string(), "host-b".to_string()]);
     let entry = crate::config::schema::SyncEntry {
         name: Some("tree".into()),
         id: String::new(),
@@ -473,6 +487,7 @@ async fn run_recursive_entries_without_source_unions_expansions() {
         &ctx,
         &hosts,
         &[(&entry, scope, None)],
+        &limiter,
         &sessions,
         false,
         true,
@@ -619,4 +634,79 @@ async fn sync_inner_zero_hosts_errors_on_resolve() {
 fn mock_session_pool_is_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<MockSessionPool>();
+}
+
+/// B34: Assert that recursive sync exec count is O(hosts), NOT O(hosts × files).
+/// For 5 files across 2 hosts with no source override:
+/// 1 dir expand per host (2 execs) + 1 batch metadata collect per host (2 execs) = 4 execs total.
+/// (The old per-file implementation ran 2 expand + 2 hosts × 5 files = 12 execs).
+#[tokio::test]
+async fn run_recursive_entries_batch_exec_count_is_order_of_hosts() {
+    let ctx = build_ctx();
+    let hosts = vec![sh_host("host-a"), sh_host("host-b")];
+    let ok = |stdout: &str| RemoteOutput {
+        stdout: stdout.to_string(),
+        stderr: String::new(),
+        exit_code: Some(0),
+        success: true,
+    };
+    let dir_out = "---PATH:~/tree\nDIR\n~/tree/f1\n~/tree/f2\n~/tree/f3\n~/tree/f4\n~/tree/f5\n";
+    let batch_out_a = "\
+---FILE:~/tree/f1\n100 1\nhash1\n\
+---FILE:~/tree/f2\n100 1\nhash2\n\
+---FILE:~/tree/f3\n100 1\nhash3\n\
+---FILE:~/tree/f4\n100 1\nhash4\n\
+---FILE:~/tree/f5\n100 1\nhash5\n";
+    let batch_out_b = "\
+---FILE:~/tree/f1\nMISSING\n\
+---FILE:~/tree/f2\nMISSING\n\
+---FILE:~/tree/f3\nMISSING\n\
+---FILE:~/tree/f4\nMISSING\n\
+---FILE:~/tree/f5\nMISSING\n";
+
+    let mock = Arc::new(
+        MockSessionPool::new(vec!["host-a".into(), "host-b".into()])
+            .with_exec("host-a", "---PATH:", ok(dir_out))
+            .with_exec("host-b", "---PATH:", ok(dir_out))
+            .with_exec("host-a", "---FILE:", ok(batch_out_a))
+            .with_exec("host-b", "---FILE:", ok(batch_out_b)),
+    );
+    let sessions: Arc<dyn SessionPool> = mock.clone();
+    let limiter = ConcurrencyLimiter::new(10, 4, &["host-a".to_string(), "host-b".to_string()]);
+    let entry = crate::config::schema::SyncEntry {
+        name: Some("tree".into()),
+        id: String::new(),
+        paths: vec!["~/tree".into()],
+        recursive: true,
+        mode: None,
+        propagate_deletes: None,
+        source: None,
+    };
+    let scope = ["host-a".to_string(), "host-b".to_string()].into();
+    let mut summary = SyncSummary::default();
+
+    run_recursive_entries(
+        &ctx,
+        &hosts,
+        &[(&entry, scope, None)],
+        &limiter,
+        &sessions,
+        false,
+        true,
+        "test-group",
+        false,
+        &mut summary,
+    )
+    .await
+    .unwrap();
+
+    // Verify all 5 files were synced
+    assert_eq!(mock.uploads().len(), 5);
+    // Crucial B34 assertion: exactly 4 exec calls (2 hosts × 1 expand + 2 hosts × 1 batch collect)
+    assert_eq!(
+        mock.exec_calls().len(),
+        4,
+        "exec count must be O(hosts), not O(hosts × files); got {:?}",
+        mock.exec_calls()
+    );
 }
