@@ -47,10 +47,10 @@ pub fn batch_path_command(paths: &[(String, String)]) -> anyhow::Result<String> 
     let ps = crate::config::schema::ShellType::PowerShell;
     let mut parts = Vec::new();
     for (path, label) in paths {
+        let q_label = quote_arg(ps, &format!("---PATH:{label}"))?;
+        let q_path = quote_path(ps, path)?;
         parts.push(format!(
-            "{}; try {{ (Get-ChildItem -Recurse -File {} | Measure-Object -Property Length -Sum).Sum }} catch {{ \"MISSING\" }}",
-            quote_arg(ps, &format!("---PATH:{label}"))?,
-            quote_path(ps, path)?
+            "{q_label}; & {{ if (Test-Path -LiteralPath {q_path}) {{ if ((Get-Item -Force -LiteralPath {q_path}) -is [System.IO.DirectoryInfo]) {{ $s = (Get-ChildItem -Force -Recurse -File -LiteralPath {q_path} -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum; if ($null -eq $s) {{ \"---SIZE:0\" }} else {{ \"---SIZE:$s\" }} }} else {{ \"---SIZE:\" + (Get-Item -Force -LiteralPath {q_path}).Length }} }} else {{ \"MISSING\" }} }}"
         ));
     }
     Ok(parts.join("; "))

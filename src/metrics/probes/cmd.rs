@@ -43,7 +43,7 @@ pub fn batch_path_command(paths: &[(String, String)]) -> anyhow::Result<String> 
     let mut parts = Vec::new();
     for (path, label) in paths {
         parts.push(format!(
-            "echo ---PATH:{} & dir /s /a {} 2>nul",
+            "echo ---PATH:{} & dir /s /-c /a {} 2>nul || echo MISSING",
             cmd_echo_arg(label)?,
             quote_path(crate::config::schema::ShellType::Cmd, path)?
         ));

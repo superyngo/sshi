@@ -24,10 +24,54 @@ pub fn parse(shell: ShellType, metric: &str, stdout: &str) -> Value {
     }
 }
 
-/// Parse path size output.
-pub fn parse_path_size(_shell: ShellType, stdout: &str) -> u64 {
+/// Parse path size output across shells and formats.
+pub fn parse_path_size(shell: ShellType, stdout: &str) -> u64 {
     let trimmed = stdout.trim();
-    // `du -sb` outputs "SIZE\tPATH"
+
+    // 1. Explicit machine-readable marker: `---SIZE:<bytes>`
+    if let Some(pos) = trimmed.find("---SIZE:") {
+        let rest = &trimmed[pos + "---SIZE:".len()..];
+        if let Some(num_str) = rest.split_whitespace().next() {
+            if let Ok(val) = num_str.parse::<u64>() {
+                return val;
+            }
+        }
+    }
+
+    // 2. Cmd `dir /s /-c` (or `dir /s`) format
+    // Summary line looks like:
+    // "               2 File(s)           3072 bytes"
+    // "               0 File(s)              0 bytes"
+    // "               2 File(s)          3,072 bytes"
+    if shell == ShellType::Cmd || trimmed.contains("File(s)") {
+        for line in trimmed.lines().rev() {
+            if line.contains("File(s)") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if let Some(bytes_idx) = parts.iter().position(|p| p.eq_ignore_ascii_case("bytes"))
+                {
+                    if bytes_idx > 0 {
+                        let num_str = parts[bytes_idx - 1].replace(',', "");
+                        if let Ok(val) = num_str.parse::<u64>() {
+                            return val;
+                        }
+                    }
+                }
+                for part in parts.iter().rev() {
+                    let cleaned = part.replace(',', "");
+                    if let Ok(val) = cleaned.parse::<u64>() {
+                        return val;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Number alone (e.g. raw PowerShell output)
+    if let Ok(val) = trimmed.parse::<u64>() {
+        return val;
+    }
+
+    // 4. `du -sb` / `du -sk` outputs "SIZE\tPATH"
     trimmed
         .split_whitespace()
         .next()
@@ -64,7 +108,11 @@ pub fn parse_batch_paths(
     for (label, content) in &blocks {
         if label_map.contains_key(label.as_str()) {
             let trimmed = content.trim();
-            if trimmed == "MISSING" || trimmed.is_empty() {
+            let is_missing = trimmed == "MISSING"
+                || trimmed.is_empty()
+                || trimmed.contains("File Not Found")
+                || trimmed.contains("The system cannot find the");
+            if is_missing {
                 results.insert(label.to_string(), None);
             } else {
                 results.insert(label.to_string(), Some(parse_path_size(shell, content)));
@@ -569,5 +617,61 @@ mod tests {
         let linux_raw = include_str!("../../tests/fixtures/probes/linux_path_size.txt");
         let size = parse_path_size(ShellType::Sh, linux_raw);
         assert_eq!(size, 4096);
+    }
+
+    #[test]
+    fn test_parse_cmd_path_size_fixtures() {
+        let cmd_files = include_str!("../../tests/fixtures/probes/cmd_dir_files.txt");
+        assert_eq!(parse_path_size(ShellType::Cmd, cmd_files), 3072);
+
+        let cmd_empty = include_str!("../../tests/fixtures/probes/cmd_dir_empty.txt");
+        assert_eq!(parse_path_size(ShellType::Cmd, cmd_empty), 0);
+
+        let cmd_commas = include_str!("../../tests/fixtures/probes/cmd_dir_commas.txt");
+        assert_eq!(parse_path_size(ShellType::Cmd, cmd_commas), 3072);
+
+        let paths = vec![
+            ("C:\\test".into(), "test".into()),
+            ("C:\\empty".into(), "empty".into()),
+            ("C:\\missing".into(), "missing".into()),
+        ];
+        let stdout = format!(
+            "---PATH:test\n{}\n---PATH:empty\n{}\n---PATH:missing\n{}\n",
+            cmd_files,
+            cmd_empty,
+            include_str!("../../tests/fixtures/probes/cmd_dir_missing.txt")
+        );
+        let results = parse_batch_paths(ShellType::Cmd, &paths, &stdout);
+        assert_eq!(results.get("test"), Some(&Some(3072)));
+        assert_eq!(results.get("empty"), Some(&Some(0))); // Empty directory is 0, NOT None
+        assert_eq!(results.get("missing"), Some(&None));
+    }
+
+    #[test]
+    fn test_parse_powershell_path_size_fixtures() {
+        let ps_files = include_str!("../../tests/fixtures/probes/powershell_path_files.txt");
+        assert_eq!(parse_path_size(ShellType::PowerShell, ps_files), 3072);
+
+        let ps_empty = include_str!("../../tests/fixtures/probes/powershell_path_empty.txt");
+        assert_eq!(parse_path_size(ShellType::PowerShell, ps_empty), 0);
+
+        let ps_raw = include_str!("../../tests/fixtures/probes/powershell_path_raw_num.txt");
+        assert_eq!(parse_path_size(ShellType::PowerShell, ps_raw), 3072);
+
+        let paths = vec![
+            ("C:\\test".into(), "test".into()),
+            ("C:\\empty".into(), "empty".into()),
+            ("C:\\missing".into(), "missing".into()),
+        ];
+        let stdout = format!(
+            "---PATH:test\n{}\n---PATH:empty\n{}\n---PATH:missing\n{}\n",
+            ps_files,
+            ps_empty,
+            include_str!("../../tests/fixtures/probes/powershell_path_missing.txt")
+        );
+        let results = parse_batch_paths(ShellType::PowerShell, &paths, &stdout);
+        assert_eq!(results.get("test"), Some(&Some(3072)));
+        assert_eq!(results.get("empty"), Some(&Some(0))); // Empty directory is 0, NOT None
+        assert_eq!(results.get("missing"), Some(&None));
     }
 }

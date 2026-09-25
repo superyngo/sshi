@@ -1,0 +1,14 @@
+ Volume in drive C has no label.
+ Volume Serial Number is 1234-5678
+
+ Directory of C:\test
+
+09/25/2026  10:00 AM    <DIR>          .
+09/25/2026  10:00 AM    <DIR>          ..
+09/25/2026  10:00 AM             1024 file1.txt
+09/25/2026  10:00 AM             2048 file2.txt
+               2 File(s)           3072 bytes
+
+     Total Files Listed:
+               2 File(s)           3072 bytes
+               2 Dir(s)   50000000000 bytes free

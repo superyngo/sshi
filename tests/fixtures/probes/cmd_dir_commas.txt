@@ -1,0 +1,7 @@
+ Volume in drive C has no label.
+ Volume Serial Number is 1234-5678
+
+ Directory of C:\test
+
+               2 File(s)          3,072 bytes
+               2 Dir(s)  50,000,000,000 bytes free

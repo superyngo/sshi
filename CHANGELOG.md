@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: Windows path probes: cmd `dir` output was never parsed (size 0, reported success) and PowerShell reported an empty directory as `MISSING`; PowerShell now emits a locale-independent `---SIZE:<bytes>` marker (0 for an empty directory), cmd uses `dir /s /-c` and a missing path yields `MISSING` (B40).
 - fix: sh probes misread macOS/BSD hosts — load average shifted by one field, disk sizes ×1024, memory and battery empty, path sizes reported `MISSING` (no `du -b`); probes now fall back to `sysctl`/`vm_stat`/`du -sk` and the parsers recognise both GNU and BSD output (captured fixtures for Linux and macOS) (B39).
 - fix: TUI help and tab-info text documented an `f` filter popup that has no key handler; help now lists only handled keys (inline target rows, member picker), and the never-compiled `components/target_filter.rs` is removed (B52).
 - fix: one unrecognised enum value in the saved TUI state (e.g. from a newer version) reset every saved setting; each enum field now falls back to its default on its own and the rest of the state survives (B49).
