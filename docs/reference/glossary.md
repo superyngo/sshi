@@ -85,7 +85,7 @@ The TUI-specific enum for shell-based target filtering, persisted in UI state
 _Avoid_: ShellType (reserved for the transport-layer enum), ShellFilter.
 
 **SecretString**:
-A memory-safe wrapper holding a password or passphrase that zeroizes its contents on drop
+A memory-safe wrapper holding a password or passphrase that zeroizes its contents on drop and prints as `SecretString(***)` under `{:?}`
 (`src/host/auth.rs`).
 _Avoid_: Password, SecureBuffer, Credential.
 

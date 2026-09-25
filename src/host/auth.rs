@@ -13,8 +13,15 @@ use zeroize::Zeroize;
 use super::session_pool::SshHandler;
 
 /// A string that zeroizes its contents on drop.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct SecretString(String);
+
+/// Redacted: never prints the secret.
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretString(***)")
+    }
+}
 
 impl SecretString {
     pub fn new(s: String) -> Self {
@@ -315,7 +322,12 @@ mod tests {
     fn test_secret_string_debug() {
         let s = SecretString::new("hidden".to_string());
         let debug_str = format!("{:?}", s);
-        assert!(debug_str.contains("hidden"));
+        assert!(!debug_str.contains("hidden"), "{debug_str}");
+        assert_eq!(debug_str, "SecretString(***)");
+        // Containers holding secrets must not leak them either.
+        let mut cache: PassphraseCache = HashMap::new();
+        cache.insert(PathBuf::from("/k"), s);
+        assert!(!format!("{cache:?}").contains("hidden"));
     }
 
     #[test]

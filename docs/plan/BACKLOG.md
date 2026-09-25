@@ -35,7 +35,6 @@ this file existed are recorded in those source documents, not here.
 | B18 | 2026-09-25 | 2026-09-25 | P2 | `distribute_pooled` acquires the global permit before the per-host one, opposite to `ConcurrencyLimiter::acquire` | `src/commands/sync/distribute.rs` `distribute_pooled` | S | Uses `ConcurrencyLimiter::acquire` (per-host first) |
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B28 | 2026-09-25 | 2026-09-25 | P2 | Credential prompts: per-host `PassphraseCache`; concurrent blocking `rpassword` prompts on CLI; TUI replaces an open `AuthPopup`, failing the first host; passphrase asked for rejected unencrypted keys | `src/host/session_pool.rs` `RusshSessionPool::setup`; `src/host/auth.rs` `authenticate`, `try_pubkey`; `src/tui/app.rs` `App::handle_tui_event` | M | Three hosts sharing an encrypted key prompt once; prompts serialized on CLI and queued in TUI |
-| B29 | 2026-09-25 | 2026-09-25 | P2 | `SecretString` derives `Debug`, printing the secret | `src/host/auth.rs` `SecretString` | S | `format!("{:?}")` prints a redacted placeholder; test asserts the secret is absent |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
 | B31 | 2026-09-25 | 2026-09-25 | P2 | Windows `--sudo` never observes the elevated command's exit status; `run --sudo --dry-run` previews the sh form | `src/host/shell.rs` `sudo_wrap`; `src/commands/run.rs` `run` | M | Windows `--sudo` either reports the real exit status or is refused with an error; preview uses the host shell |
 | B32 | 2026-09-25 | 2026-09-25 | P2 | Batch metadata collection silently drops a host whose batch exits non-zero | `src/commands/sync/collect.rs` `batch_collect_all_metadata`, `collect_file_metadata` | S | Failed host recorded in the summary; one unreadable file does not abort the host's batch |
@@ -103,6 +102,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B29 | `SecretString` derived `Debug`, printing the secret | HASH-B29 — redacting `Debug` impl; `test_secret_string_debug` |
 | B27 | Auth, `open_sftp` and DNS escaped the connect timeout; DNS blocked a worker thread | `966c95c` — `resolve_addr` (`lookup_host`), `auth::net` per round-trip, `open_sftp_bounded` |
 | B24 | SFTP transfers wrote in place; interrupted transfer truncated the destination; whole transfer bounded by `default_timeout`; close errors discarded | `252cbc7` — temp + rename (`temp_sibling`, `write_local_atomic`), idle timeout per step (`copy_idle`) |
 | B26 | No shared remote-quoting layer (sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`) | `8dbf80d` — `host::quote` used at every site; parity tests per `ShellType` |

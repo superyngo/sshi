@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix(security): `SecretString` no longer prints the password/passphrase when debug-formatted (e.g. in logs); it shows `SecretString(***)` (B29).
 - fix: `--timeout` / `default_timeout` now also bounds DNS lookup, each authentication round-trip and SFTP channel setup, so a host that stalls during login or SFTP negotiation fails after the timeout instead of hanging `sshi`; DNS no longer blocks a runtime thread. Time spent typing at a passphrase/password prompt is not counted (B27).
 - fix: SFTP uploads and downloads write to a temp file and rename it into place, so an interrupted, failed or timed-out transfer no longer truncates the existing file; remote close errors now fail the transfer; `default_timeout` bounds each transfer step (no progress) instead of the whole transfer, so large files on slow links no longer time out (B24).
 - fix(security): remote paths, check labels and `exec` script names are quoted by one shared layer (`host::quote`) for every shell, so spaces, quotes and `$(...)` can no longer split arguments or run commands on the remote host; Cmd hosts run PowerShell via `-EncodedCommand`, and values cmd.exe cannot quote safely are refused. sh verified end to end; PowerShell/Cmd verified by unit parity tests only (B26, B1).
