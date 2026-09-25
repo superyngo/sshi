@@ -1,4 +1,4 @@
-//! Small filesystem-path helpers shared across commands.
+//! Small helpers shared across commands and the TUI.
 
 use std::path::{Path, PathBuf};
 
@@ -25,9 +25,45 @@ pub fn expand_tilde(p: &Path) -> PathBuf {
     p.to_path_buf()
 }
 
+/// CJK-aware truncation: if `s` fits within `max` display cells, return
+/// it unchanged; otherwise stop on the last character that fits and
+/// append `…`. Never splits a character, so it is safe on any UTF-8 input.
+/// Shared by the CLI and the TUI.
+pub fn truncate(s: &str, max: usize) -> String {
+    use unicode_width::UnicodeWidthStr;
+    if s.width() <= max {
+        return s.to_string();
+    }
+    let mut w = 0;
+    let mut out = String::new();
+    for ch in s.chars() {
+        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+        if w + cw > max.saturating_sub(1) {
+            break;
+        }
+        out.push(ch);
+        w += cw;
+    }
+    out.push('…');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_never_splits_multibyte_chars() {
+        let s = "x系統負載正常，目前有二十五位使用者登入中並且磁碟空間充足可以繼續運行".repeat(2);
+        for max in [1, 2, 50, 51, 72] {
+            let out = truncate(&s, max);
+            assert!(
+                unicode_width::UnicodeWidthStr::width(out.as_str()) <= max,
+                "max={max}"
+            );
+            assert!(out.ends_with('…'));
+        }
+    }
 
     #[test]
     fn tilde_only_expands_to_home() {

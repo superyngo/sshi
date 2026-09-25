@@ -131,11 +131,7 @@ pub async fn run(
         if let Some(ref s) = r.stdout {
             let trimmed = s.trim();
             if !trimmed.is_empty() && r.note.is_none() {
-                let preview = if trimmed.len() > 72 {
-                    &trimmed[..72]
-                } else {
-                    trimmed
-                };
+                let preview = crate::util::truncate(trimmed, 72);
                 println!("     ↳ {preview}");
             }
         }

@@ -834,13 +834,9 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
                 .as_deref()
                 .filter(|s| !s.trim().is_empty())
                 .map(|s| {
-                    // Truncate to ~50 chars so it fits in one line alongside the host/action.
+                    // Truncate to 50 cells + `…` so it fits in one line alongside the host/action.
                     let trimmed = s.trim_end();
-                    if trimmed.len() > 50 {
-                        format!(" ↳ {}…", &trimmed[..50])
-                    } else {
-                        format!(" ↳ {trimmed}")
-                    }
+                    format!(" ↳ {}", crate::util::truncate(trimmed, 51))
                 })
                 .unwrap_or_default()
         } else {

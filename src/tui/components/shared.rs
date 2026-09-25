@@ -36,28 +36,7 @@ pub fn chips(items: &[String], empty: &str) -> String {
     }
 }
 
-/// CJK-aware truncation: if `s` fits within `max` display cells, return
-/// it unchanged; otherwise stop on the last character that fits and
-/// append `…`. Replaces `operate_tab::truncate` and `config_tab::trunc`
-/// (byte-identical bodies).
-pub fn truncate(s: &str, max: usize) -> String {
-    use unicode_width::UnicodeWidthStr;
-    if s.width() <= max {
-        return s.to_string();
-    }
-    let mut w = 0;
-    let mut out = String::new();
-    for ch in s.chars() {
-        let cw = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-        if w + cw > max.saturating_sub(1) {
-            break;
-        }
-        out.push(ch);
-        w += cw;
-    }
-    out.push('…');
-    out
-}
+pub use crate::util::truncate;
 
 /// Reverse-video bold style for a focused row, parameterised by the
 /// accent colour the caller picks from its `Theme` (`accent_operate`
