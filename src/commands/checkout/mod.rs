@@ -277,6 +277,20 @@ pub(crate) fn extract_metric_value(data: &serde_json::Value, metric: &str) -> (S
                         return (format!("{:.0}%", pct), pct > 90.0);
                     }
                 }
+                // PowerShell format fallback: legacy raw object or JSON string from old snapshots
+                let totals = crate::metrics::parser::ps_swap_totals(v).or_else(|| {
+                    v.as_str().and_then(|s| {
+                        serde_json::from_str::<serde_json::Value>(s.trim())
+                            .ok()
+                            .and_then(|p| crate::metrics::parser::ps_swap_totals(&p))
+                    })
+                });
+                if let Some((total, used)) = totals {
+                    if total > 0 {
+                        let pct = used as f64 / total as f64 * 100.0;
+                        return (format!("{:.0}%", pct), pct > 90.0);
+                    }
+                }
             }
             ("-".to_string(), false)
         }
@@ -659,6 +673,36 @@ mod tests {
         assert_eq!(
             extract_metric_value(&data, "swap"),
             ("95%".to_string(), true)
+        );
+
+        // PowerShell sample: parsed into total_bytes / used_bytes
+        let data = json!({ "swap": { "total_bytes": 4294967296u64, "used_bytes": 1073741824u64 } });
+        assert_eq!(
+            extract_metric_value(&data, "swap"),
+            ("25%".to_string(), false)
+        );
+
+        // PowerShell sample: raw JSON string from Win32_PageFileUsage
+        let data = json!({ "swap": r#"{"AllocatedBaseSize": 4096, "CurrentUsage": 1024}"# });
+        assert_eq!(
+            extract_metric_value(&data, "swap"),
+            ("25%".to_string(), false)
+        );
+
+        // PowerShell sample: critical usage (> 90%) in raw JSON string
+        let data = json!({ "swap": r#"{"AllocatedBaseSize": 1000, "CurrentUsage": 950}"# });
+        assert_eq!(
+            extract_metric_value(&data, "swap"),
+            ("95%".to_string(), true)
+        );
+
+        // PowerShell sample: raw JSON array for multiple pagefiles
+        let data = json!({
+            "swap": r#"[{"AllocatedBaseSize": 2048, "CurrentUsage": 512}, {"AllocatedBaseSize": 2048, "CurrentUsage": 512}]"#
+        });
+        assert_eq!(
+            extract_metric_value(&data, "swap"),
+            ("25%".to_string(), false)
         );
 
         // Fallback: total 0, null, missing

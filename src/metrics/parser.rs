@@ -19,6 +19,7 @@ pub fn parse(shell: ShellType, metric: &str, stdout: &str) -> Value {
         (ShellType::PowerShell, "system_info") => parse_ps_system_info(stdout),
         (ShellType::PowerShell, "cpu_arch") => Value::String(stdout.trim().to_string()),
         (ShellType::PowerShell, "memory") => parse_ps_memory(stdout),
+        (ShellType::PowerShell, "swap") => parse_ps_swap(stdout),
         _ => Value::String(stdout.trim().to_string()),
     }
 }
@@ -239,6 +240,57 @@ fn parse_ps_memory(stdout: &str) -> Value {
     Value::String(stdout.trim().to_string())
 }
 
+pub(crate) fn ps_swap_totals(val: &Value) -> Option<(u64, u64)> {
+    if let Some(arr) = val.as_array() {
+        let mut total = 0u64;
+        let mut used = 0u64;
+        for item in arr {
+            total += item
+                .get("AllocatedBaseSize")
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0);
+            used += item
+                .get("CurrentUsage")
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0);
+        }
+        if total > 0 {
+            Some((total, used))
+        } else {
+            None
+        }
+    } else if let Some(obj) = val.as_object() {
+        let total = obj.get("AllocatedBaseSize").and_then(|n| n.as_u64())?;
+        let used = obj.get("CurrentUsage").and_then(|n| n.as_u64())?;
+        if total > 0 {
+            Some((total, used))
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
+fn parse_ps_swap(stdout: &str) -> Value {
+    let trimmed = stdout.trim();
+    if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
+        if let Some((total_mb, used_mb)) = ps_swap_totals(&val) {
+            let mut map = serde_json::Map::new();
+            map.insert(
+                "total_bytes".to_string(),
+                Value::Number((total_mb * 1024 * 1024).into()),
+            );
+            map.insert(
+                "used_bytes".to_string(),
+                Value::Number((used_mb * 1024 * 1024).into()),
+            );
+            return Value::Object(map);
+        }
+    }
+    Value::String(trimmed.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +346,39 @@ mod tests {
         assert!(result[0].1.contains("line1"));
         assert_eq!(result[1].0, "b");
         assert!(result[1].1.contains("line3"));
+    }
+
+    #[test]
+    fn test_parse_ps_swap_single() {
+        let output = r#"{"AllocatedBaseSize": 4096, "CurrentUsage": 1024}"#;
+        let result = parse(ShellType::PowerShell, "swap", output);
+        assert_eq!(
+            result.get("total_bytes").and_then(|v| v.as_u64()),
+            Some(4096 * 1024 * 1024)
+        );
+        assert_eq!(
+            result.get("used_bytes").and_then(|v| v.as_u64()),
+            Some(1024 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn test_parse_ps_swap_array() {
+        let output = r#"[{"AllocatedBaseSize": 2048, "CurrentUsage": 512}, {"AllocatedBaseSize": 2048, "CurrentUsage": 512}]"#;
+        let result = parse(ShellType::PowerShell, "swap", output);
+        assert_eq!(
+            result.get("total_bytes").and_then(|v| v.as_u64()),
+            Some(4096 * 1024 * 1024)
+        );
+        assert_eq!(
+            result.get("used_bytes").and_then(|v| v.as_u64()),
+            Some(1024 * 1024 * 1024)
+        );
+    }
+
+    #[test]
+    fn test_parse_ps_swap_empty() {
+        let result = parse(ShellType::PowerShell, "swap", "");
+        assert_eq!(result, Value::String("".to_string()));
     }
 }

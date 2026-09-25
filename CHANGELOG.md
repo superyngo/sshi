@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: PowerShell hosts collected swap usage but `checkout` could never display it (the raw `Win32_PageFileUsage` JSON was stored unparsed); it is now parsed into total/used bytes and shown as a percentage, including for snapshots stored by older versions (B59).
 - fix: TUI unit tests built `App` through the real state-path resolver, which could run the legacy state migration against the user's own `~/.local/state/sshi`; tests now pass an explicit temp state path (`App::from_context_with_state_path`) (B68).
 - fix: the TUI cleared its "checkout data is stale" flag even when reloading snapshots failed, so it never retried; the flag now stays set on error (B51).
 - fix: the Config tab silently discarded edits to `[[check.path]]` rows (no editor existed) and unparseable numeric settings; path rows are now shown read-only, and a bad number shows an error and keeps the editor open (B45).
