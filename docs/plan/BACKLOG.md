@@ -53,7 +53,6 @@ this file existed are recorded in those source documents, not here.
 | B60 | 2026-09-25 | 2026-09-25 | P3 | `output::printer` writes ANSI colours with no TTY/`NO_COLOR` gate | `src/output/printer.rs` `print_host_line` | S | Piped output has no escape codes; `NO_COLOR` honoured |
 | B61 | 2026-09-25 | 2026-09-25 | P3 | Enums/catalogs re-spelled: shell strings in Config tab, `ShellMode` label ×3, check catalog ×2, script-extension mapping ×2 | `src/tui/tabs/config_tab.rs` `SHELL_VARIANTS`; `src/tui/tabs/config_schema.rs` `CHECK_ENABLED_OPTIONS`; `src/config/schema.rs` `AppConfig::default`; `src/commands/exec.rs` | S | Each derived from one source |
 | B62 | 2026-09-25 | 2026-09-25 | P3 | Sync "source does not have path" lines call `printer::print_host_line("skip", &source, …)` with host and status swapped, so the host lands in the status slot and renders as a `·` with no name (found while fixing B25) Same swap on the `-v` "unreachable" and "sftp-failed" lines in `sync_inner` (`print_host_line("unreachable", "error", …)`). | `src/commands/sync/mod.rs` fixed-source skip branches | S | Source-skip lines render `⊘` and name the source host |
-| B64 | 2026-09-25 | 2026-09-25 | P3 | `cargo audit` after B57: rsa Marvin RUSTSEC-2023-0071 (no upstream fix; via russh/ssh-key), anyhow 1.0.102 unsound `downcast_mut` RUSTSEC-2026-0190 (not called by sshi), lru RUSTSEC-2026-0002/0253 + paste RUSTSEC-2024-0436 (via ratatui 0.29), number_prefix RUSTSEC-2025-0119 (via indicatif 0.17) | `Cargo.toml` ratatui, indicatif | M | ratatui and indicatif upgraded; rsa and anyhow recorded as accepted until upstream fixes |
 | B65 | 2026-09-25 | 2026-09-25 | P3 | Remote SFTP overwrite is remove-then-rename (brief window with no file) because russh-sftp 2.1.1 lacks `posix-rename@openssh.com` | `src/host/sftp.rs` `upload` | S | Upgrade russh-sftp (or send the extension) and replace atomically; SIGKILL-left `.sshi-tmp` files swept |
 | B68 | 2026-09-25 | 2026-09-25 | P3 | TUI tests build `App` via `App::new`, whose `persist::state_file_path` resolves the real state dir and runs the B44 legacy migration (copies the user's `~/.local/state/sshi` into the active state dir) | `src/tui/app.rs` `App::new` (test `minimal_app`); `src/tui/state/persist.rs` | S | Tests pass an explicit temp state path; no test touches the user's state dirs |
 | B69 | 2026-09-25 | 2026-09-25 | P3 | `-v/--verbose` has almost no observable CLI effect: `Context::verbose` is never read outside tests; the sync `tracing::debug!` events only fire in the TUI-only `SyncOutputStyle::Quiet` path; russh logs via the `log` crate, which the tracing subscriber does not bridge. Even `RUST_LOG=trace` shows only WARN lines on a real `sync` run | `src/main.rs` `init_tracing`; `src/commands/mod.rs` `Context::verbose`; `src/commands/sync/mod.rs` | S | Decide what `-v` should show (e.g. bridge `log` via `tracing-log`, emit per-host connect/auth debug); a `-v` run shows extra diagnostics |
@@ -75,7 +74,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | Item | Blocked on | Ready when |
 |---|---|---|
-| — | | |
+| `rsa` Marvin timing side channel RUSTSEC-2023-0071 (via `russh` → `ssh-key`; accepted after B64) | Upstream: no fixed `rsa` release; `russh` pins `rsa` 0.10 pre-release | A `russh` release depends on a fixed `rsa`; re-run `cargo audit` |
 
 ## Watching
 
@@ -93,6 +92,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B64 | `cargo audit`: rsa Marvin, anyhow unsound `downcast_mut`, lru ×2 + paste (via ratatui 0.29), number_prefix (via indicatif 0.17) | HASH-B64 — ratatui 0.30 / crossterm 0.29 / indicatif 0.18 / anyhow 1.0.104, no code changes; `cargo audit`: only rsa left (Awaiting external); real binary: TUI tabs render identically (pyte), `check -a` progress OK |
 | B9 | HTML report templating lived inside the general report module | `9841414` — `render_html_report` and helpers moved to `output::html`; 391/240 tests unchanged |
 | B36 | Unknown `-n` exited 0 with a wrong hint; missing explicit `-c` became an empty config | `752b3c8` — `ensure_check_names` / `ensure_sync_names` + `load_config` (init and TUI exempt); real binary: typo/missing path exit 1, `init` still creates |
 | B14 | `checkout --history` / `--since` parsed but ignored | `f5f2424` — flags removed from CLI, docs and README (option A); real binary rejects them with exit 2 |
