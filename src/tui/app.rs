@@ -71,6 +71,8 @@ fn flush_config_if_dirty(dirty: &mut bool, config: &AppConfig, path: Option<&std
     }
 }
 
+/// Idle time after the last state change before the TUI state file is written.
+const STATE_SAVE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
 const MIN_COLS: u16 = 60;
 const MIN_ROWS: u16 = 20;
 
@@ -138,6 +140,14 @@ pub struct App {
     event_tx: tokio::sync::mpsc::UnboundedSender<TuiEvent>,
     event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<TuiEvent>>,
     completed_report: Option<CommandReport>,
+    /// Results-popup title and lines for `completed_report`, built once on
+    /// arrival (B50).
+    completed_view: Option<ResultsView>,
+    /// When the pending debounced state save is due (`None`: nothing pending).
+    state_save_due: Option<tokio::time::Instant>,
+    /// Last `(config, filter) → matched host count`, so frames don't
+    /// re-resolve targets while neither changed (B50).
+    target_count_memo: std::cell::RefCell<Option<(Arc<AppConfig>, TargetFilterState, usize)>>,
     db_stale: bool,
     last_timeout_secs: u64,
     log_overlay_open: bool,
@@ -148,6 +158,12 @@ pub struct App {
     info_vp: Viewport,
     info_section: InfoSection,
     help_section: HelpSection,
+}
+
+/// Pre-rendered results popup (see [`App::results_view`]).
+struct ResultsView {
+    title: String,
+    lines: Vec<Line<'static>>,
 }
 
 impl App {
@@ -222,6 +238,9 @@ impl App {
             event_tx,
             event_rx: Some(event_rx),
             completed_report: None,
+            completed_view: None,
+            state_save_due: None,
+            target_count_memo: std::cell::RefCell::new(None),
             db_stale: false,
             last_timeout_secs: timeout,
             log_overlay_open: false,
@@ -669,7 +688,34 @@ impl App {
         self.config_tab.start_edit_entry(&self.config);
     }
 
-    fn save_state(&self) {
+    /// Number of hosts the current target filter matches, re-resolved only
+    /// when the config or the filter changed since the last frame (B50).
+    fn target_count(&self) -> usize {
+        if let Some((config, filter, count)) = &*self.target_count_memo.borrow() {
+            if Arc::ptr_eq(config, &self.config) && *filter == self.target_filter {
+                return *count;
+            }
+        }
+        let count = resolve_target_names(
+            &build_target_mode(&self.target_filter, &self.config),
+            &self.config,
+            &self.target_filter.skip,
+        )
+        .map(|t| t.len())
+        .unwrap_or(0);
+        *self.target_count_memo.borrow_mut() =
+            Some((Arc::clone(&self.config), self.target_filter.clone(), count));
+        count
+    }
+
+    /// Schedule a state save: the file is written once input has been idle
+    /// for [`STATE_SAVE_DEBOUNCE`] (and on quit), not on every keypress (B50).
+    fn save_state(&mut self) {
+        self.state_save_due = Some(tokio::time::Instant::now() + STATE_SAVE_DEBOUNCE);
+    }
+
+    /// Write the TUI state file now.
+    fn write_state(&self) {
         let state = TuiPersistedState {
             tui_state: super::state::persist::TuiSection {
                 active_tab: ActiveTab::from_tab_id(self.active_tab),
@@ -734,12 +780,17 @@ impl App {
         let mut event_rx_fut = Box::pin(event_rx.recv());
         loop {
             if self.should_quit {
-                self.save_state();
+                self.write_state();
                 self.flush_dirty_config_to_disk();
                 break;
             }
 
             if self.popup.prune_stale_auth() {
+                dirty = true;
+            }
+            // Data loads (SQLite) happen here, never inside `render` (B50).
+            if self.active_tab == TabId::View && self.view.dirty {
+                self.refresh_view();
                 dirty = true;
             }
             if dirty {
@@ -758,8 +809,16 @@ impl App {
                     None => Box::pin(std::future::pending()),
                 };
 
+            // Debounced state save (see `save_state`).
+            let state_save_fut: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> =
+                match self.state_save_due {
+                    Some(due) => Box::pin(tokio::time::sleep_until(due)),
+                    None => Box::pin(std::future::pending()),
+                };
+
             // Block until the first of: terminal input, signal, bridge event,
-            // or banner-expiry fires. Re-arms each future after firing.
+            // banner expiry or a due state save fires. Re-arms each future
+            // after firing.
             tokio::select! {
                 biased;
                 ev = event_stream.next() => {
@@ -796,6 +855,10 @@ impl App {
                 _ = banner_fut => {
                     self.config_tab.reload_banner_until = None;
                     dirty = true;
+                }
+                _ = state_save_fut => {
+                    self.state_save_due = None;
+                    self.write_state();
                 }
             }
 
@@ -837,6 +900,10 @@ impl App {
                 }
                 true
             }
+            TuiEvent::Notice(msg) => {
+                self.error = Some(msg);
+                true
+            }
             TuiEvent::OperationFinished(report) => {
                 // Write a `-o/--out` report file if one was requested for this run.
                 if let Some(op) = self.running_op.as_ref() {
@@ -852,21 +919,14 @@ impl App {
                         };
                         let op_report =
                             crate::output::report::to_operation_report(&report, &op.mode);
-                        match crate::output::report::write_report(
-                            &op_report,
-                            &out,
-                            command,
-                            self.config.settings.default_output_format.as_deref(),
-                        ) {
-                            Ok(path) => self.error = Some(format!("Report written to {path}")),
-                            Err(e) => self.error = Some(format!("Report write failed: {e}")),
-                        }
+                        self.spawn_report_write(op_report, out, command);
                     }
                 }
                 self.running_op = None;
                 self.db_stale = true;
                 // View tab data is now stale — force a refresh on next render.
                 self.view.dirty = true;
+                self.completed_view = Some(self.results_view(&report));
                 self.completed_report = Some(report);
                 self.popup.completed_report_scroll = 0;
                 true
@@ -1063,11 +1123,32 @@ impl App {
             }
         };
 
-        let default_fmt = self.config.settings.default_output_format.as_deref();
-        let final_path =
-            crate::output::report::write_report(&op_report, path, command, default_fmt)?;
-        self.error = Some(format!("Report written to {}", final_path));
+        self.spawn_report_write(op_report, path.to_string(), command);
         Ok(())
+    }
+
+    /// Write `op_report` on a blocking thread; the outcome comes back as a
+    /// `TuiEvent::Notice` so no file I/O runs on the event thread (B50).
+    fn spawn_report_write(
+        &self,
+        op_report: crate::output::report::OperationReport,
+        path: String,
+        command: &'static str,
+    ) {
+        let default_fmt = self.config.settings.default_output_format.clone();
+        let tx = self.event_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let msg = match crate::output::report::write_report(
+                &op_report,
+                &path,
+                command,
+                default_fmt.as_deref(),
+            ) {
+                Ok(written) => format!("Report written to {written}"),
+                Err(e) => format!("Report write failed: {e}"),
+            };
+            let _ = tx.send(TuiEvent::Notice(msg));
+        });
     }
 
     /// Build a synthetic completed report previewing which hosts a
@@ -1204,6 +1285,7 @@ impl App {
 
         let n = targets.len();
         self.popup.progress_scroll = None;
+        self.completed_view = Some(self.results_view(&report));
         self.completed_report = Some(report);
         self.popup.completed_report_scroll = 0;
         self.error = Some(format!(
@@ -2384,6 +2466,7 @@ impl App {
             match key.code {
                 KeyCode::Esc | KeyCode::Enter => {
                     self.completed_report = None;
+                    self.completed_view = None;
                     self.popup.completed_report_scroll = 0;
                     return Ok(true);
                 }
@@ -3232,9 +3315,6 @@ impl App {
             TabId::Config => self.render_config(chunks[1], frame),
             TabId::Operate => self.render_operate(chunks[1], frame),
             TabId::View => {
-                if self.view.dirty {
-                    self.refresh_view();
-                }
                 // Chrome rows: " View " block border (2) + op selector (2) +
                 // Results block border (2) = 6 base.
                 // Checkout/List add the inline Common zone (2 rows, +1 when a
@@ -3293,13 +3373,7 @@ impl App {
                 let skip_focused = active && self.view.focus == ViewFocus::Skip;
                 let combined_toggle_focused =
                     active && self.view.focus == ViewFocus::CombinedToggle;
-                let view_target_count = resolve_target_names(
-                    &build_target_mode(&self.target_filter, &self.config),
-                    &self.config,
-                    &self.target_filter.skip,
-                )
-                .map(|t| t.len())
-                .unwrap_or(0);
+                let view_target_count = self.target_count();
                 let data = super::tabs::view_tab::ViewRenderData {
                     view_op: self.view.op,
                     theme: &self.theme,
@@ -3344,8 +3418,8 @@ impl App {
         if self.running_op.is_some() {
             self.render_progress_popup(area, frame);
         }
-        if let Some(report) = self.completed_report.clone() {
-            self.render_results_popup(area, frame, &report, self.popup.completed_report_scroll);
+        if self.completed_view.is_some() {
+            self.render_results_popup(area, frame);
         }
         if self.log_overlay_open {
             self.render_log_overlay(area, frame);
@@ -3800,14 +3874,7 @@ impl App {
     }
 
     fn render_operate(&self, area: Rect, frame: &mut ratatui::Frame) {
-        let target_count = match resolve_target_names(
-            &build_target_mode(&self.target_filter, &self.config),
-            &self.config,
-            &self.target_filter.skip,
-        ) {
-            Ok(t) => t.len(),
-            Err(_) => 0,
-        };
+        let target_count = self.target_count();
         let data = OperateRenderData {
             focus: self.operate.focus,
             operation: self.operate.operation,
@@ -3858,16 +3925,9 @@ impl App {
         );
     }
 
-    fn render_results_popup(
-        &mut self,
-        area: Rect,
-        frame: &mut ratatui::Frame,
-        report: &CommandReport,
-        scroll: usize,
-    ) {
-        let popup_area = centered_rect(75, 75, area);
-        frame.render_widget(Clear, popup_area);
-
+    /// Title and lines of the results popup for `report`, built once when the
+    /// report arrives (B50) instead of on every frame.
+    fn results_view(&self, report: &CommandReport) -> ResultsView {
         // Extract common fields for any variant.
         let (host_count, executed_at, header_detail): (usize, &str, String) = match report {
             CommandReport::Check(r) => (r.hosts.len(), r.executed_at.as_str(), String::new()),
@@ -3916,14 +3976,8 @@ impl App {
 
         let title =
             format!(" Results — {host_count} hosts  (↑↓/PgUp/PgDn scroll · Enter/Esc dismiss) ");
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.border_active))
-            .title(title);
-        let inner = block.inner(popup_area);
-        frame.render_widget(block, popup_area);
 
-        let mut lines: Vec<Line> = Vec::new();
+        let mut lines: Vec<Line<'static>> = Vec::new();
 
         // Helper closure to render a per-host row.
         let render_row = |host: &str, status: HostStatus, detail: &str, ms: Option<u64>| {
@@ -4118,16 +4172,31 @@ impl App {
             }
         }
 
-        // Clamp scroll so it never exceeds the content height.
-        let max_scroll = lines.len().saturating_sub(1);
-        let clamped_scroll = scroll.min(max_scroll);
-        // Store back so End key settles at real bottom on next frame.
-        self.popup.completed_report_scroll = clamped_scroll;
+        ResultsView { title, lines }
+    }
 
-        let p = Paragraph::new(lines)
+    fn render_results_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
+        let Some(view) = self.completed_view.as_ref() else {
+            return;
+        };
+        let popup_area = centered_rect(75, 75, area);
+        frame.render_widget(Clear, popup_area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.border_active))
+            .title(view.title.as_str());
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        // Clamp scroll so it never exceeds the content height.
+        let max_scroll = view.lines.len().saturating_sub(1);
+        let clamped_scroll = self.popup.completed_report_scroll.min(max_scroll);
+        let p = Paragraph::new(view.lines.clone())
             .scroll((clamped_scroll as u16, 0))
             .wrap(Wrap { trim: false });
         frame.render_widget(p, inner);
+        // Store back so End key settles at real bottom on next frame.
+        self.popup.completed_report_scroll = clamped_scroll;
     }
 
     fn render_info_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
@@ -5021,6 +5090,67 @@ mod navbar_focus_tests {
             TabId::Config,
             "`e` should open the sync form"
         );
+    }
+
+    /// B50: `render` performs no data load — a dirty View stays dirty until
+    /// the event loop refreshes it.
+    #[test]
+    fn render_does_not_refresh_view() {
+        let mut app = minimal_app();
+        app.active_tab = TabId::View;
+        app.view.dirty = true;
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+        terminal.draw(|f| app.render(f.area(), f)).unwrap();
+        assert!(app.view.dirty, "render must not load view data");
+    }
+
+    /// B50: state changes schedule one debounced write instead of writing now.
+    #[test]
+    fn save_state_is_debounced() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut app = minimal_app();
+            let _ = std::fs::remove_file(&app.state_file_path);
+            app.save_state();
+            assert!(app.state_save_due.is_some());
+            assert!(!app.state_file_path.exists(), "no write before the debounce");
+            app.write_state();
+            assert!(app.state_file_path.exists());
+        });
+    }
+
+    /// B50: the results popup is built once when the report arrives.
+    #[test]
+    fn results_view_built_on_arrival() {
+        use crate::commands::report::{CheckReport, CommandReport};
+        let mut app = minimal_app();
+        let report = CommandReport::Check(CheckReport {
+            executed_at: "2026-09-25T00:00:00Z".into(),
+            enabled_metrics: vec![],
+            targets: vec![],
+            hosts: vec![],
+        });
+        app.handle_tui_event(TuiEvent::OperationFinished(report));
+        let view = app.completed_view.as_ref().expect("view cached");
+        assert!(view.title.contains("Results"));
+        assert!(!view.lines.is_empty());
+    }
+
+    /// B50: the target count is memoized per (config, filter).
+    #[test]
+    fn target_count_memoized_until_filter_changes() {
+        let mut app = minimal_app();
+        let n = app.target_count();
+        assert!(app.target_count_memo.borrow().is_some());
+        assert_eq!(app.target_count(), n);
+        app.target_filter.skip.push("nobody".into());
+        let _ = app.target_count();
+        let memo = app.target_count_memo.borrow();
+        assert_eq!(memo.as_ref().unwrap().1.skip, vec!["nobody".to_string()]);
     }
 
     #[test]

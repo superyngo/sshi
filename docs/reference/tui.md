@@ -327,6 +327,8 @@ The TUI automatically persists UI navigation and filter state on exit (`src/tui/
   - `state_dir`: Derived via `state::db::resolved_state_dir`, honoring the `[settings].state_dir` override if specified, otherwise the platform state directory (`state::db::state_dir`; see [state-schema.md](state-schema.md)). For the default config, a missing `tui_state-{hash}.toml` is seeded once from the file keyed by the legacy `~/.config/sshi/config.toml` path (`persist::state_file_path`), so the B44 directory move keeps saved TUI state.
   - `config_hash`: First 8 hex characters of the BLAKE3 hash of the canonicalized configuration file path string.
 - **Atomic Persistence**: Written atomically via `tempfile::NamedTempFile::persist()` to prevent corruption on sudden termination.
+- **Debounced writes**: a state change schedules one write once input has been idle for 500 ms (`STATE_SAVE_DEBOUNCE`), plus a final write on quit — not one write per keypress.
+- **UI thread**: `render` does no I/O. View data (SQLite) loads in the event loop before a frame is drawn, `--out`/export report files are written on a blocking task (the result arrives as a footer notice), the results popup is built once when a report arrives, and the target-count badge is recomputed only when the config or filter changes.
 - **Fault Tolerance**: Missing, unreadable, or invalid state files fall back to defaults silently without panicking.
 
 ### TOML Schema Structure

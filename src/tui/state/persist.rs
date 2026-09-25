@@ -74,7 +74,7 @@ impl ActiveTab {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TargetFilterState {
     #[serde(default, deserialize_with = "deserialize_enum_or_default")]

@@ -32,6 +32,9 @@ pub enum TuiEvent {
     OperationError(String),
     /// SSH layer is requesting a credential from the user.
     SshAuthRequired(SshAuthRequest),
+    /// One-line status for the footer, e.g. the result of a report write
+    /// done off the event thread (B50).
+    Notice(String),
 }
 
 /// Channel capacity — covers ~500 hosts × 2 events with headroom (§18.1).
