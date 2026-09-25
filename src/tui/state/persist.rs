@@ -148,8 +148,6 @@ pub struct OperateState {
     pub exec_dry_run: bool,
     /// View tab: selected view operation (checkout/list/log).
     pub view_operation: ViewOperationKind,
-    /// View tab: include history when running checkout.
-    pub checkout_history: bool,
     /// View tab: show combined (per-metric latest) instead of single-snapshot checkout.
     pub checkout_combined: bool,
     /// View tab: number of log entries to fetch (0 → App default of 20).
@@ -473,7 +471,6 @@ active_tab = "Config"
         let s = OperateState {
             log_last: 50,
             log_errors: true,
-            checkout_history: true,
             check_dry_run: true,
             run_dry_run: true,
             exec_dry_run: true,
@@ -484,11 +481,23 @@ active_tab = "Config"
         let back: OperateState = toml::from_str(&ser).unwrap();
         assert_eq!(back.log_last, 50);
         assert!(back.log_errors);
-        assert!(back.checkout_history);
         assert!(back.check_dry_run);
         assert!(back.run_dry_run);
         assert!(back.exec_dry_run);
         assert_eq!(back.view_operation, ViewOperationKind::Log);
+    }
+
+    #[test]
+    fn old_state_file_with_checkout_history_loads_successfully() {
+        let toml_str = r#"
+[operate]
+checkout_history = true
+checkout_combined = true
+log_last = 42
+"#;
+        let state: TuiPersistedState = toml::from_str(toml_str).unwrap();
+        assert!(state.operate.checkout_combined);
+        assert_eq!(state.operate.log_last, 42);
     }
 
     #[test]

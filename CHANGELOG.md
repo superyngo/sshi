@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: removed the TUI's persisted `checkout_history` toggle, which nothing read after B14; state files that still contain it load normally (B70).
 - fix: removed `init --update`: it had no effect in any case (with a config present every host was already re-detected; without one there were no existing hosts to skip), so `init` behaves exactly as before and `--update` is now rejected (B15).
 - fix: recursive `cp` silently skipped symlinks and unreadable files; symlinks (not followed, to avoid loops) and special files are now reported as warnings, and an unreadable file or directory entry stops the command with an error naming it (B38).
 - fix: PowerShell hosts collected swap usage but `checkout` could never display it (the raw `Win32_PageFileUsage` JSON was stored unparsed); it is now parsed into total/used bytes and shown as a percentage, including for snapshots stored by older versions (B59).

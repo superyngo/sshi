@@ -355,7 +355,6 @@ check_dry_run = false
 run_dry_run = false
 exec_dry_run = false
 view_operation = "Checkout" # "Checkout" | "List" | "Log"
-checkout_history = false
 checkout_combined = false
 log_last = 20
 log_errors = false

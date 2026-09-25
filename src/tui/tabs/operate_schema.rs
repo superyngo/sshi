@@ -16,7 +16,6 @@ pub struct OpSpecific<'a> {
     pub keep: &'a mut bool,
     pub dry_run: &'a mut bool,
     pub sync_mode: &'a mut SyncMode,
-    pub checkout_history: &'a mut bool,
     pub log_last: &'a mut usize,
     pub log_errors: &'a mut bool,
     pub log_action: &'a mut Option<ActionFilter>,
@@ -67,12 +66,8 @@ pub fn sync_specific_fields(mode: SyncMode, dry_run: bool) -> Vec<FieldDescripto
 }
 
 #[allow(dead_code)]
-pub fn checkout_specific_fields(history: bool) -> Vec<FieldDescriptor> {
-    vec![FieldDescriptor::scalar(
-        "history",
-        history.to_string(),
-        FieldKind::Bool,
-    )]
+pub fn checkout_specific_fields() -> Vec<FieldDescriptor> {
+    Vec::new()
 }
 
 #[allow(dead_code)]
@@ -126,7 +121,6 @@ pub fn apply_specific(s: &mut OpSpecific, op: OperationKind, key: &str, val: &st
 #[allow(dead_code)]
 pub fn apply_view_specific(view_op: ViewOperationKind, s: &mut OpSpecific, key: &str, val: &str) {
     match (view_op, key) {
-        (ViewOperationKind::Checkout, "history") => *s.checkout_history = val == "true",
         (ViewOperationKind::Log, "last") => {
             if let Ok(v) = val.parse::<usize>() {
                 *s.log_last = v;
@@ -158,7 +152,6 @@ mod tests {
         keep: bool,
         dry_run: bool,
         sync_mode: SyncMode,
-        checkout_history: bool,
         log_last: usize,
         log_errors: bool,
         log_action: Option<ActionFilter>,
@@ -171,7 +164,6 @@ mod tests {
                 keep: &mut self.keep,
                 dry_run: &mut self.dry_run,
                 sync_mode: &mut self.sync_mode,
-                checkout_history: &mut self.checkout_history,
                 log_last: &mut self.log_last,
                 log_errors: &mut self.log_errors,
                 log_action: &mut self.log_action,
@@ -219,18 +211,11 @@ mod tests {
     }
 
     #[test]
-    fn apply_view_checkout_history_and_log_fields() {
+    fn apply_view_log_fields() {
         let mut sc = Scratch::default();
-        apply_view_specific(
-            ViewOperationKind::Checkout,
-            &mut sc.view(),
-            "history",
-            "true",
-        );
         apply_view_specific(ViewOperationKind::Log, &mut sc.view(), "last", "50");
         apply_view_specific(ViewOperationKind::Log, &mut sc.view(), "errors", "true");
         apply_view_specific(ViewOperationKind::Log, &mut sc.view(), "action", "exec");
-        assert!(sc.checkout_history);
         assert_eq!(sc.log_last, 50);
         assert!(sc.log_errors);
         assert!(matches!(sc.log_action, Some(ActionFilter::Exec)));
