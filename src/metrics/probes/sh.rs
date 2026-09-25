@@ -6,7 +6,7 @@ pub fn command_for(metric: &str) -> String {
         "online" => "echo ok".to_string(),
         "system_info" => "uname -a && hostname".to_string(),
         "cpu_arch" => "uname -m".to_string(),
-        "memory" => "free -b 2>/dev/null || vm_stat 2>/dev/null".to_string(),
+        "memory" => "free -b 2>/dev/null || { sysctl -n hw.memsize 2>/dev/null && vm_stat 2>/dev/null; } || vm_stat 2>/dev/null".to_string(),
         "swap" => "free -b 2>/dev/null".to_string(),
         "disk" => "df -B1 2>/dev/null || df -k".to_string(),
         "cpu_load" => {
@@ -47,10 +47,10 @@ pub fn batch_path_command(paths: &[(String, String)]) -> anyhow::Result<String> 
     let sh = crate::config::schema::ShellType::Sh;
     let mut parts = Vec::new();
     for (path, label) in paths {
+        let q_label = quote_arg(sh, &format!("---PATH:{label}"))?;
+        let q_path = quote_path(sh, path)?;
         parts.push(format!(
-            "echo {}; du -sb {} 2>/dev/null || echo MISSING",
-            quote_arg(sh, &format!("---PATH:{label}"))?,
-            quote_path(sh, path)?
+            "echo {q_label}; du -sb {q_path} 2>/dev/null || {{ sz=$(du -sk {q_path} 2>/dev/null | awk '{{print $1*1024}}'); [ -n \"$sz\" ] && echo \"$sz\" || echo MISSING; }}"
         ));
     }
     Ok(parts.join("; "))

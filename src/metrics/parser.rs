@@ -120,7 +120,7 @@ fn parse_sh_system_info(stdout: &str) -> Value {
 
 fn parse_sh_memory(stdout: &str) -> Value {
     let mut map = serde_json::Map::new();
-    // Parse `free -b` output
+    // 1. Linux `free -b` output
     for line in stdout.lines() {
         if line.starts_with("Mem:") {
             let parts: Vec<&str> = line.split_whitespace().collect();
@@ -132,8 +132,76 @@ fn parse_sh_memory(stdout: &str) -> Value {
                     map.insert("used_bytes".to_string(), Value::Number(used.into()));
                 }
             }
+            return Value::Object(map);
         }
     }
+
+    // 2. macOS `sysctl hw.memsize` + `vm_stat`
+    let mut total_bytes: Option<u64> = None;
+    let mut page_size: u64 = 4096;
+    let mut pages_free: u64 = 0;
+    let mut pages_speculative: u64 = 0;
+    let mut pages_active: u64 = 0;
+    let mut pages_inactive: u64 = 0;
+    let mut pages_wired: u64 = 0;
+    let mut pages_compressed: u64 = 0;
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if let Ok(tb) = trimmed.parse::<u64>() {
+            total_bytes = Some(tb);
+            continue;
+        }
+        if trimmed.starts_with("Mach Virtual Memory Statistics:") {
+            if let Some(pos) = trimmed.find("page size of ") {
+                let rest = &trimmed[pos + "page size of ".len()..];
+                if let Some(num_str) = rest.split_whitespace().next() {
+                    if let Ok(ps) = num_str.parse::<u64>() {
+                        page_size = ps;
+                    }
+                }
+            }
+            continue;
+        }
+        let parse_pages = |prefix: &str| -> Option<u64> {
+            if trimmed.starts_with(prefix) {
+                let num_part = trimmed.strip_prefix(prefix)?.trim().trim_end_matches('.');
+                num_part.parse::<u64>().ok()
+            } else {
+                None
+            }
+        };
+        if let Some(p) = parse_pages("Pages free:") {
+            pages_free = p;
+        } else if let Some(p) = parse_pages("Pages speculative:") {
+            pages_speculative = p;
+        } else if let Some(p) = parse_pages("Pages active:") {
+            pages_active = p;
+        } else if let Some(p) = parse_pages("Pages inactive:") {
+            pages_inactive = p;
+        } else if let Some(p) = parse_pages("Pages wired down:") {
+            pages_wired = p;
+        } else if let Some(p) = parse_pages("Pages occupied by compressor:") {
+            pages_compressed = p;
+        }
+    }
+
+    let total = total_bytes.unwrap_or_else(|| {
+        (pages_free
+            + pages_speculative
+            + pages_active
+            + pages_inactive
+            + pages_wired
+            + pages_compressed)
+            .saturating_mul(page_size)
+    });
+    if total > 0 {
+        let free_bytes = (pages_free + pages_speculative).saturating_mul(page_size);
+        let used_bytes = total.saturating_sub(free_bytes);
+        map.insert("total_bytes".to_string(), Value::Number(total.into()));
+        map.insert("used_bytes".to_string(), Value::Number(used_bytes.into()));
+    }
+
     Value::Object(map)
 }
 
@@ -157,16 +225,34 @@ fn parse_sh_swap(stdout: &str) -> Value {
 
 fn parse_sh_disk(stdout: &str) -> Value {
     let mut disks = Vec::new();
-    // Parse `df -B1` output (skip header)
-    for line in stdout.lines().skip(1) {
+    let lines: Vec<&str> = stdout.lines().collect();
+    if lines.is_empty() {
+        return Value::Array(disks);
+    }
+    let header = lines[0];
+    let multiplier: u64 = if header.contains("1024-blocks") || header.contains("1K-blocks") {
+        1024
+    } else if header.contains("512-blocks") {
+        512
+    } else {
+        1
+    };
+
+    for line in lines.iter().skip(1) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 6 {
             let mut entry = serde_json::Map::new();
             if let Ok(total) = parts[1].parse::<u64>() {
-                entry.insert("total_bytes".to_string(), Value::Number(total.into()));
+                entry.insert(
+                    "total_bytes".to_string(),
+                    Value::Number((total.saturating_mul(multiplier)).into()),
+                );
             }
             if let Ok(used) = parts[2].parse::<u64>() {
-                entry.insert("used_bytes".to_string(), Value::Number(used.into()));
+                entry.insert(
+                    "used_bytes".to_string(),
+                    Value::Number((used.saturating_mul(multiplier)).into()),
+                );
             }
             entry.insert(
                 "mount".to_string(),
@@ -180,52 +266,72 @@ fn parse_sh_disk(stdout: &str) -> Value {
 
 fn parse_sh_cpu_load(stdout: &str) -> Value {
     let mut map = serde_json::Map::new();
-    // /proc/loadavg: "0.52 0.38 0.21 1/234 5678"
-    let parts: Vec<&str> = stdout.split_whitespace().collect();
+    // Linux /proc/loadavg: "0.52 0.38 0.21 1/234 5678"
+    // macOS sysctl vm.loadavg: "{ 6.94 7.49 6.58 }"
+    let cleaned = stdout
+        .trim()
+        .trim_start_matches('{')
+        .trim_end_matches('}')
+        .trim();
+    let parts: Vec<&str> = cleaned.split_whitespace().collect();
     if parts.len() >= 3 {
         if let Ok(v) = parts[0].parse::<f64>() {
-            map.insert(
-                "load1".to_string(),
-                Value::Number(serde_json::Number::from_f64(v).unwrap_or(0.into())),
-            );
+            if let Some(n) = serde_json::Number::from_f64(v) {
+                map.insert("load1".to_string(), Value::Number(n));
+            }
         }
         if let Ok(v) = parts[1].parse::<f64>() {
-            map.insert(
-                "load5".to_string(),
-                Value::Number(serde_json::Number::from_f64(v).unwrap_or(0.into())),
-            );
+            if let Some(n) = serde_json::Number::from_f64(v) {
+                map.insert("load5".to_string(), Value::Number(n));
+            }
         }
         if let Ok(v) = parts[2].parse::<f64>() {
-            map.insert(
-                "load15".to_string(),
-                Value::Number(serde_json::Number::from_f64(v).unwrap_or(0.into())),
-            );
+            if let Some(n) = serde_json::Number::from_f64(v) {
+                map.insert("load15".to_string(), Value::Number(n));
+            }
         }
     }
     Value::Object(map)
 }
 
 fn parse_sh_network(stdout: &str) -> Value {
-    // Simple: just store raw output as string for now
     Value::String(stdout.trim().to_string())
 }
 
 fn parse_sh_battery(stdout: &str) -> Value {
     let mut map = serde_json::Map::new();
     let trimmed = stdout.trim();
-    if trimmed.is_empty() || trimmed.contains("No such file") {
+    if trimmed.is_empty()
+        || trimmed.contains("No such file")
+        || trimmed.contains("not found")
+        || (trimmed.starts_with("Now drawing from") && !trimmed.contains("InternalBattery"))
+    {
         map.insert("present".to_string(), Value::Bool(false));
-    } else {
+        return Value::Object(map);
+    }
+
+    // Try single number (Linux /sys/class/power_supply/BAT0/capacity)
+    if let Ok(v) = trimmed.parse::<u64>() {
         map.insert("present".to_string(), Value::Bool(true));
-        // Try to extract percentage from various formats
-        for line in stdout.lines() {
-            if let Some(pct) = line.trim().strip_suffix('%') {
-                if let Ok(v) = pct.trim().parse::<u64>() {
-                    map.insert("percent".to_string(), Value::Number(v.into()));
-                    break;
-                }
+        map.insert("percent".to_string(), Value::Number(v.into()));
+        return Value::Object(map);
+    }
+
+    // Try percentage anywhere in output (e.g. "85%;" or "85%")
+    for part in trimmed.split(|c: char| c.is_whitespace() || c == ';' || c == ',') {
+        if let Some(num_str) = part.strip_suffix('%') {
+            if let Ok(v) = num_str.parse::<u64>() {
+                map.insert("present".to_string(), Value::Bool(true));
+                map.insert("percent".to_string(), Value::Number(v.into()));
+                return Value::Object(map);
             }
         }
+    }
+
+    if trimmed.contains("InternalBattery") || trimmed.contains("BAT") {
+        map.insert("present".to_string(), Value::Bool(true));
+    } else {
+        map.insert("present".to_string(), Value::Bool(false));
     }
     Value::Object(map)
 }
@@ -380,5 +486,88 @@ mod tests {
     fn test_parse_ps_swap_empty() {
         let result = parse(ShellType::PowerShell, "swap", "");
         assert_eq!(result, Value::String("".to_string()));
+    }
+
+    #[test]
+    fn test_parse_macos_and_linux_cpu_load_fixtures() {
+        let macos_raw = include_str!("../../tests/fixtures/probes/macos_cpu_load.txt");
+        let val = parse(ShellType::Sh, "cpu_load", macos_raw);
+        assert_eq!(val["load1"], serde_json::json!(6.94));
+        assert_eq!(val["load5"], serde_json::json!(7.49));
+        assert_eq!(val["load15"], serde_json::json!(6.58));
+
+        let linux_raw = include_str!("../../tests/fixtures/probes/linux_cpu_load.txt");
+        let val = parse(ShellType::Sh, "cpu_load", linux_raw);
+        assert_eq!(val["load1"], serde_json::json!(0.52));
+        assert_eq!(val["load5"], serde_json::json!(0.38));
+        assert_eq!(val["load15"], serde_json::json!(0.21));
+    }
+
+    #[test]
+    fn test_parse_macos_and_linux_disk_fixtures() {
+        let macos_raw = include_str!("../../tests/fixtures/probes/macos_disk.txt");
+        let val = parse(ShellType::Sh, "disk", macos_raw);
+        let arr = val.as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        // 239362496 * 1024 = 245107195904 bytes
+        assert_eq!(arr[0]["total_bytes"], serde_json::json!(245107195904u64));
+        assert_eq!(arr[0]["used_bytes"], serde_json::json!(59285569536u64));
+        assert_eq!(arr[0]["mount"], "/");
+
+        let linux_raw = include_str!("../../tests/fixtures/probes/linux_disk.txt");
+        let val = parse(ShellType::Sh, "disk", linux_raw);
+        let arr = val.as_array().expect("array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["total_bytes"], serde_json::json!(10485760000u64));
+        assert_eq!(arr[0]["used_bytes"], serde_json::json!(4194304000u64));
+        assert_eq!(arr[0]["mount"], "/");
+    }
+
+    #[test]
+    fn test_parse_macos_and_linux_memory_fixtures() {
+        let macos_raw = include_str!("../../tests/fixtures/probes/macos_memory.txt");
+        let val = parse(ShellType::Sh, "memory", macos_raw);
+        let total = val["total_bytes"].as_u64().expect("total_bytes");
+        let used = val["used_bytes"].as_u64().expect("used_bytes");
+        assert_eq!(total, 17179869184); // 16 GB from hw.memsize
+                                        // free = (118193 + 80140) * 16384 = 3249491968; used = 17179869184 - 3249491968 = 13930381312
+        assert_eq!(used, 13930381312);
+
+        let linux_raw = include_str!("../../tests/fixtures/probes/linux_memory.txt");
+        let val = parse(ShellType::Sh, "memory", linux_raw);
+        assert_eq!(val["total_bytes"], serde_json::json!(16777216000u64));
+        assert_eq!(val["used_bytes"], serde_json::json!(8388608000u64));
+    }
+
+    #[test]
+    fn test_parse_macos_and_linux_battery_fixtures() {
+        let mac_laptop = include_str!("../../tests/fixtures/probes/macos_battery_laptop.txt");
+        let val = parse(ShellType::Sh, "battery", mac_laptop);
+        assert_eq!(val["present"], serde_json::json!(true));
+        assert_eq!(val["percent"], serde_json::json!(85));
+
+        let mac_desktop = include_str!("../../tests/fixtures/probes/macos_battery_desktop.txt");
+        let val = parse(ShellType::Sh, "battery", mac_desktop);
+        assert_eq!(val["present"], serde_json::json!(false));
+
+        let linux_bat = include_str!("../../tests/fixtures/probes/linux_battery.txt");
+        let val = parse(ShellType::Sh, "battery", linux_bat);
+        assert_eq!(val["present"], serde_json::json!(true));
+        assert_eq!(val["percent"], serde_json::json!(85));
+
+        let linux_missing = include_str!("../../tests/fixtures/probes/linux_battery_missing.txt");
+        let val = parse(ShellType::Sh, "battery", linux_missing);
+        assert_eq!(val["present"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn test_parse_macos_and_linux_path_size_fixtures() {
+        let macos_raw = include_str!("../../tests/fixtures/probes/macos_path_size.txt");
+        let size = parse_path_size(ShellType::Sh, macos_raw);
+        assert_eq!(size, 4096);
+
+        let linux_raw = include_str!("../../tests/fixtures/probes/linux_path_size.txt");
+        let size = parse_path_size(ShellType::Sh, linux_raw);
+        assert_eq!(size, 4096);
     }
 }

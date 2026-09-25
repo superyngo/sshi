@@ -1,0 +1,2 @@
+Filesystem    1024-blocks      Used Available Capacity iused      ifree %iused  Mounted on
+/dev/disk3s1    239362496  57896064 158864304    27%  511842 1588643040    0%   /
