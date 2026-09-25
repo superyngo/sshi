@@ -176,12 +176,30 @@ impl<V> LazyCache<V> {
     async fn insert(&self, key: String, value: Arc<V>) {
         self.inner.lock().await.insert(key, value);
     }
+
+    /// Drop `key`'s entry so the next lookup opens a fresh value (used when
+    /// the SSH connection it was opened on is replaced, B30).
+    async fn remove(&self, key: &str) {
+        self.inner.lock().await.remove(key);
+    }
+}
+
+/// What [`RusshSessionPool`] needs to reconnect a host whose connection
+/// dropped mid-operation (B30).
+struct Reconnect {
+    ssh_config: Arc<crate::config::ssh_config::ParsedSshConfig>,
+    cache: SharedPassphraseCache,
+    auth_sender: Option<SshAuthSender>,
+    timeout: Duration,
+    /// Held while reconnecting (serializes reconnects); holds the hosts whose
+    /// reconnect already failed, which then fail fast instead of retrying.
+    gave_up: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 /// Pool of authenticated russh sessions, one per host alias.
 pub struct RusshSessionPool {
-    /// host alias → open authenticated session handle
-    sessions: HashMap<String, Arc<Handle<SshHandler>>>,
+    /// host alias → open authenticated session handle (replaced on reconnect)
+    sessions: std::sync::RwLock<HashMap<String, Arc<Handle<SshHandler>>>>,
     /// hosts that failed to connect: (alias, error message)
     failed: Vec<(String, String)>,
     /// hosts that failed the SFTP probe: (name, error message)
@@ -198,7 +216,8 @@ pub struct RusshSessionPool {
     /// `(host, dir)` pairs already swept for abandoned upload temp files.
     swept_dirs: tokio::sync::Mutex<std::collections::HashSet<(String, String)>>,
     /// cancel senders for proxy keepalive tasks (one per proxied connection)
-    proxy_cancels: Vec<tokio::sync::oneshot::Sender<()>>,
+    proxy_cancels: std::sync::Mutex<Vec<tokio::sync::oneshot::Sender<()>>>,
+    reconnect: Reconnect,
 }
 
 #[async_trait]
@@ -300,14 +319,21 @@ impl RusshSessionPool {
         }
 
         Ok(Self {
-            sessions,
+            sessions: std::sync::RwLock::new(sessions),
             failed,
             sftp_failed: Vec::new(),
             home_dirs: tokio::sync::Mutex::new(HashMap::new()),
             sftp_cache: LazyCache::new(),
             rename_cache: LazyCache::new(),
             swept_dirs: tokio::sync::Mutex::new(std::collections::HashSet::new()),
-            proxy_cancels,
+            proxy_cancels: std::sync::Mutex::new(proxy_cancels),
+            reconnect: Reconnect {
+                ssh_config,
+                cache,
+                auth_sender,
+                timeout,
+                gave_up: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            },
         })
     }
 
@@ -318,7 +344,68 @@ impl RusshSessionPool {
 
     /// Names of all successfully connected hosts.
     pub fn reachable_hosts(&self) -> Vec<String> {
-        self.sessions.keys().cloned().collect()
+        self.sessions.read().unwrap().keys().cloned().collect()
+    }
+
+    /// The host's session handle. If russh reports the connection closed
+    /// (dropped mid-operation), reconnect once and drop the SFTP channels
+    /// opened on the old connection; a host whose reconnect failed keeps
+    /// failing fast (B30).
+    async fn handle(&self, host_alias: &str) -> Result<Arc<Handle<SshHandler>>> {
+        let current = || {
+            self.sessions
+                .read()
+                .unwrap()
+                .get(host_alias)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))
+        };
+        let handle = current()?;
+        if !handle.is_closed() {
+            return Ok(handle);
+        }
+        let r = &self.reconnect;
+        let mut gave_up = r.gave_up.lock().await;
+        // Another task may have reconnected while this one waited.
+        let handle = current()?;
+        if !handle.is_closed() {
+            return Ok(handle);
+        }
+        if gave_up.contains(host_alias) {
+            anyhow::bail!("Connection to '{}' was lost (reconnect failed)", host_alias);
+        }
+        tracing::warn!(host = host_alias, "SSH connection lost; reconnecting");
+        let connected = connect_one(
+            host_alias,
+            r.timeout,
+            &r.cache,
+            &r.ssh_config,
+            r.auth_sender.as_ref(),
+        )
+        .await;
+        match connected {
+            Ok((handle, cancel_tx)) => {
+                if let Some(tx) = cancel_tx {
+                    self.proxy_cancels.lock().unwrap().push(tx);
+                }
+                self.sftp_cache.remove(host_alias).await;
+                self.rename_cache.remove(host_alias).await;
+                let handle = Arc::new(handle);
+                self.sessions
+                    .write()
+                    .unwrap()
+                    .insert(host_alias.to_string(), Arc::clone(&handle));
+                tracing::info!(host = host_alias, "reconnected");
+                Ok(handle)
+            }
+            Err(e) => {
+                gave_up.insert(host_alias.to_string());
+                Err(e.context(format!(
+                    "Connection to '{}' was lost; reconnect failed",
+                    host_alias
+                )))
+            }
+        }
     }
 
     /// Execute a command on a connected host.
@@ -328,11 +415,7 @@ impl RusshSessionPool {
         cmd: &str,
         timeout_secs: u64,
     ) -> Result<RemoteOutput> {
-        let handle = self
-            .sessions
-            .get(host_alias)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))?
-            .clone();
+        let handle = self.handle(host_alias).await?;
 
         let started = std::time::Instant::now();
         tracing::debug!(host = host_alias, cmd = %crate::util::truncate(cmd, 200), "exec");
@@ -358,11 +441,7 @@ impl RusshSessionPool {
                 return Ok(home.clone());
             }
         }
-        let handle = self
-            .sessions
-            .get(host_alias)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' not connected", host_alias))?
-            .clone();
+        let handle = self.handle(host_alias).await?;
         let home = crate::host::sftp::remote_home_dir(&handle, shell, timeout).await?;
         self.home_dirs
             .lock()
@@ -375,11 +454,7 @@ impl RusshSessionPool {
     /// Subsequent calls return the cached channel, avoiding a fresh SFTP
     /// subsystem negotiation per file transfer.
     async fn sftp_session(&self, host_alias: &str, timeout: Duration) -> Result<Arc<SftpSession>> {
-        let handle = self
-            .sessions
-            .get(host_alias)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))?
-            .clone();
+        let handle = self.handle(host_alias).await?;
         let alias = host_alias.to_string();
         self.sftp_cache
             .get_or_try_insert_with(host_alias, move || {
@@ -400,11 +475,7 @@ impl RusshSessionPool {
         host_alias: &str,
         timeout: Duration,
     ) -> Result<Arc<Option<crate::host::sftp::RenameChannel>>> {
-        let handle = self
-            .sessions
-            .get(host_alias)
-            .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))?
-            .clone();
+        let handle = self.handle(host_alias).await?;
         let alias = host_alias.to_string();
         self.rename_cache
             .get_or_try_insert_with(host_alias, move || async move {
@@ -506,6 +577,8 @@ impl RusshSessionPool {
             .iter()
             .filter_map(|host| {
                 self.sessions
+                    .read()
+                    .unwrap()
                     .get(&host.ssh_host)
                     .map(|h| (host.ssh_host.clone(), host.shell, Arc::clone(h)))
             })
@@ -562,6 +635,8 @@ impl RusshSessionPool {
         let failed: std::collections::HashSet<&str> =
             self.sftp_failed.iter().map(|(n, _)| n.as_str()).collect();
         self.sessions
+            .read()
+            .unwrap()
             .keys()
             .filter(|n| !failed.contains(n.as_str()))
             .cloned()
@@ -570,10 +645,10 @@ impl RusshSessionPool {
 
     /// Close all sessions gracefully.
     pub async fn shutdown(self) {
-        for tx in self.proxy_cancels {
+        for tx in self.proxy_cancels.into_inner().unwrap() {
             let _ = tx.send(());
         }
-        for (_, handle) in self.sessions {
+        for (_, handle) in self.sessions.into_inner().unwrap() {
             let _ = handle
                 .disconnect(russh::Disconnect::ByApplication, "", "en")
                 .await;
@@ -1009,6 +1084,23 @@ mod tests {
         assert_eq!(a.as_str(), "A");
         assert_eq!(b.as_str(), "B");
         assert_eq!(cache.inner.lock().await.len(), 2);
+    }
+
+    /// B30: after `remove`, the next lookup opens a fresh value (the SFTP
+    /// channel of a replaced connection is never reused).
+    #[tokio::test]
+    async fn test_lazy_cache_remove_forces_reopen() {
+        let cache: LazyCache<u32> = LazyCache::new();
+        let first = cache
+            .get_or_try_insert_with("h", || async { Ok::<_, std::convert::Infallible>(1) })
+            .await
+            .unwrap();
+        cache.remove("h").await;
+        let second = cache
+            .get_or_try_insert_with("h", || async { Ok::<_, std::convert::Infallible>(2) })
+            .await
+            .unwrap();
+        assert_eq!((*first, *second), (1, 2));
     }
 
     #[tokio::test]
