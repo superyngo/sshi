@@ -4871,7 +4871,8 @@ mod navbar_focus_tests {
 
     fn minimal_app() -> App {
         let config = crate::config::schema::AppConfig::default();
-        let conn = crate::state::db::open(None).unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn); // never the real per-user state DB
         let ctx = Context {
             config: Arc::new(config),
             config_path: None,

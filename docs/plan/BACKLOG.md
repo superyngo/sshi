@@ -61,6 +61,7 @@ this file existed are recorded in those source documents, not here.
 | B64 | 2026-09-25 | 2026-09-25 | P3 | `cargo audit` after B57: rsa Marvin RUSTSEC-2023-0071 (no upstream fix; via russh/ssh-key), anyhow 1.0.102 unsound `downcast_mut` RUSTSEC-2026-0190 (not called by sshi), lru RUSTSEC-2026-0002/0253 + paste RUSTSEC-2024-0436 (via ratatui 0.29), number_prefix RUSTSEC-2025-0119 (via indicatif 0.17) | `Cargo.toml` ratatui, indicatif | M | ratatui and indicatif upgraded; rsa and anyhow recorded as accepted until upstream fixes |
 | B65 | 2026-09-25 | 2026-09-25 | P3 | Remote SFTP overwrite is remove-then-rename (brief window with no file) because russh-sftp 2.1.1 lacks `posix-rename@openssh.com` | `src/host/sftp.rs` `upload` | S | Upgrade russh-sftp (or send the extension) and replace atomically; SIGKILL-left `.sshi-tmp` files swept |
 | B66 | 2026-09-25 | 2026-09-25 | P1 | Recursive `[[sync]]` entries without `source` are never expanded: `run_recursive_entries` passes the directory path itself to `sync_path_across`, so the sync fails downloading the directory or reports "synced" with nothing copied (docs claim a union of per-host expansions) | `src/commands/sync/mod.rs` `run_recursive_entries` | M | Directory expanded (union across hosts) when no source is fixed; files copied; docs match |
+| B68 | 2026-09-25 | 2026-09-25 | P3 | TUI tests build `App` via `App::new`, whose `persist::state_file_path` resolves the real state dir and runs the B44 legacy migration (copies the user's `~/.local/state/sshi` into the active state dir) | `src/tui/app.rs` `App::new` (test `minimal_app`); `src/tui/state/persist.rs` | S | Tests pass an explicit temp state path; no test touches the user's state dirs |
 
 ## Pending verification
 
@@ -96,6 +97,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B67 | Tests opened the real per-user state DB (`db::open(None)`); parallel migrations raced on a fresh file (CI failure) | HASH-B67 — `list` / `navbar_focus_tests` use `open_in_memory` + `migrate_for_test`; 40/40 parallel runs pass (were 38/40 failing) |
 | B5 | Recursive sync wrote DB rows one auto-commit each | `3d44f34` — `SyncRows` + shared `flush_sync_rows` (one transaction); 500-file run: same rows, time unchanged (~9.9 s) |
 | B33 | "newest" picked the source by host reply order on equal mtimes | `1f22bfe` — tie with different contents is a conflict (`newest_tie_hosts` via `skip_conflict_hosts`); option A chosen by user |
 | B32 | Sync metadata collection silently dropped a host whose query failed | `59fe57a` — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |

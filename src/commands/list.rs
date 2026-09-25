@@ -143,7 +143,8 @@ mod tests {
                 proxy_jump: None,
             }));
         }
-        let conn = crate::state::db::open(None).unwrap();
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn); // never the real per-user state DB
         Context {
             config: std::sync::Arc::new(config),
             config_path: None,

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- test: `list` and TUI navbar tests use an in-memory database instead of the real per-user state DB, fixing a CI race (`duplicate column name` / `file is not a database`) when parallel tests migrated the same fresh file (B67).
 - fix: recursive `sync` records its database rows in one transaction per run instead of one auto-commit per row, sharing the batch path's writer; rows of transfers that completed are still written if a later file errors. Measured wall time unchanged (per-file remote round-trips dominate, B34) (B5).
 - fix: with `conflict_strategy = "newest"`, hosts that share the newest mtime but hold different contents are now reported as a conflict and left untouched, instead of one being picked by reply order and silently overwriting the other (B33).
 - fix: `sync` no longer silently drops a host whose metadata query fails — it is reported as failed (exit 3) with the reason, instead of the run claiming success while that host was never checked or updated; one unreadable file no longer fails a PowerShell/cmd host's whole batch (B32).
