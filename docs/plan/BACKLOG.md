@@ -18,7 +18,6 @@ this file existed are recorded in those source documents, not here.
 |---|---|---|---|---|---|---|---|
 | B3 | 2026-05-21 | 2026-09-25 | P2 | Config tab breadcrumb indexes `config.host/check/sync[*i]` directly in the FieldTable branch; stale index panics | `src/tui/tabs/config_tab.rs` `breadcrumb` | S | Uses `.get(*i)` with fallback; stale index renders without panic |
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
-| B5 | 2026-07-18 | 2026-09-25 | P2 | Recursive-sync drain in `sync_path_across` writes DB rows one by one outside a transaction | `src/commands/sync/mod.rs` `sync_path_across` | S | Inserts batched in one `ctx.db.transaction` |
 | B6 | 2026-07-18 | 2026-09-25 | P2 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `src/tui/focus.rs` | S | Types wired in or deleted; allow removed |
 | B8 | 2026-07-18 | 2026-09-25 | P3 | `batch_keyscan_and_accept` panics if the home directory cannot be resolved | `src/commands/init/core.rs` `batch_keyscan_and_accept` | S | Returns an `anyhow` error instead of `.expect` |
 | B9 | 2026-07-18 | 2026-09-25 | P3 | HTML report templating lives inside the general report module | `src/output/report.rs` `render_html_report` | M | HTML rendering in its own module |
@@ -61,6 +60,7 @@ this file existed are recorded in those source documents, not here.
 | B62 | 2026-09-25 | 2026-09-25 | P3 | Sync "source does not have path" lines call `printer::print_host_line("skip", &source, …)` with host and status swapped, so the host lands in the status slot and renders as a `·` with no name (found while fixing B25) Same swap on the `-v` "unreachable" and "sftp-failed" lines in `sync_inner` (`print_host_line("unreachable", "error", …)`). | `src/commands/sync/mod.rs` fixed-source skip branches | S | Source-skip lines render `⊘` and name the source host |
 | B64 | 2026-09-25 | 2026-09-25 | P3 | `cargo audit` after B57: rsa Marvin RUSTSEC-2023-0071 (no upstream fix; via russh/ssh-key), anyhow 1.0.102 unsound `downcast_mut` RUSTSEC-2026-0190 (not called by sshi), lru RUSTSEC-2026-0002/0253 + paste RUSTSEC-2024-0436 (via ratatui 0.29), number_prefix RUSTSEC-2025-0119 (via indicatif 0.17) | `Cargo.toml` ratatui, indicatif | M | ratatui and indicatif upgraded; rsa and anyhow recorded as accepted until upstream fixes |
 | B65 | 2026-09-25 | 2026-09-25 | P3 | Remote SFTP overwrite is remove-then-rename (brief window with no file) because russh-sftp 2.1.1 lacks `posix-rename@openssh.com` | `src/host/sftp.rs` `upload` | S | Upgrade russh-sftp (or send the extension) and replace atomically; SIGKILL-left `.sshi-tmp` files swept |
+| B66 | 2026-09-25 | 2026-09-25 | P1 | Recursive `[[sync]]` entries without `source` are never expanded: `run_recursive_entries` passes the directory path itself to `sync_path_across`, so the sync fails downloading the directory or reports "synced" with nothing copied (docs claim a union of per-host expansions) | `src/commands/sync/mod.rs` `run_recursive_entries` | M | Directory expanded (union across hosts) when no source is fixed; files copied; docs match |
 
 ## Pending verification
 
@@ -96,6 +96,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B5 | Recursive sync wrote DB rows one auto-commit each | HASH-B5 — `SyncRows` + shared `flush_sync_rows` (one transaction); 500-file run: same rows, time unchanged (~9.9 s) |
 | B33 | "newest" picked the source by host reply order on equal mtimes | `1f22bfe` — tie with different contents is a conflict (`newest_tie_hosts` via `skip_conflict_hosts`); option A chosen by user |
 | B32 | Sync metadata collection silently dropped a host whose query failed | `59fe57a` — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |
 | B7 | TUI auth-bridge wait had no timeout; stale popups stayed open | `e237fc7` — `await_credential` with `AUTH_POPUP_TIMEOUT` (120 s); `PopupState::prune_stale_auth` |

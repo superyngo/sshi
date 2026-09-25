@@ -231,4 +231,4 @@ Entries configured with `recursive = true` bypass the batched collect/decide/dis
 
 1. **Directory Expansion**: Expands directory contents on the source host (or computes the union of expanded paths across reachable hosts when no fixed source is specified).
 2. **Per-File Synchronization**: Executes `sync_path_across` sequentially for each expanded file path, collecting metadata (`collect_file_metadata`), making individual `SyncDecision` evaluations, and executing `distribute_pooled`.
-3. **Incremental Recording**: Each synchronized file commits its outcome immediately to SQLite (`sync_state` and `operation_log`) and dispatches progress updates to the caller's `ProgressSink`.
+3. **Recording**: Each synchronized file adds its `sync_state` / `operation_log` rows to a `SyncRows` buffer; `flush_sync_rows` writes them in one transaction after the last recursive entry (or before returning an error, so completed transfers are still recorded). The batch path uses the same helper. Progress updates still go to the caller's `ProgressSink` per file.

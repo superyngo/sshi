@@ -342,6 +342,7 @@ async fn sync_path_across_distributes_newest_to_older() {
     );
     let sessions: Arc<dyn SessionPool> = mock.clone();
     let mut summary = SyncSummary::default();
+    let mut rows = crate::commands::sync::SyncRows::default();
 
     sync_path_across(
         &ctx,
@@ -354,6 +355,7 @@ async fn sync_path_across_distributes_newest_to_older() {
         sessions,
         &mut summary,
         true, // quiet
+        &mut rows,
     )
     .await
     .unwrap();
@@ -363,6 +365,11 @@ async fn sync_path_across_distributes_newest_to_older() {
     assert_eq!(mock.downloads()[0].0, "host-b");
     assert_eq!(mock.uploads().len(), 1);
     assert_eq!(mock.uploads()[0].0, "host-a");
+    // B5: DB rows are collected for one transaction, not written per file.
+    assert_eq!(rows.sync_state.len(), 1);
+    assert_eq!(rows.sync_state[0].1, "host-a");
+    assert_eq!(rows.op_log.len(), 1);
+    assert_eq!(rows.op_log[0].1, "host-b");
 }
 
 /// `sync_path_across` all-in-sync: no uploads, no downloads.
@@ -379,6 +386,7 @@ async fn sync_path_across_in_sync_no_io() {
     );
     let sessions: Arc<dyn SessionPool> = mock.clone();
     let mut summary = SyncSummary::default();
+    let mut rows = crate::commands::sync::SyncRows::default();
 
     sync_path_across(
         &ctx,
@@ -391,6 +399,7 @@ async fn sync_path_across_in_sync_no_io() {
         sessions,
         &mut summary,
         true,
+        &mut rows,
     )
     .await
     .unwrap();
