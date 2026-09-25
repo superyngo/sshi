@@ -164,6 +164,19 @@ pub(crate) fn fetch_latest_snapshots(
     Ok(snapshots)
 }
 
+/// SQL for the newest `?{limit_param}` snapshots of *each* host in
+/// `placeholders` (a global `LIMIT` would let one busy host starve the rest).
+fn combined_snapshot_sql(placeholders: &str, limit_param: usize) -> String {
+    format!(
+        "SELECT host, collected_at, online, raw_json FROM ( \
+           SELECT host, collected_at, online, raw_json, \
+                  ROW_NUMBER() OVER (PARTITION BY host ORDER BY collected_at DESC) AS rn \
+           FROM check_snapshots WHERE host IN ({placeholders}) \
+         ) WHERE rn <= ?{limit_param} \
+         ORDER BY host, collected_at DESC"
+    )
+}
+
 /// Per-metric combined snapshot: for each host and each metric, find the most
 /// recent snapshot that has a non-null value for that metric, then assemble a
 /// synthetic `HostSnapshot` from those best-available values.
@@ -187,13 +200,7 @@ pub(crate) fn fetch_combined_snapshots(
         .collect::<Vec<_>>()
         .join(",");
 
-    let snapshot_sql = format!(
-        "SELECT host, collected_at, online, raw_json \
-         FROM check_snapshots WHERE host IN ({}) \
-         ORDER BY host, collected_at DESC LIMIT ?{}",
-        placeholders,
-        host_names.len() + 1
-    );
+    let snapshot_sql = combined_snapshot_sql(&placeholders, host_names.len() + 1);
     let last_seen_sql = format!(
         "SELECT host, last_online FROM host_last_seen WHERE host IN ({})",
         placeholders
@@ -277,4 +284,36 @@ pub(crate) fn fetch_combined_snapshots(
         });
     }
     Ok(snapshots)
+}
+
+#[cfg(test)]
+mod combined_sql_tests {
+    use super::combined_snapshot_sql;
+
+    #[test]
+    fn lookback_applies_per_host_not_globally() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        crate::state::db::migrate_for_test(&conn);
+        for i in 0..60 {
+            conn.execute(
+                "INSERT INTO check_snapshots(host, collected_at, online, raw_json) VALUES ('server1', ?1, 1, '{}')",
+                [1000 - i],
+            )
+            .unwrap();
+        }
+        conn.execute(
+            "INSERT INTO check_snapshots(host, collected_at, online, raw_json) VALUES ('server2', 500, 1, '{}')",
+            [],
+        )
+        .unwrap();
+        let sql = combined_snapshot_sql("?1,?2", 3);
+        let mut stmt = conn.prepare(&sql).unwrap();
+        let hosts: Vec<String> = stmt
+            .query_map(rusqlite::params!["server1", "server2", 50i64], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(hosts.iter().filter(|h| *h == "server1").count(), 50);
+        assert_eq!(hosts.iter().filter(|h| *h == "server2").count(), 1);
+    }
 }

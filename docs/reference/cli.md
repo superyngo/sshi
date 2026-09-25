@@ -182,7 +182,7 @@ Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial
 #### Options
 - `--history`: Query historical trend data for targeted hosts. (Note: currently ignored in the terminal table view; preserved in `--out` report metadata.)
 - `--since <TIME>`: History query start boundary. Supports relative days (e.g. `7d`), relative hours (e.g. `24h`), or absolute dates (`YYYY-MM-DD`). (Note: currently ignored in the terminal table view; preserved in `--out` report metadata.)
-- `--combined-view`: Per-metric combined view: displays the most recent recorded value for each metric column across all historical snapshots rather than only the single latest snapshot.
+- `--combined-view`: Per-metric combined view: displays the most recent recorded value for each metric column across the 50 most recent snapshots of each host rather than only the single latest snapshot.
 - `-o, --out [PATH]`: Write structured report to `.json` or `.html`.
 - `-H, --help`: Print help.
 
