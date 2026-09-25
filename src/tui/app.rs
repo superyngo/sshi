@@ -5117,7 +5117,10 @@ mod navbar_focus_tests {
             let _ = std::fs::remove_file(&app.state_file_path);
             app.save_state();
             assert!(app.state_save_due.is_some());
-            assert!(!app.state_file_path.exists(), "no write before the debounce");
+            assert!(
+                !app.state_file_path.exists(),
+                "no write before the debounce"
+            );
             app.write_state();
             assert!(app.state_file_path.exists());
         });

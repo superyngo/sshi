@@ -244,6 +244,15 @@ pub struct ConfigTabState {
     pub direct_group_picker: Option<DirectGroupPickerState>,
 }
 
+/// Identity of a sidebar entry across config reloads (B4).
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum EntryKey {
+    /// `[[host]]` entries have no `id`; their `name` (unique per config) is it.
+    Host(String),
+    /// `[[check]]` / `[[sync]]` entries carry a stable `id`.
+    Id(String),
+}
+
 /// Cursor-position snapshot captured before save+reload, restored after.
 ///
 /// `sidebar_idx` covers what spec §7.2 calls `section_idx + entry_idx`: the real
@@ -257,17 +266,16 @@ pub struct ConfigTabState {
 ///
 /// Each field is clamped against the post-reload state in `restore_selection`.
 ///
-/// `entry_id` is the stable `id` of the selected `Host/Check/Sync` entry at
-/// capture time (audit §1 P8 MED). When non-empty, `restore_selection`
-/// prefers a sidebar lookup by id over the positional `sidebar_idx` fallback,
-/// so deleting host #2 of 5 lands the cursor on the next host by identity
-/// rather than whatever now occupies position 2. Empty for section-header
-/// selections and for legacy configs that predate the `id` field — those
-/// still fall back to the positional clamp.
+/// `entry_key` is the identity of the selected entry at capture time: the
+/// host `name`, or the check/sync `id` (audit §1 P8 MED, B4). When set,
+/// `restore_selection` looks the entry up by identity, so deleting host #2
+/// of 5 keeps the cursor on the same host; it falls back to the positional
+/// `sidebar_idx` clamp when the entry is gone, for section headers, and for
+/// legacy check/sync entries without an `id`.
 #[derive(Default, Clone, Debug)]
 pub struct ConfigSelectionSnapshot {
     sidebar_idx: usize,
-    entry_id: String,
+    entry_key: Option<EntryKey>,
     /// Outer right-panel field cursor. Restored when the entry form is closed
     /// at the time of restoration (i.e. user committed a direct popup or
     /// inline edit and we want to land back on the same row).
@@ -339,7 +347,7 @@ impl ConfigTabState {
     pub(crate) fn capture_selection(&self, config: &AppConfig) -> ConfigSelectionSnapshot {
         let mut snap = ConfigSelectionSnapshot {
             sidebar_idx: self.sidebar_vp.selected,
-            entry_id: self.selected_entry_id(config).unwrap_or_default(),
+            entry_key: self.selected_entry_key(config),
             field_vp_idx: self.field_vp.selected,
             ..Default::default()
         };
@@ -366,11 +374,10 @@ impl ConfigTabState {
             }
         };
         let sidebar_len = self.items.len();
-        let resolved = if !snap.entry_id.is_empty() {
-            self.find_sidebar_idx_by_id(&snap.entry_id, config)
-        } else {
-            None
-        };
+        let resolved = snap
+            .entry_key
+            .as_ref()
+            .and_then(|key| self.find_sidebar_idx_by_key(key, config));
         self.sidebar_vp.selected = resolved.unwrap_or_else(|| clamp(snap.sidebar_idx, sidebar_len));
         self.sidebar_vp
             .set_dims(sidebar_len, self.sidebar_vp.visible_height);
@@ -415,29 +422,32 @@ impl ConfigTabState {
     /// `None` for section-header selections, out-of-range indices, and
     /// `Host` entries — `HostEntry` has no `id` field (only Check/Sync got
     /// one per AD-18), so host deletions fall back to positional clamping.
-    fn selected_entry_id(&self, config: &AppConfig) -> Option<String> {
-        match self.items.get(self.sidebar_vp.selected) {
-            Some(SidebarItem::Check(i)) => config.check.get(*i).map(|c| c.id.clone()),
-            Some(SidebarItem::Sync(i)) => config.sync.get(*i).map(|s| s.id.clone()),
+    /// Identity of the selected entry (`None` for section headers and for
+    /// check/sync entries without an `id`, which then restore by position).
+    fn selected_entry_key(&self, config: &AppConfig) -> Option<EntryKey> {
+        match self.items.get(self.sidebar_vp.selected)? {
+            SidebarItem::Host(i) => config.host.get(*i).map(|h| EntryKey::Host(h.name.clone())),
+            SidebarItem::Check(i) => config.check.get(*i).map(|c| EntryKey::Id(c.id.clone())),
+            SidebarItem::Sync(i) => config.sync.get(*i).map(|s| EntryKey::Id(s.id.clone())),
             _ => None,
         }
+        .filter(|key| !matches!(key, EntryKey::Id(id) if id.is_empty()))
     }
 
-    /// First sidebar index whose underlying entry has the given `id`.
-    /// `None` if `id` is empty, no entry has it, or the matching entry was
-    /// removed entirely from the reloaded config. Only Check/Sync entries
-    /// carry an `id` (see `selected_entry_id`).
-    fn find_sidebar_idx_by_id(&self, id: &str, config: &AppConfig) -> Option<usize> {
-        if id.is_empty() {
-            return None;
-        }
-        self.items.iter().enumerate().find_map(|(i, item)| {
-            let entry_id = match item {
-                SidebarItem::Check(idx) => config.check.get(*idx).map(|c| &c.id),
-                SidebarItem::Sync(idx) => config.sync.get(*idx).map(|s| &s.id),
-                _ => None,
-            };
-            entry_id.filter(|eid| *eid == id).map(|_| i)
+    /// First sidebar index whose entry has identity `key`; `None` when the
+    /// entry is gone from the reloaded config.
+    fn find_sidebar_idx_by_key(&self, key: &EntryKey, config: &AppConfig) -> Option<usize> {
+        self.items.iter().position(|item| match (item, key) {
+            (SidebarItem::Host(idx), EntryKey::Host(name)) => {
+                config.host.get(*idx).is_some_and(|h| h.name == *name)
+            }
+            (SidebarItem::Check(idx), EntryKey::Id(id)) => {
+                config.check.get(*idx).is_some_and(|c| c.id == *id)
+            }
+            (SidebarItem::Sync(idx), EntryKey::Id(id)) => {
+                config.sync.get(*idx).is_some_and(|s| s.id == *id)
+            }
+            _ => false,
         })
     }
 
@@ -3166,7 +3176,7 @@ mod tests {
             Some(SidebarItem::Sync(1))
         ));
         let snap = state.capture_selection(&config);
-        assert_eq!(snap.entry_id, "id-1");
+        assert_eq!(snap.entry_key, Some(EntryKey::Id("id-1".into())));
 
         // Simulate reload after the user deleted the *first* sync entry.
         // The captured cursor was on Sync(1) → after deletion, the same
@@ -3199,12 +3209,12 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_falls_back_to_positional_when_entry_id_missing() {
-        // HostEntry has no `id` field (only Check/Sync); host-deletion
-        // restore must still work via positional clamping. This codifies
-        // the E5 scope gap so a future change doesn't silently regress.
+    fn snapshot_restores_host_by_name() {
+        // B4: hosts have no `id`; their name is the identity. Deleting another
+        // host keeps the cursor on the same host, deleting the selected one
+        // falls back to the same position (the next host).
         let mut config = AppConfig::default();
-        for i in 0..3 {
+        for i in 0..5 {
             config.host.push(Arc::new(HostEntry {
                 name: format!("h{i}"),
                 ssh_host: format!("{i}.{i}.{i}.{i}"),
@@ -3213,26 +3223,40 @@ mod tests {
                 proxy_jump: None,
             }));
         }
+        let rebuild = |state: &mut ConfigTabState, config: &AppConfig| {
+            state.items = build_sidebar_items(config, &state.collapsed);
+            state.sidebar_vp = Viewport::new();
+            state.sidebar_vp.set_dims(state.items.len(), 0);
+        };
+        let host_at = |state: &ConfigTabState, config: &AppConfig| match state
+            .items
+            .get(state.sidebar_vp.selected)
+        {
+            Some(SidebarItem::Host(i)) => config.host[*i].name.clone(),
+            other => panic!("expected a host row, got {other:?}"),
+        };
         let mut state = ConfigTabState::new(&config, None);
-        // Walk to Host(1).
-        for _ in 0..3 {
+        // SectionSettings, SectionHosts, Host(0) .. → Host(3) = "h3".
+        for _ in 0..5 {
             state.sidebar_vp.move_down();
         }
+        assert_eq!(host_at(&state, &config), "h3");
         let snap = state.capture_selection(&config);
-        assert!(snap.entry_id.is_empty(), "HostEntry has no id field");
-        // Simulate deleting Host(0); positional clamp lands on the new
-        // Host(1) (which was Host(2) before).
-        config.host.remove(0);
-        state.items = build_sidebar_items(&config, &state.collapsed);
-        state.sidebar_vp = Viewport::new();
-        state.sidebar_vp.set_dims(state.items.len(), 0);
+        assert_eq!(snap.entry_key, Some(EntryKey::Host("h3".into())));
+
+        // Delete host 2 of 5 ("h1"): the cursor stays on "h3".
+        config.host.remove(1);
+        rebuild(&mut state, &config);
         state.restore_selection(snap, &config);
-        let expected = state
-            .items
-            .iter()
-            .position(|i| matches!(i, SidebarItem::Host(1)))
-            .unwrap();
-        assert_eq!(state.sidebar_vp.selected, expected);
+        assert_eq!(host_at(&state, &config), "h3");
+
+        // Delete the selected host: position fallback lands on the next one.
+        let snap = state.capture_selection(&config);
+        let idx = config.host.iter().position(|h| h.name == "h3").unwrap();
+        config.host.remove(idx);
+        rebuild(&mut state, &config);
+        state.restore_selection(snap, &config);
+        assert_eq!(host_at(&state, &config), "h4");
     }
 
     #[test]
