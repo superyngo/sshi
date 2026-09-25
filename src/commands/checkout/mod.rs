@@ -13,11 +13,11 @@ mod report;
 #[cfg(feature = "tui")]
 pub(crate) use core::{fetch_combined_snapshots, fetch_latest_snapshots};
 pub(crate) use core::{DisplayColumns, HostSnapshot};
+#[cfg(feature = "tui")]
+pub(crate) use report::checkout_operation_report;
 pub use report::CheckoutReport;
 
 use anyhow::Result;
-
-use crate::output::report::{FilterInfo, HostResult, OperationReport, ReportSummary};
 
 use super::Context;
 
@@ -42,52 +42,12 @@ pub async fn run(
     print_table_report(&report.hosts, &columns);
 
     if let Some(out) = &output.out {
-        let report_results: Vec<HostResult> = report
-            .hosts
-            .iter()
-            .map(|snap| {
-                let collected_at_str = if snap.collected_at > 0 {
-                    chrono::DateTime::from_timestamp(snap.collected_at, 0)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_else(|| snap.collected_at.to_string())
-                } else {
-                    "never".to_string()
-                };
-                HostResult {
-                    host: snap.host.clone(),
-                    status: if snap.online { "success" } else { "error" }.to_string(),
-                    duration_ms: None,
-                    output: serde_json::json!({
-                        "collected_at": collected_at_str,
-                        "online": snap.online,
-                        "snapshot": snap.data,
-                    }),
-                }
-            })
-            .collect();
-
-        let rep_summary = ReportSummary {
-            total: report_results.len(),
-            success: report_results
-                .iter()
-                .filter(|r| r.status == "success")
-                .count(),
-            failed: report_results
-                .iter()
-                .filter(|r| r.status == "error")
-                .count(),
-            skipped: 0,
-        };
-
-        let cr = OperationReport {
-            executed_at: report.executed_at.clone(),
-            command: "checkout".to_string(),
-            filter: FilterInfo::from_mode(&ctx.mode),
-            task: serde_json::json!({}),
-            targets: report.targets.clone(),
-            results: report_results,
-            summary: rep_summary,
-        };
+        let cr = report::checkout_operation_report(
+            &report.executed_at,
+            &ctx.mode,
+            &report.targets,
+            &report.hosts,
+        );
         let path = crate::output::report::write_report(
             &cr,
             out,

@@ -10,9 +10,10 @@
 use std::collections::BTreeSet;
 
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
 
 use crate::config::schema::AppConfig;
-use crate::tui::state::persist::ShellMode;
+use crate::tui::state::persist::{ShellMode, TargetFilterMode, TargetFilterState};
 
 /// Human-readable lowercase label for a `ShellMode` variant ("sh",
 /// "powershell", "cmd"). Used by Operate, View, and the target-filter
@@ -47,6 +48,66 @@ pub fn focus_accent(focused: bool, accent: Color) -> Style {
     } else {
         Style::default()
     }
+}
+
+/// "Target: ◉ All ○ Groups ○ Hosts ○ Shell (N hosts)" — the target-mode row
+/// shared by the Operate and View tabs (B54). `focused` is true only while
+/// the row has keyboard focus in the active panel.
+pub fn target_mode_line(
+    filter: &TargetFilterState,
+    host_count: usize,
+    focused: bool,
+    accent: Color,
+    inactive: Color,
+) -> Line<'static> {
+    let modes = [
+        (TargetFilterMode::All, "All"),
+        (TargetFilterMode::Groups, "Groups"),
+        (TargetFilterMode::Hosts, "Hosts"),
+        (TargetFilterMode::Shell, "Shell"),
+    ];
+    let mut spans = vec![Span::raw(" Target:  ")];
+    for (mode, label) in modes {
+        let selected = mode == filter.mode;
+        let prefix = if selected { "◉ " } else { "○ " };
+        let style = match (selected, focused) {
+            (true, true) => Style::default()
+                .fg(accent)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+            (true, false) => Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            (false, _) => Style::default().fg(inactive),
+        };
+        spans.push(Span::styled(format!("{prefix}{label}"), style));
+        spans.push(Span::raw("   "));
+    }
+    spans.push(Span::styled(
+        format!("({host_count} hosts)"),
+        Style::default().fg(inactive),
+    ));
+    Line::from(spans)
+}
+
+/// "Members: …" (or "Shell: …") row under the target mode; `value_style`
+/// carries the tab's focus styling (B54).
+pub fn target_members_line(filter: &TargetFilterState, value_style: Style) -> Line<'static> {
+    let (label, value) = match filter.mode {
+        TargetFilterMode::Groups => ("Members", chips(&filter.groups, "no groups")),
+        TargetFilterMode::Hosts => ("Members", chips(&filter.hosts, "no hosts")),
+        TargetFilterMode::Shell => ("Shell", shell_label(filter.shell).to_string()),
+        TargetFilterMode::All => ("Members", String::new()),
+    };
+    Line::from(vec![
+        Span::raw(format!(" {label}: ")),
+        Span::styled(value, value_style),
+    ])
+}
+
+/// "Skip: …" row; `value_style` carries the tab's focus styling (B54).
+pub fn target_skip_line(filter: &TargetFilterState, value_style: Style) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(" Skip:    "),
+        Span::styled(chips(&filter.skip, "none"), value_style),
+    ])
 }
 
 /// All group names referenced by any host in `config`, plus any

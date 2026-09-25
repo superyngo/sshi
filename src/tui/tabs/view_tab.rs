@@ -183,67 +183,27 @@ fn view_focus_style(focused: bool, theme: &Theme) -> Style {
 }
 
 fn view_target_mode_line<'a>(data: &ViewRenderData) -> Line<'a> {
-    let focused = data.target_mode_focused;
-    let modes = [
-        (TargetFilterMode::All, "All"),
-        (TargetFilterMode::Groups, "Groups"),
-        (TargetFilterMode::Hosts, "Hosts"),
-        (TargetFilterMode::Shell, "Shell"),
-    ];
-    let mut spans = vec![Span::raw(" Target:  ")];
-    for (m, label) in modes {
-        let selected = m == data.target_filter.mode;
-        let prefix = if selected { "◉ " } else { "○ " };
-        let style = if selected && focused {
-            Style::default()
-                .fg(data.theme.accent_checkout)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-        } else if selected {
-            Style::default()
-                .fg(data.theme.accent_checkout)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(data.theme.inactive)
-        };
-        spans.push(Span::styled(format!("{prefix}{label}"), style));
-        spans.push(Span::raw("   "));
-    }
-    spans.push(Span::styled(
-        format!("({} hosts)", data.target_count),
-        Style::default().fg(data.theme.inactive),
-    ));
-    Line::from(spans)
+    shared::target_mode_line(
+        data.target_filter,
+        data.target_count,
+        data.target_mode_focused,
+        data.theme.accent_checkout,
+        data.theme.inactive,
+    )
 }
 
 fn view_members_line<'a>(data: &ViewRenderData) -> Line<'a> {
-    let tf = data.target_filter;
-    let (label, value) = match tf.mode {
-        TargetFilterMode::Groups => ("Members", view_chips(&tf.groups, "no groups")),
-        TargetFilterMode::Hosts => ("Members", view_chips(&tf.hosts, "no hosts")),
-        TargetFilterMode::Shell => ("Shell", shell_label(tf.shell).to_string()),
-        TargetFilterMode::All => ("Members", String::new()),
-    };
-    Line::from(vec![
-        Span::raw(format!(" {label}: ")),
-        Span::styled(
-            value,
-            view_focus_style(data.target_members_focused, data.theme),
-        ),
-    ])
-}
-
-fn shell_label(s: super::super::state::persist::ShellMode) -> &'static str {
-    shared::shell_label(s)
+    shared::target_members_line(
+        data.target_filter,
+        view_focus_style(data.target_members_focused, data.theme),
+    )
 }
 
 fn view_skip_line<'a>(data: &ViewRenderData) -> Line<'a> {
-    Line::from(vec![
-        Span::raw(" Skip:    "),
-        Span::styled(
-            view_chips(&data.target_filter.skip, "none"),
-            view_focus_style(data.skip_focused, data.theme),
-        ),
-    ])
+    shared::target_skip_line(
+        data.target_filter,
+        view_focus_style(data.skip_focused, data.theme),
+    )
 }
 
 /// Combined-view toggle row (Checkout only): shows a checkbox that the user
@@ -259,10 +219,6 @@ fn view_combined_toggle_line<'a>(data: &ViewRenderData) -> Line<'a> {
         label,
         view_focus_style(data.combined_toggle_focused, data.theme),
     ))
-}
-
-fn view_chips(items: &[String], empty: &str) -> String {
-    shared::chips(items, empty)
 }
 
 /// Horizontal radio selector for checkout / list / log.

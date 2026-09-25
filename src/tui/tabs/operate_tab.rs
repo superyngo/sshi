@@ -440,57 +440,30 @@ fn op_radio_line<'a>(data: &OperateRenderData) -> Line<'a> {
 }
 
 fn target_mode_line<'a>(data: &OperateRenderData) -> Line<'a> {
-    let focused = data.focus == OpField::TargetMode;
-    let active = !data.navbar_focused;
-    let modes = [
-        (TargetFilterMode::All, "All"),
-        (TargetFilterMode::Groups, "Groups"),
-        (TargetFilterMode::Hosts, "Hosts"),
-        (TargetFilterMode::Shell, "Shell"),
-    ];
-    let mut spans = vec![Span::raw(" Target:  ")];
-    for (m, label) in modes {
-        let selected = m == data.target_filter.mode;
-        let prefix = if selected { "◉ " } else { "○ " };
-        spans.push(Span::styled(
-            format!("{prefix}{label}"),
-            radio_style(selected, focused, active, data.theme),
-        ));
-        spans.push(Span::raw("   "));
-    }
-    spans.push(Span::styled(
-        format!("({} hosts)", data.target_count),
-        Style::default().fg(data.theme.inactive),
-    ));
-    Line::from(spans)
+    let focused = data.focus == OpField::TargetMode && !data.navbar_focused;
+    shared::target_mode_line(
+        data.target_filter,
+        data.target_count,
+        focused,
+        data.theme.accent_operate,
+        data.theme.inactive,
+    )
 }
 
 fn members_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::TargetMembers;
-    let active = !data.navbar_focused;
-    let tf = data.target_filter;
-    let (label, value) = match tf.mode {
-        TargetFilterMode::Groups => ("Members", shared::chips(&tf.groups, "no groups")),
-        TargetFilterMode::Hosts => ("Members", shared::chips(&tf.hosts, "no hosts")),
-        TargetFilterMode::Shell => ("Shell", shared::shell_label(tf.shell).to_string()),
-        TargetFilterMode::All => ("Members", String::new()),
-    };
-    Line::from(vec![
-        Span::raw(format!(" {label}: ")),
-        Span::styled(value, focus_style(focused, active, data.theme)),
-    ])
+    shared::target_members_line(
+        data.target_filter,
+        focus_style(focused, !data.navbar_focused, data.theme),
+    )
 }
 
 fn skip_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::Skip;
-    let active = !data.navbar_focused;
-    Line::from(vec![
-        Span::raw(" Skip:    "),
-        Span::styled(
-            shared::chips(&data.target_filter.skip, "none"),
-            focus_style(focused, active, data.theme),
-        ),
-    ])
+    shared::target_skip_line(
+        data.target_filter,
+        focus_style(focused, !data.navbar_focused, data.theme),
+    )
 }
 
 fn serial_line<'a>(data: &OperateRenderData) -> Line<'a> {

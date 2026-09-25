@@ -92,6 +92,7 @@ When the top navigation bar is focused (`navbar_focused == true`):
 - **Activation**: Press `o` on the View tab when snapshots, log rows, or list entries are present.
 - **Behavior**: Prompts for an output file path (defaults to timestamped `.json` or `.html`).
 - **Actions**: `Enter` confirms and exports the report; `Esc` cancels.
+- **Format**: A Checkout export is built by the same function as `sshi checkout --out` (`checkout_operation_report`), so both write the same document for the same rows (timestamps in UTC); its `targets` are the rows on screen.
 
 ### Member & Name Pickers (`MemberPicker`)
 - **Activation**: Press `Enter` on multi-select/single-select fields in Operate or View tabs (e.g., Target Groups, Target Hosts, Skip Hosts, Shell Mode, Check Names, Sync Names, Sync Source).

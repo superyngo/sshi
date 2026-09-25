@@ -960,66 +960,24 @@ impl App {
 
     fn execute_view_export(&mut self, path: &str) -> Result<()> {
         let target_mode = build_target_mode(&self.target_filter, &self.config);
-        let executed_at = chrono::Local::now().to_rfc3339();
+        // UTC, like every CLI report (`checkout_core`, `*_core`).
+        let executed_at = chrono::Utc::now().to_rfc3339();
 
         let (op_report, command) = match self.view.op {
             ViewOperationKind::Checkout => {
-                use crate::output::report::{
-                    FilterInfo, HostResult, OperationReport, ReportSummary,
-                };
-
-                let report_results: Vec<HostResult> = self
-                    .checkout_snapshots
-                    .iter()
-                    .map(|snap| {
-                        let collected_at_str = if snap.collected_at > 0 {
-                            chrono::DateTime::from_timestamp(snap.collected_at, 0)
-                                .map(|dt| dt.to_rfc3339())
-                                .unwrap_or_else(|| snap.collected_at.to_string())
-                        } else {
-                            "never".to_string()
-                        };
-                        HostResult {
-                            host: snap.host.clone(),
-                            status: if snap.online { "success" } else { "error" }.to_string(),
-                            duration_ms: None,
-                            output: serde_json::json!({
-                                "collected_at": collected_at_str,
-                                "online": snap.online,
-                                "snapshot": snap.data,
-                            }),
-                        }
-                    })
-                    .collect();
-
-                let rep_summary = ReportSummary {
-                    total: report_results.len(),
-                    success: report_results
-                        .iter()
-                        .filter(|r| r.status == "success")
-                        .count(),
-                    failed: report_results
-                        .iter()
-                        .filter(|r| r.status == "error")
-                        .count(),
-                    skipped: 0,
-                };
-
+                // Same builder as `checkout --out` (B54); the exported
+                // targets are the rows on screen.
                 let targets: Vec<String> = self
                     .checkout_snapshots
                     .iter()
                     .map(|s| s.host.clone())
                     .collect();
-
-                let op_report = OperationReport {
-                    executed_at,
-                    command: "checkout".to_string(),
-                    filter: FilterInfo::from_mode(&target_mode),
-                    task: serde_json::json!({}),
-                    targets,
-                    results: report_results,
-                    summary: rep_summary,
-                };
+                let op_report = crate::commands::checkout::checkout_operation_report(
+                    &executed_at,
+                    &target_mode,
+                    &targets,
+                    &self.checkout_snapshots,
+                );
                 (op_report, "checkout")
             }
             ViewOperationKind::Log => {
@@ -4611,37 +4569,19 @@ fn resolve_target_names(
     config: &AppConfig,
     skip: &[String],
 ) -> anyhow::Result<Vec<String>> {
-    let mut names: Vec<String> = match mode {
-        TargetMode::All => config.host.iter().map(|h| h.name.clone()).collect(),
-        TargetMode::Hosts(specs) => config
-            .host
-            .iter()
-            .filter(|h| specs.contains(&h.name))
-            .map(|h| h.name.clone())
-            .collect(),
-        TargetMode::Groups(groups) => config
-            .host
-            .iter()
-            .filter(|h| h.groups.iter().any(|g| groups.contains(g)))
-            .map(|h| h.name.clone())
-            .collect(),
-        TargetMode::Shell(shells) => config
-            .host
-            .iter()
-            .filter(|h| shells.contains(&h.shell))
-            .map(|h| h.name.clone())
-            .collect(),
-    };
-    names.retain(|n| !skip.iter().any(|s| s == n));
-    Ok(names)
+    // Same selection as the CLI (`commands::select_hosts`, B54); the TUI
+    // shows an empty match as a status message instead of an error.
+    Ok(crate::commands::select_hosts(config, mode, skip)
+        .iter()
+        .map(|h| h.name.clone())
+        .collect())
 }
 
 /// Spawn a background task that listens for OS signals and pushes a unit into
 /// the channel for each. The main loop drains this channel each iteration.
 ///
 /// Unix: SIGHUP, SIGTERM, SIGINT.
-/// Windows: ctrl_c (covers Ctrl+C and CTRL_BREAK_EVENT).
-/// CTRL_CLOSE_EVENT (Windows close-button) deferred to post-MVP — see §7.9.
+/// Windows: Ctrl+C, Ctrl+Break and console close (`CTRL_CLOSE_EVENT`, B12).
 fn spawn_signal_listener(tx: tokio::sync::mpsc::Sender<()>) {
     #[cfg(unix)]
     {

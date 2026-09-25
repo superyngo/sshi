@@ -76,60 +76,8 @@ impl Summary {
         }
         println!();
 
-        if !self.errors.is_empty() {
-            println!("  Errors:");
-
-            // Separate errors with file-path context from those without.
-            let mut pathless_seen: BTreeSet<(String, String)> = BTreeSet::new();
-            let mut pathless: Vec<(String, String)> = Vec::new();
-            let mut by_host_msg: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-
-            for entry in &self.errors {
-                match &entry.path {
-                    Some(path) => {
-                        by_host_msg
-                            .entry((entry.host.clone(), entry.message.clone()))
-                            .or_default()
-                            .insert(path.clone());
-                    }
-                    None => {
-                        let key = (entry.host.clone(), entry.message.clone());
-                        if pathless_seen.insert(key.clone()) {
-                            pathless.push(key);
-                        }
-                    }
-                }
-            }
-
-            // Print pathless errors (deduplicated)
-            for (host, msg) in &pathless {
-                println!("    {}: {}", host, msg);
-            }
-
-            // Cluster path-bearing errors: group (host, msg) pairs that
-            // share the exact same set of affected files.
-            let mut clusters: BTreeMap<Vec<String>, Vec<(String, String)>> = BTreeMap::new();
-            for ((host, msg), paths) in &by_host_msg {
-                let sorted_paths: Vec<String> = paths.iter().cloned().collect();
-                clusters
-                    .entry(sorted_paths)
-                    .or_default()
-                    .push((host.clone(), msg.clone()));
-            }
-
-            for (paths, host_msgs) in &clusters {
-                println!("    [{}]", paths.join(", "));
-                for (host, msg) in host_msgs {
-                    println!("      {}: {}", host, msg);
-                }
-            }
-        }
-
-        if !self.skip_reasons.is_empty() {
-            println!("  Skipped:");
-            for sr in &self.skip_reasons {
-                println!("    {} ({}): {}", sr.path, sr.host, sr.reason);
-            }
+        for line in detail_lines(&self.errors, &self.skip_reasons) {
+            println!("{line}");
         }
     }
 }
@@ -280,59 +228,60 @@ impl SyncSummary {
             println!("  Transfers:  {}", xfer_parts.join("  "));
         }
 
-        if !self.errors.is_empty() {
-            println!("  Errors:");
+        for line in detail_lines(&self.errors, &self.skip_reasons) {
+            println!("{line}");
+        }
+    }
+}
 
-            // Separate errors with file-path context from those without.
-            let mut pathless_seen: BTreeSet<(String, String)> = BTreeSet::new();
-            let mut pathless: Vec<(String, String)> = Vec::new();
-            let mut by_host_msg: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
-
-            for entry in &self.errors {
-                match &entry.path {
-                    Some(path) => {
-                        by_host_msg
-                            .entry((entry.host.clone(), entry.message.clone()))
-                            .or_default()
-                            .insert(path.clone());
-                    }
-                    None => {
-                        let key = (entry.host.clone(), entry.message.clone());
-                        if pathless_seen.insert(key.clone()) {
-                            pathless.push(key);
-                        }
-                    }
+/// The "Errors:" / "Skipped:" block shared by [`Summary::print`] and
+/// [`SyncSummary::print`] (B54): pathless errors deduplicated, path-bearing
+/// errors clustered by the exact set of files they affect.
+fn detail_lines(errors: &[ErrorEntry], skip_reasons: &[SkipReason]) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !errors.is_empty() {
+        lines.push("  Errors:".to_string());
+        let mut pathless_seen: BTreeSet<(String, String)> = BTreeSet::new();
+        let mut pathless: Vec<(String, String)> = Vec::new();
+        let mut by_host_msg: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+        for entry in errors {
+            let key = (entry.host.clone(), entry.message.clone());
+            match &entry.path {
+                Some(path) => {
+                    by_host_msg.entry(key).or_default().insert(path.clone());
                 }
-            }
-
-            for (host, msg) in &pathless {
-                println!("    {}: {}", host, msg);
-            }
-
-            let mut clusters: BTreeMap<Vec<String>, Vec<(String, String)>> = BTreeMap::new();
-            for ((host, msg), paths) in &by_host_msg {
-                let sorted_paths: Vec<String> = paths.iter().cloned().collect();
-                clusters
-                    .entry(sorted_paths)
-                    .or_default()
-                    .push((host.clone(), msg.clone()));
-            }
-
-            for (paths, host_msgs) in &clusters {
-                println!("    [{}]", paths.join(", "));
-                for (host, msg) in host_msgs {
-                    println!("      {}: {}", host, msg);
+                None => {
+                    if pathless_seen.insert(key.clone()) {
+                        pathless.push(key);
+                    }
                 }
             }
         }
-
-        if !self.skip_reasons.is_empty() {
-            println!("  Skipped:");
-            for sr in &self.skip_reasons {
-                println!("    {} ({}): {}", sr.path, sr.host, sr.reason);
+        for (host, msg) in &pathless {
+            lines.push(format!("    {host}: {msg}"));
+        }
+        // Group (host, msg) pairs that share the exact same set of files.
+        let mut clusters: BTreeMap<Vec<String>, Vec<(String, String)>> = BTreeMap::new();
+        for ((host, msg), paths) in by_host_msg {
+            clusters
+                .entry(paths.into_iter().collect())
+                .or_default()
+                .push((host, msg));
+        }
+        for (paths, host_msgs) in &clusters {
+            lines.push(format!("    [{}]", paths.join(", ")));
+            for (host, msg) in host_msgs {
+                lines.push(format!("      {host}: {msg}"));
             }
         }
     }
+    if !skip_reasons.is_empty() {
+        lines.push("  Skipped:".to_string());
+        for sr in skip_reasons {
+            lines.push(format!("    {} ({}): {}", sr.path, sr.host, sr.reason));
+        }
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -555,6 +504,41 @@ mod tests {
         assert_eq!(
             SyncSummary::format_hosts(&s.transfers_synced_hosts),
             "host-a"
+        );
+    }
+
+    /// B54: `Summary` and `SyncSummary` print the same error/skip block.
+    #[test]
+    fn detail_lines_dedupe_and_cluster() {
+        let e = |host: &str, msg: &str, path: Option<&str>| ErrorEntry {
+            host: host.into(),
+            message: msg.into(),
+            path: path.map(Into::into),
+        };
+        let errors = vec![
+            e("h1", "unreachable", None),
+            e("h1", "unreachable", None),
+            e("h2", "denied", Some("~/a")),
+            e("h2", "denied", Some("~/b")),
+            e("h3", "full", Some("~/a")),
+            e("h3", "full", Some("~/b")),
+        ];
+        let skips = vec![SkipReason {
+            path: "~/c".into(),
+            host: "h1".into(),
+            reason: "conflict".into(),
+        }];
+        assert_eq!(
+            detail_lines(&errors, &skips),
+            [
+                "  Errors:",
+                "    h1: unreachable",
+                "    [~/a, ~/b]",
+                "      h2: denied",
+                "      h3: full",
+                "  Skipped:",
+                "    ~/c (h1): conflict",
+            ]
         );
     }
 }

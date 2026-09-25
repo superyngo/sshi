@@ -127,32 +127,7 @@ impl Context {
     /// Resolve targeted hosts based on mode.
     /// For --all: all hosts. For --host: named hosts. For --group: hosts in group.
     pub fn resolve_hosts(&self) -> Result<Vec<Arc<HostEntry>>> {
-        let hosts: Vec<Arc<HostEntry>> = match &self.mode {
-            TargetMode::All => self.config.host.clone(),
-            TargetMode::Hosts(names) => self
-                .config
-                .host
-                .iter()
-                .filter(|h| names.contains(&h.name))
-                .cloned()
-                .collect(),
-            TargetMode::Groups(groups) => self
-                .config
-                .host
-                .iter()
-                .filter(|h| h.groups.iter().any(|g| groups.contains(g)))
-                .cloned()
-                .collect(),
-            TargetMode::Shell(shells) => self
-                .config
-                .host
-                .iter()
-                .filter(|h| shells.contains(&h.shell))
-                .cloned()
-                .collect(),
-        };
-
-        let hosts = filter_skipped(hosts, &self.skip);
+        let hosts = select_hosts(&self.config, &self.mode, &self.skip);
 
         if hosts.is_empty() {
             let mut hint = String::from("No hosts matched the specified filter.");
@@ -400,6 +375,34 @@ fn collect_available_groups(config: &AppConfig) -> BTreeSet<String> {
 }
 
 /// Drop any host whose name appears in `skip`. Unknown names are ignored.
+/// Hosts `mode` selects from `config`, minus the `skip` names — the single
+/// target resolver behind the CLI (`Context::resolve_hosts`, which adds the
+/// "no hosts matched" hints) and the TUI (B54).
+pub fn select_hosts(config: &AppConfig, mode: &TargetMode, skip: &[String]) -> Vec<Arc<HostEntry>> {
+    let hosts: Vec<Arc<HostEntry>> = match mode {
+        TargetMode::All => config.host.clone(),
+        TargetMode::Hosts(names) => config
+            .host
+            .iter()
+            .filter(|h| names.contains(&h.name))
+            .cloned()
+            .collect(),
+        TargetMode::Groups(groups) => config
+            .host
+            .iter()
+            .filter(|h| h.groups.iter().any(|g| groups.contains(g)))
+            .cloned()
+            .collect(),
+        TargetMode::Shell(shells) => config
+            .host
+            .iter()
+            .filter(|h| shells.contains(&h.shell))
+            .cloned()
+            .collect(),
+    };
+    filter_skipped(hosts, skip)
+}
+
 fn filter_skipped(hosts: Vec<Arc<HostEntry>>, skip: &[String]) -> Vec<Arc<HostEntry>> {
     if skip.is_empty() {
         return hosts;

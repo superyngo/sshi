@@ -158,18 +158,8 @@ pub fn default_identity_files(home: &std::path::Path) -> Vec<std::path::PathBuf>
 /// Parse ~/.ssh/config and return a list of named host entries.
 /// Skips wildcard patterns (`*`, `?`).
 pub fn parse_ssh_config() -> Result<Vec<SshHostEntry>> {
-    let home = dirs::home_dir().context("Cannot determine home directory")?;
-    let config_path = home.join(".ssh").join("config");
-
-    if !config_path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = std::fs::read_to_string(&config_path)
-        .with_context(|| format!("Failed to read {}", config_path.display()))?;
-
-    let parsed = parse_ssh_config_content_with_dir(&content, config_path.parent(), 0)?;
-    Ok(parsed.hosts)
+    // One reader for `~/.ssh/config` (B54): `load_ssh_config`.
+    Ok(load_ssh_config()?.hosts)
 }
 
 /// Parse raw SSH config text into a `ParsedSshConfig`.
