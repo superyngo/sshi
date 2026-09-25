@@ -105,6 +105,7 @@ pub async fn authenticate(
     )
     .await?
     {
+        tracing::debug!(host = host_name, user, "authenticated via ssh-agent");
         return Ok(());
     }
 
@@ -112,8 +113,10 @@ pub async fn authenticate(
     for path in identity_files {
         if let Ok(key) = russh::keys::load_secret_key(path, None) {
             if try_pubkey(handle, user, key, rsa_hash, timeout).await? {
+                tracing::debug!(host = host_name, user, key = %path.display(), "authenticated via key");
                 return Ok(());
             }
+            tracing::debug!(host = host_name, key = %path.display(), "key rejected");
         }
     }
 
@@ -121,8 +124,10 @@ pub async fn authenticate(
     for path in identity_files.iter().filter(|p| is_encrypted_key(p)) {
         if let Some(key) = unlock_key(cache, path, auth_sender).await? {
             if try_pubkey(handle, user, key, rsa_hash, timeout).await? {
+                tracing::debug!(host = host_name, user, key = %path.display(), "authenticated via encrypted key");
                 return Ok(());
             }
+            tracing::debug!(host = host_name, key = %path.display(), "encrypted key rejected");
         }
     }
 
@@ -141,6 +146,7 @@ pub async fn authenticate(
         .context("Password authentication failed")?
         .success()
         {
+            tracing::debug!(host = host_name, user, "authenticated via password");
             return Ok(());
         }
     }

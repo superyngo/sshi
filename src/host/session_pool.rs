@@ -334,7 +334,15 @@ impl RusshSessionPool {
             .ok_or_else(|| anyhow::anyhow!("Host '{}' is not connected", host_alias))?
             .clone();
 
-        exec_on_handle(&handle, cmd, Duration::from_secs(timeout_secs)).await
+        let started = std::time::Instant::now();
+        tracing::debug!(host = host_alias, cmd = %crate::util::truncate(cmd, 200), "exec");
+        let out = exec_on_handle(&handle, cmd, Duration::from_secs(timeout_secs)).await;
+        let ms = started.elapsed().as_millis() as u64;
+        match &out {
+            Ok(o) => tracing::debug!(host = host_alias, exit = ?o.exit_code, ms, "exec done"),
+            Err(e) => tracing::debug!(host = host_alias, error = %e, ms, "exec failed"),
+        }
+        out
     }
 
     /// Get the remote home directory for a host, caching the result.
@@ -583,6 +591,13 @@ async fn connect_one(
     auth_sender: Option<&SshAuthSender>,
 ) -> Result<(Handle<SshHandler>, Option<tokio::sync::oneshot::Sender<()>>)> {
     let resolved = crate::config::ssh_config::resolve_host_with_config(alias, ssh_config)?;
+    tracing::debug!(
+        host = alias,
+        target = %format!("{}@{}:{}", resolved.user, resolved.hostname, resolved.port),
+        proxy_jump = ?resolved.proxy_jump,
+        identity_files = resolved.identity_files.len(),
+        "connecting"
+    );
 
     match &resolved.proxy_jump.clone() {
         Some(proxy_alias) => {

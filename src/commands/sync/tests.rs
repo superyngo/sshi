@@ -471,7 +471,6 @@ async fn decide_batch_empty_paths_returns_empty_without_io() {
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: vec![],
-        verbose: false,
         auth_sender: None,
     };
     let sessions: Arc<RusshSessionPool> = Arc::new(

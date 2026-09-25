@@ -153,7 +153,6 @@ mod tests {
             mode: TargetMode::All,
             serial: false,
             skip: vec![],
-            verbose: false,
             auth_sender: None,
         }
     }

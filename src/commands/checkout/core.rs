@@ -395,7 +395,6 @@ mod snapshot_sql_tests {
             mode: crate::commands::TargetMode::All,
             serial: false,
             skip: vec![],
-            verbose: false,
             auth_sender: None,
         };
         let snapshots = fetch_latest_snapshots(&ctx, &["h1", "h2", "h3"]).unwrap();

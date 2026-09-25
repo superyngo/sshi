@@ -62,7 +62,6 @@ fn build_ctx(tmp: &TempDir) -> Context {
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: vec![],
-        verbose: false,
         auth_sender: None,
     }
 }
@@ -301,7 +300,6 @@ async fn init_core_marks_stale_hosts_for_removal() {
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: vec![],
-        verbose: false,
         auth_sender: None,
     };
 

@@ -26,6 +26,16 @@ fn enable_ansi_support() {
 #[cfg(not(target_os = "windows"))]
 fn enable_ansi_support() {}
 
+/// Log filter without `-v` (and no `RUST_LOG`): info and above, SSH library
+/// chatter reduced to errors.
+const DEFAULT_FILTER: &str = "russh=error,ssh_key=error,zeroize=error,info";
+
+/// Log filter for `-v`: sshi's own debug diagnostics (per-host connect,
+/// authentication method, each remote command and its exit status/duration)
+/// plus russh info events, which reach tracing through the `log` bridge that
+/// `try_init` installs (B69).
+const VERBOSE_FILTER: &str = "sshi=debug,russh=info,ssh_key=warn,info";
+
 /// Initialize tracing subscriber with appropriate log level filtering.
 ///
 /// When `silent` is true (TUI mode), the fmt writer goes to `std::io::sink()`
@@ -42,9 +52,9 @@ fn init_tracing(verbose: bool, silent: bool) -> Option<sshi::tui::log_layer::Log
     let filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else if verbose {
-        EnvFilter::new("debug")
+        EnvFilter::new(VERBOSE_FILTER)
     } else {
-        EnvFilter::new("russh=error,ssh_key=error,zeroize=error,info")
+        EnvFilter::new(DEFAULT_FILTER)
     };
 
     if silent {
@@ -55,14 +65,17 @@ fn init_tracing(verbose: bool, silent: bool) -> Option<sshi::tui::log_layer::Log
             .with_target(false)
             .with_writer(std::io::sink)
             .with_filter(filter);
-        let subscriber = Registry::default().with(ring_layer).with(fmt_layer);
-        tracing::subscriber::set_global_default(subscriber)
+        Registry::default()
+            .with(ring_layer)
+            .with(fmt_layer)
+            .try_init()
             .expect("failed to set tracing subscriber");
         Some(log_handle)
     } else {
         let fmt_layer = fmt::layer().with_target(false).with_filter(filter);
-        let subscriber = Registry::default().with(fmt_layer);
-        tracing::subscriber::set_global_default(subscriber)
+        Registry::default()
+            .with(fmt_layer)
+            .try_init()
             .expect("failed to set tracing subscriber");
         None
     }
@@ -75,9 +88,9 @@ fn init_tracing(verbose: bool, _silent: bool) {
     let filter = if std::env::var("RUST_LOG").is_ok() {
         EnvFilter::from_default_env()
     } else if verbose {
-        EnvFilter::new("debug")
+        EnvFilter::new(VERBOSE_FILTER)
     } else {
-        EnvFilter::new("russh=error,ssh_key=error,zeroize=error,info")
+        EnvFilter::new(DEFAULT_FILTER)
     };
 
     fmt().with_env_filter(filter).with_target(false).init();
@@ -133,13 +146,12 @@ async fn main() -> Result<()> {
             timeout,
             ..
         } => {
-            let ctx =
-                commands::Context::new_without_targets(cli.verbose, cfg, timeout, true).await?;
+            let ctx = commands::Context::new_without_targets(cfg, timeout, true).await?;
             commands::init::run(&ctx, dry_run, skip).await
         }
         Commands::Config { .. } => commands::config::run(cfg).await,
         Commands::List { target, output } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::list::run(&ctx, &output).await
         }
         Commands::Check {
@@ -148,7 +160,7 @@ async fn main() -> Result<()> {
             dry_run,
             output,
         } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::check::run(&ctx, &name, dry_run, &output)
                 .await
                 .and_then(exit_on_host_failures)
@@ -158,7 +170,7 @@ async fn main() -> Result<()> {
             combined_view,
             output,
         } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::checkout::run(&ctx, combined_view, &output).await
         }
         Commands::Sync {
@@ -169,7 +181,7 @@ async fn main() -> Result<()> {
             source,
             output,
         } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::sync::run(&ctx, dry_run, &paths, &name, source.as_deref(), &output)
                 .await
                 .and_then(exit_on_host_failures)
@@ -181,7 +193,7 @@ async fn main() -> Result<()> {
             dry_run,
             output,
         } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::cp::run(&ctx, &local, remote.as_deref(), dry_run, &output)
                 .await
                 .and_then(exit_on_host_failures)
@@ -193,7 +205,7 @@ async fn main() -> Result<()> {
             dry_run,
             output,
         } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::run::run(&ctx, &command, sudo, dry_run, &output)
                 .await
                 .and_then(exit_on_host_failures)
@@ -206,7 +218,7 @@ async fn main() -> Result<()> {
             dry_run,
             output,
         } => {
-            let ctx = commands::Context::new(cli.verbose, &target, cfg).await?;
+            let ctx = commands::Context::new(&target, cfg).await?;
             commands::exec::run(&ctx, &script, sudo, keep, dry_run, &output)
                 .await
                 .and_then(exit_on_host_failures)
@@ -220,7 +232,7 @@ async fn main() -> Result<()> {
             output,
             ..
         } => {
-            let ctx = commands::Context::new_without_targets(cli.verbose, cfg, None, false).await?;
+            let ctx = commands::Context::new_without_targets(cfg, None, false).await?;
             commands::log::run(&ctx, last, since, host, action, errors, &output).await
         }
     }

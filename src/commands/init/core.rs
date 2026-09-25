@@ -588,7 +588,6 @@ mod tests {
             mode: crate::commands::TargetMode::All,
             serial: false,
             skip: vec![],
-            verbose: false,
             auth_sender: None,
         }
     }

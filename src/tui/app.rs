@@ -1238,7 +1238,6 @@ impl App {
         let timeout = self.last_timeout_secs;
         let mode_for_op = target_mode.clone();
         let out_for_op = self.out_path();
-        let verbose = false;
         let names = comma_names(&self.operate.check_name.value);
         let cfg = Arc::clone(&self.config);
         let cfg_path = self.config_path.clone();
@@ -1260,7 +1259,6 @@ impl App {
                 target_mode,
                 serial,
                 timeout,
-                verbose,
                 skip,
                 auth_sender,
             ) {
@@ -1344,7 +1342,6 @@ impl App {
                 target_mode,
                 serial,
                 timeout,
-                false,
                 skip,
                 auth_sender,
             ) {
@@ -1429,7 +1426,6 @@ impl App {
                 target_mode,
                 serial,
                 timeout,
-                false,
                 skip,
                 auth_sender,
             ) {
@@ -1520,7 +1516,6 @@ impl App {
                 target_mode,
                 serial,
                 timeout,
-                false,
                 skip,
                 auth_sender,
             ) {
@@ -1612,7 +1607,6 @@ impl App {
                 target_mode,
                 serial,
                 timeout,
-                false,
                 skip,
                 auth_sender,
             ) {
@@ -1668,7 +1662,6 @@ impl App {
                     mode: TargetMode::All,
                     serial: false,
                     skip: Vec::new(),
-                    verbose: false,
                     auth_sender: None,
                 };
                 match fetch_latest_snapshots(&tmp_ctx, &host_names) {
@@ -1953,7 +1946,6 @@ impl App {
                             mode: TargetMode::All,
                             serial: false,
                             skip: Vec::new(),
-                            verbose: false,
                             auth_sender: None,
                         };
                         let columns = crate::commands::checkout::DisplayColumns::from_context(&ctx);
@@ -1985,7 +1977,6 @@ impl App {
                         mode: build_target_mode(&self.target_filter, &self.config),
                         serial: false,
                         skip: self.target_filter.skip.clone(),
-                        verbose: false,
                         auth_sender: None,
                     };
                     self.view.list =
@@ -2004,7 +1995,6 @@ impl App {
                         mode: TargetMode::All,
                         serial: false,
                         skip: Vec::new(),
-                        verbose: false,
                         auth_sender: None,
                     };
                     let since = {
@@ -4931,7 +4921,6 @@ mod checkout_reload_tests {
             mode: crate::commands::TargetMode::All,
             serial: false,
             skip: vec![],
-            verbose: false,
             auth_sender: None,
         };
 
@@ -4990,7 +4979,6 @@ mod navbar_focus_tests {
             mode: TargetMode::All,
             serial: false,
             skip: vec![],
-            verbose: false,
             auth_sender: None,
         };
         App::from_context_with_state_path(&ctx, None, state_file_path)

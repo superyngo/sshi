@@ -35,7 +35,7 @@ These options apply globally before subcommand dispatch:
 | Option | Description |
 |---|---|
 | `-c, --config <PATH>` | Explicit path to the configuration file (default: `config.toml` in the platform config directory — see [config-schema.md](config-schema.md)). An explicit path that does not exist is an error (exit 1) for every command except `init`, which creates it, and the TUI (no subcommand), which starts empty and can save there. A missing default path means an empty config. |
-| `-v, --verbose` | Enable debug logging output. Overrides default log filters (`debug` level), unless overridden by the `RUST_LOG` environment variable. Global: accepted before or after the subcommand (e.g. `sshi -v check --all` or `sshi check --all -v`). |
+| `-v, --verbose` | Print debug diagnostics to stderr: per host the resolved `user@host:port` and ProxyJump, the authentication method that succeeded (agent, key file, password), and each remote command with its exit status and duration (filter `sshi=debug,russh=info,info`). `RUST_LOG` overrides the filter; russh's own `log` records are bridged into it (e.g. `RUST_LOG=russh=debug`). Global: accepted before or after the subcommand (e.g. `sshi -v check --all` or `sshi check --all -v`). |
 | `-h, --help` | Print top-level help and exit with code `0`. |
 | `-V, --version` | Print version information and exit with code `0`. |
 

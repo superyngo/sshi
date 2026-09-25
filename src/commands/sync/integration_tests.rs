@@ -33,7 +33,6 @@ fn build_ctx() -> Context {
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: vec![],
-        verbose: false,
         auth_sender: None,
     }
 }
@@ -523,7 +522,6 @@ async fn sync_inner_no_paths_returns_empty_report() {
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: vec![],
-        verbose: false,
         auth_sender: None,
     };
 
@@ -567,7 +565,6 @@ async fn sync_inner_single_host_returns_at_least_2_branch() {
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: vec![],
-        verbose: false,
         auth_sender: None,
     };
 

@@ -50,7 +50,6 @@ pub async fn run_or_fallback(verbose: bool, config_path: Option<&Path>) -> Resul
         mode: crate::commands::TargetMode::All,
         serial: false,
         skip: Vec::new(),
-        verbose,
         auth_sender: None,
     };
 

@@ -44,18 +44,13 @@ pub struct Context {
     pub mode: TargetMode,
     pub serial: bool,
     pub skip: Vec<String>,
-    pub verbose: bool,
     /// When `Some`, SSH credential prompts route through the TUI auth bridge
     /// instead of blocking `rpassword`. Always `None` on the CLI path.
     pub auth_sender: Option<SshAuthSender>,
 }
 
 impl Context {
-    pub async fn new(
-        verbose: bool,
-        target: &TargetArgs,
-        config_path: Option<&Path>,
-    ) -> Result<Self> {
+    pub async fn new(target: &TargetArgs, config_path: Option<&Path>) -> Result<Self> {
         let config = load_config(config_path, false)?;
         let conn = crate::state::db::open(config.settings.state_dir.as_deref())?;
         let db = DbHandle::new(conn);
@@ -70,7 +65,6 @@ impl Context {
             mode,
             serial: target.serial,
             skip: target.skip.clone(),
-            verbose,
             auth_sender: None,
         })
     }
@@ -89,7 +83,6 @@ impl Context {
         mode: TargetMode,
         serial: bool,
         timeout: u64,
-        verbose: bool,
         skip: Vec<String>,
         auth_sender: Option<SshAuthSender>,
     ) -> Result<Self> {
@@ -103,7 +96,6 @@ impl Context {
             mode,
             serial,
             skip,
-            verbose,
             auth_sender,
         })
     }
@@ -111,7 +103,6 @@ impl Context {
     /// Create a context without target args (for commands like init, config, log).
     /// `allow_missing_config`: a missing explicit `-c` file is OK (`init` creates it).
     pub async fn new_without_targets(
-        verbose: bool,
         config_path: Option<&Path>,
         timeout_override: Option<u64>,
         allow_missing_config: bool,
@@ -129,7 +120,6 @@ impl Context {
             mode: TargetMode::All,
             serial: false,
             skip: Vec::new(),
-            verbose,
             auth_sender: None,
         })
     }
@@ -526,7 +516,6 @@ mod tests {
             TargetMode::All,
             false,
             30,
-            false,
             Vec::new(),
             None,
         )
