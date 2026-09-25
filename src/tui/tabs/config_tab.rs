@@ -548,9 +548,10 @@ impl ConfigTabState {
             Some(SidebarItem::Host(i)) => {
                 let name = config.host.get(*i).map(|h| h.name.as_str()).unwrap_or("?");
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = host_fields(&config.host[*i]);
+                    let fields = config.host.get(*i).map(|h| host_fields(h));
                     let fname = fields
-                        .get(self.field_vp.selected)
+                        .as_ref()
+                        .and_then(|f| f.get(self.field_vp.selected))
                         .map(|f| f.key.as_str())
                         .unwrap_or("?");
                     let edit = if self.editing_field.is_some() {
@@ -567,9 +568,10 @@ impl ConfigTabState {
             Some(SidebarItem::Check(i)) => {
                 let label = entry_label_check(config, *i);
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = check_fields(&config.check[*i]);
+                    let fields = config.check.get(*i).map(check_fields);
                     let fname = fields
-                        .get(self.field_vp.selected)
+                        .as_ref()
+                        .and_then(|f| f.get(self.field_vp.selected))
                         .map(|f| f.key.as_str())
                         .unwrap_or("?");
                     let edit = if self.editing_field.is_some() {
@@ -586,9 +588,10 @@ impl ConfigTabState {
             Some(SidebarItem::Sync(i)) => {
                 let label = entry_label_sync(config, *i);
                 if self.zone == ConfigZone::FieldTable {
-                    let fields = sync_fields(&config.sync[*i]);
+                    let fields = config.sync.get(*i).map(sync_fields);
                     let fname = fields
-                        .get(self.field_vp.selected)
+                        .as_ref()
+                        .and_then(|f| f.get(self.field_vp.selected))
                         .map(|f| f.key.as_str())
                         .unwrap_or("?");
                     let edit = if self.editing_field.is_some() {
@@ -3739,5 +3742,29 @@ mod tests {
             .unwrap();
         state.editing_field_index = source_idx;
         assert!(state.validate_inline_name("", &config).is_none());
+    }
+    #[test]
+    fn breadcrumb_stale_index_does_not_panic() {
+        let config = AppConfig::default(); // host, check, sync are empty
+        let mut state = ConfigTabState::new(&config, None);
+        state.zone = ConfigZone::FieldTable;
+
+        // Host with stale index
+        state.items = vec![SidebarItem::Host(99)];
+        state.sidebar_vp.selected = 0;
+        let crumb = state.breadcrumb(&config);
+        assert_eq!(crumb, "Config > Hosts > ? > ?");
+
+        // Check with stale index
+        state.items = vec![SidebarItem::Check(99)];
+        state.sidebar_vp.selected = 0;
+        let crumb = state.breadcrumb(&config);
+        assert_eq!(crumb, "Config > Checks > Check #100 > ?");
+
+        // Sync with stale index
+        state.items = vec![SidebarItem::Sync(99)];
+        state.sidebar_vp.selected = 0;
+        let crumb = state.breadcrumb(&config);
+        assert_eq!(crumb, "Config > Syncs > Sync #100 > ?");
     }
 }

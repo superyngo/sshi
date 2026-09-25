@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: the Config tab breadcrumb indexed hosts/checks/syncs directly and could panic on a stale selection index; it now renders `?` instead (B3).
 - fix: `init` panicked when the home directory could not be resolved while writing scanned host keys; `batch_keyscan_and_accept` now returns an error naming the problem (`append_keys_to_known_hosts`) (B8).
 - fix: `checkout` fetched every stored snapshot of every selected host and kept the newest in Rust; `fetch_latest_snapshots` now asks SQLite for one row per host (`ROW_NUMBER() OVER (PARTITION BY host …)`), so the read no longer grows with history (B41).
 - ci: bumped `actions/checkout` v4 → v5 (CI and release), `actions/upload-artifact` v4 → v6, `actions/download-artifact` v4 → v7 and `softprops/action-gh-release` v1 → v3 — the smallest majors that run on Node 24; CI runs no longer carry the Node 20 deprecation annotation (B71).
