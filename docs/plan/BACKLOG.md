@@ -16,6 +16,7 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
+| B14 | `checkout --history` / `--since` parsed but ignored | HASH-B14 — flags removed from CLI, docs and README (option A); real binary rejects them with exit 2 |
 | B13 | `-v/--verbose` rejected after the subcommand | `e53fbe9` — `global = true` on `Cli::verbose`; real binary `check -a -v` accepted |
 | B43 | Config save panicked on inline `settings`, replaced a symlinked config, skipped fsync, dropped unknown per-entry keys | `45fee17` — inline table converted; symlink canonicalized; `sync_all` before persist; unknown keys merged by `id`/`name`; real binary `init` verified |
 | B66 | Recursive `[[sync]]` without `source` never expanded the directory (sync failed or copied nothing) | `3148ae4` — per-host recursive expansion + `union_dir_expansions`; real binary: 500/500 files copied, split-content case converges |
@@ -27,7 +28,6 @@ this file existed are recorded in those source documents, not here.
 | B10 | 2026-07-18 | 2026-09-25 | P3 | Checkout metric extractors have no unit tests | `src/commands/checkout/mod.rs` `extract_metric_value` | S | Tests cover each metric for sh and PowerShell samples plus fallbacks |
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
-| B14 | 2026-09-25 | 2026-09-25 | P2 | `checkout --history` and `--since` are parsed but ignored | `src/commands/checkout/mod.rs` `run` (`_history`, `_since`) | M | Flags change output, or are removed from the CLI and docs |
 | B15 | 2026-09-25 | 2026-09-25 | P3 | `init --update` is a no-op whenever `config.toml` exists (`effective_update = update \|\| config_exists`) | `src/commands/init/mod.rs` `run` | S | Flag has a distinct effect, or is removed |
 | B16 | 2026-09-25 | 2026-09-25 | P3 | New-config comment template documents removed `groups`/`enable_hosts`/`enable_all` fields | `src/config/app.rs` `inject_config_comments` | S | Template mentions only fields present in `CheckEntry`/`SyncEntry` |
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
@@ -63,6 +63,7 @@ this file existed are recorded in those source documents, not here.
 | B65 | 2026-09-25 | 2026-09-25 | P3 | Remote SFTP overwrite is remove-then-rename (brief window with no file) because russh-sftp 2.1.1 lacks `posix-rename@openssh.com` | `src/host/sftp.rs` `upload` | S | Upgrade russh-sftp (or send the extension) and replace atomically; SIGKILL-left `.sshi-tmp` files swept |
 | B68 | 2026-09-25 | 2026-09-25 | P3 | TUI tests build `App` via `App::new`, whose `persist::state_file_path` resolves the real state dir and runs the B44 legacy migration (copies the user's `~/.local/state/sshi` into the active state dir) | `src/tui/app.rs` `App::new` (test `minimal_app`); `src/tui/state/persist.rs` | S | Tests pass an explicit temp state path; no test touches the user's state dirs |
 | B69 | 2026-09-25 | 2026-09-25 | P3 | `-v/--verbose` has almost no observable CLI effect: `Context::verbose` is never read outside tests; the sync `tracing::debug!` events only fire in the TUI-only `SyncOutputStyle::Quiet` path; russh logs via the `log` crate, which the tracing subscriber does not bridge. Even `RUST_LOG=trace` shows only WARN lines on a real `sync` run | `src/main.rs` `init_tracing`; `src/commands/mod.rs` `Context::verbose`; `src/commands/sync/mod.rs` | S | Decide what `-v` should show (e.g. bridge `log` via `tracing-log`, emit per-host connect/auth debug); a `-v` run shows extra diagnostics |
+| B70 | 2026-09-25 | 2026-09-25 | P3 | TUI Operate view persists a `checkout_history` toggle that nothing reads (the CLI flag was removed in B14) | `src/tui/tabs/operate_schema.rs`; `src/tui/state/persist.rs` `checkout_history` | S | Toggle removed (old state files still load), or wired to a real history view |
 
 ## Pending verification
 

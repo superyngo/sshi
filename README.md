@@ -198,12 +198,6 @@ sshi checkout --all
 
 # HTML report
 sshi checkout --all --out report.html
-
-# Show trend history
-sshi checkout --all --history
-
-# History from specific date
-sshi checkout --all --history --since "2025-01-01"
 ```
 
 ### List

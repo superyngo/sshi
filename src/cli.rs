@@ -121,14 +121,6 @@ pub enum Commands {
         #[command(flatten)]
         target: TargetArgs,
 
-        /// Show trend history
-        #[arg(long, display_order = 20)]
-        history: bool,
-
-        /// History start point (e.g. "2025-01-01" or "7d")
-        #[arg(long, display_order = 21)]
-        since: Option<String>,
-
         /// Per-metric combined view: each column shows the most recent recorded
         /// value for that metric rather than the single latest snapshot
         #[arg(long, display_order = 22)]
@@ -306,6 +298,15 @@ mod tests {
             let cli = Cli::try_parse_from(args).unwrap();
             assert!(cli.verbose, "{args:?}");
         }
+    }
+
+    /// B14: the unimplemented `checkout --history/--since` flags are removed.
+    #[test]
+    fn checkout_rejects_history_and_since() {
+        assert!(Cli::try_parse_from(["sshi", "checkout", "-a", "--history"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "checkout", "-a", "--since", "7d"]).is_err());
+        assert!(Cli::try_parse_from(["sshi", "checkout", "-a"]).is_ok());
+        assert!(Cli::try_parse_from(["sshi", "checkout", "-a", "--combined-view"]).is_ok());
     }
 
     #[test]

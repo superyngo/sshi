@@ -28,8 +28,6 @@ use core::checkout_core;
 /// `--out` JSON/HTML report.
 pub async fn run(
     ctx: &Context,
-    _history: bool,
-    _since: Option<String>,
     combined_view: bool,
     output: &crate::cli::OutputArgs,
 ) -> Result<()> {
@@ -85,10 +83,7 @@ pub async fn run(
             executed_at: report.executed_at.clone(),
             command: "checkout".to_string(),
             filter: FilterInfo::from_mode(&ctx.mode),
-            task: serde_json::json!({
-                "history": _history,
-                "since": _since,
-            }),
+            task: serde_json::json!({}),
             targets: report.targets.clone(),
             results: report_results,
             summary: rep_summary,

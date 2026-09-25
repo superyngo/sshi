@@ -111,15 +111,13 @@ The following table summarizes all flags across every subcommand. The global `-v
 | `--update` | ✓ | — | — | — | — | — | — | — | — | — |
 | `--keep` | — | — | — | — | — | — | ✓ | — | — | — |
 | `--combined-view` | — | — | ✓ | — | — | — | — | — | — | — |
-| `--history` | — | — | ✓*2 | — | — | — | — | — | — | — |
-| `--since` | — | — | ✓*2 | — | — | — | — | — | — | ✓ |
+| `--since` | — | — | — | — | — | — | — | — | — | ✓ |
 | `--last` | — | — | — | — | — | — | — | — | — | ✓ |
 | `--action` | — | — | — | — | — | — | — | — | — | ✓ |
 | `--errors` | — | — | — | — | — | — | — | — | — | ✓ |
 | `-H, --help` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 *\*1 Note: In `log`, `-h, --host` is a log-filtering option rather than a target selector.*  
-*\*2 Note: In `checkout`, `--history` and `--since` are accepted by the CLI and recorded in `--out` report metadata, but are currently ignored in the terminal output view.*
 ---
 
 ## Subcommand reference
@@ -180,8 +178,6 @@ sshi checkout <TARGETS> [OPTIONS]
 Accepts `-a/--all`, `-g/--group`, `-h/--host`, `-s/--shell`, `--skip`, `--serial`, `--timeout`.
 
 #### Options
-- `--history`: Query historical trend data for targeted hosts. (Note: currently ignored in the terminal table view; preserved in `--out` report metadata.)
-- `--since <TIME>`: History query start boundary. Supports relative days (e.g. `7d`), relative hours (e.g. `24h`), or absolute dates (`YYYY-MM-DD`). (Note: currently ignored in the terminal table view; preserved in `--out` report metadata.)
 - `--combined-view`: Per-metric combined view: displays the most recent recorded value for each metric column across the 50 most recent snapshots of each host rather than only the single latest snapshot.
 - `-o, --out [PATH]`: Write structured report to `.json` or `.html`.
 - `-H, --help`: Print help.
