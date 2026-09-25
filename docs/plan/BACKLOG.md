@@ -81,7 +81,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B68 | TUI tests resolved the real state dir via `App::new` and could run the legacy migration | HASH-B68 — `App::from_context_with_state_path`; `minimal_app` uses a per-process temp dir; test asserts the explicit path is used |
+| B68 | TUI tests resolved the real state dir via `App::new` and could run the legacy migration | `aa6cbcd` — `App::from_context_with_state_path`; `minimal_app` uses a per-process temp dir; test asserts the explicit path is used |
 | B51 | `maybe_reload_checkout` cleared `db_stale` when the snapshot fetch failed | `7019a32` — `db_stale = false` only on `Ok`; test `checkout_reload_keeps_db_stale_on_fetch_error` |
 | B45 | Config tab discarded edits silently: `path:{i}` check rows, unparseable numeric settings | `28aefbf` — `FieldDescriptor::readonly` for check paths; `apply_settings` returns `Result` and the editor stays open with the message; tests |
 | B16 | New-config comment template documented removed `groups`/`enable_hosts`/`enable_all` fields | `e9c5728` — `inject_config_comments` rewritten to current `CheckEntry`/`CheckPath`/`SyncEntry`/`Settings` fields; test `b16_template_mentions_only_existing_schema_fields` |
