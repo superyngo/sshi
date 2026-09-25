@@ -86,3 +86,8 @@ cargo fmt --check
 - Avoid obvious comments, add for "why" not "what"
 
 See [CONTEXT.md](CONTEXT.md) for architecture, config, transport, sync, state, and TUI reference documentation.
+
+## Changelog
+
+- Root `CHANGELOG.md` holds `[Unreleased]` plus the current major series only; older series
+  live verbatim in `docs/reference/changelog/`. Never archive the series the next tag belongs to.

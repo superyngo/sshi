@@ -10,6 +10,7 @@ investigation — lives in `../spec/`, `../plan/`, `../debug/`, or `../audit/`, 
 - **[sync-algorithm.md](sync-algorithm.md)** — the 3-stage sync protocol (collect / decide / distribute).
 - **[state-schema.md](state-schema.md)** — SQLite schema, migrations, and retention policy.
 - **[tui.md](tui.md)** — TUI tab structure, keybindings, and contributor rules.
+- **[changelog/](changelog/README.md)** — archived changelog series (v0.x).
 
 Machine-checked: none. No test reads these files; every claim is verified by hand (see the
 latest `../audit/*-documentation-audit.md`).
