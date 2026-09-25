@@ -58,7 +58,6 @@ this file existed are recorded in those source documents, not here.
 | B53 | 2026-09-25 | 2026-09-25 | P3 | Operation scaffolding duplicated (five `App::execute_*`, four command cores); `*_core` returns an enum callers `unreachable!`; `App::handle_key` 1010 lines | `src/tui/app.rs`; `src/commands/{exec,run,cp,check}.rs` | L | One launch helper and one fan-out helper; typed core returns; `handle_key` split by tab/popup |
 | B54 | 2026-09-25 | 2026-09-25 | P3 | Parallel implementations: TUI export vs CLI report builders (checkout `task` differs), `resolve_target_names` vs `Context::resolve_hosts`, `Summary`/`SyncSummary` printing, Operate/View target rows, `parse_ssh_config`/`load_ssh_config` | `src/tui/app.rs`; `src/output/summary.rs`; `src/tui/tabs/{operate_tab,view_tab}.rs`; `src/config/ssh_config.rs` | M | Each pair reduced to one implementation; TUI and CLI checkout exports byte-identical |
 | B55 | 2026-09-25 | 2026-09-25 | P3 | Dead code and misleading comments (list in the 2026-09-25 code audit) | `src/tui/tabs/operate_schema.rs`; `src/commands/sync/collect.rs`; `src/tui/event.rs`; `src/commands/init/report.rs`; `src/tui/async_bridge.rs`; `src/host/sftp.rs`; `src/config/app.rs` | S | Items removed or comments match code |
-| B56 | 2026-09-25 | 2026-09-25 | P2 | No CI since `83aea4d`; headless build warns (unused imports in `commands::checkout`) | `.github/workflows/`; `src/commands/checkout/mod.rs` | S | CI runs fmt, clippy `-D warnings` and tests for default and `--no-default-features` |
 | B58 | 2026-09-25 | 2026-09-25 | P3 | `migrate` rewrites `user_version` downward under an older binary | `src/state/db.rs` `migrate` | S | Newer schema version refused or left untouched |
 | B59 | 2026-09-25 | 2026-09-25 | P3 | PowerShell swap collected but never displayable | `src/commands/checkout/mod.rs` `extract_metric_value`; `src/metrics/parser.rs` | S | Swap shows for a PowerShell host |
 | B60 | 2026-09-25 | 2026-09-25 | P3 | `output::printer` writes ANSI colours with no TTY/`NO_COLOR` gate | `src/output/printer.rs` `print_host_line` | S | Piped output has no escape codes; `NO_COLOR` honoured |
@@ -101,6 +100,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B56 | No CI since `83aea4d`; headless build warned (unused imports in `commands::checkout`) | HASH-B56 — `.github/workflows/ci.yml` (ubuntu+macos × default/headless, `-D warnings`); re-exports gated on `tui` |
 | B28 | Per-host `PassphraseCache`, overlapping CLI prompts, TUI popup replaced by a second request (rejected-unencrypted-key prompts were already fixed by B20) | `f885002` — `SharedPassphraseCache` + `unlock_key` under one lock; `PopupState::push_auth`/`next_auth` queue |
 | B29 | `SecretString` derived `Debug`, printing the secret | `84a2cbf` — redacting `Debug` impl; `test_secret_string_debug` |
 | B27 | Auth, `open_sftp` and DNS escaped the connect timeout; DNS blocked a worker thread | `966c95c` — `resolve_addr` (`lookup_host`), `auth::net` per round-trip, `open_sftp_bounded` |

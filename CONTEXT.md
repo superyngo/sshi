@@ -1,7 +1,8 @@
 # CONTEXT
 
 Entry point for all documentation. Root-level files (`README.md`, `CHANGELOG.md`, `LICENSE`)
-stay here; everything else lives under `docs/`.
+stay here; everything else lives under `docs/`. CI (`.github/workflows/ci.yml`) runs fmt, clippy
+and tests with `-D warnings` for the default and `--no-default-features` builds on Linux and macOS.
 
 | Folder | Holds | Canonical? | Lifecycle |
 |---|---|---|---|

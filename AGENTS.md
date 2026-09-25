@@ -39,7 +39,8 @@ cargo fmt --check
 - Every change merges into `main` only after `cargo test`,
   `cargo test --no-default-features`, `cargo clippy --all-targets`,
   `cargo clippy --all-targets --no-default-features`, and `cargo fmt --check`
-  all pass. To revert a regression, revert the merge commit on
+  all pass with no warnings (CI, `.github/workflows/ci.yml`, enforces this with
+  `RUSTFLAGS=-D warnings` on ubuntu and macos). To revert a regression, revert the merge commit on
   `main` — the branch history is the rollback.
 
 ## Code Style Guidelines

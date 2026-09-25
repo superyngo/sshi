@@ -10,9 +10,9 @@
 mod core;
 mod report;
 
-pub(crate) use core::{
-    fetch_combined_snapshots, fetch_latest_snapshots, DisplayColumns, HostSnapshot,
-};
+#[cfg(feature = "tui")]
+pub(crate) use core::{fetch_combined_snapshots, fetch_latest_snapshots};
+pub(crate) use core::{DisplayColumns, HostSnapshot};
 pub use report::CheckoutReport;
 
 use anyhow::Result;

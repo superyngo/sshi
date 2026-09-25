@@ -431,7 +431,7 @@ async fn expand_paths(
                             }
                         }
                         if let Some(ref mut host_map) = host_applicable_paths {
-                            for (_host, path_set) in host_map.iter_mut() {
+                            for path_set in host_map.values_mut() {
                                 if path_set.remove(path) {
                                     for file_path in expanded_files {
                                         path_set.insert(file_path.clone());
@@ -499,7 +499,7 @@ async fn expand_paths(
                             }
                         }
                         if let Some(ref mut host_map) = host_applicable_paths {
-                            for (_host, path_set) in host_map.iter_mut() {
+                            for path_set in host_map.values_mut() {
                                 if path_set.remove(path) {
                                     for file_path in expanded_files {
                                         path_set.insert(file_path.clone());
