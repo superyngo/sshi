@@ -235,7 +235,7 @@ sshi log --out report.html
 
 ### Config
 
-Open configuration file in `$EDITOR`:
+Open configuration file in `$VISUAL` / `$EDITOR`:
 
 ```bash
 sshi config

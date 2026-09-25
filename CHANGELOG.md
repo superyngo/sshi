@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: `sshi config` tried `$EDITOR` before `$VISUAL` while the TUI `E` key tried `$VISUAL` first, so the two could open different editors; both now use `commands::config::resolve_editor` — `$VISUAL`, then `$EDITOR` (empty values skipped), then `vi`/`notepad` (B17).
 - refactor: removed `tui::focus` (`Direction`, `Axis`, `AxisFreedom`, `FocusZone`, `EscapeOutcome`, `escape_to_parent`, `FocusPath`): nothing outside the module used it and it compiled only behind `#![allow(dead_code)]`; no behaviour change (B6).
 - fix: the sh swap probe only ran `free -b`, so macOS/BSD hosts never reported swap (stored `{}`, shown `-`); it now falls back to `sysctl -n vm.swapusage` and parses its `total = …M used = …M` line into total/used bytes (B73).
 - fix: when a host's SSH connection dropped during a run, every later operation on it failed (the dead session and its SFTP channel stayed cached); the pool now notices the closed connection, reconnects that host once, reopens its SFTP channels and carries on — a sync of 500 files with all connections killed after ~100 uploads now finishes 499/500 instead of 71/500. A host whose reconnect fails keeps failing fast (B30).

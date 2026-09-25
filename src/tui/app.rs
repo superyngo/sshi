@@ -3748,16 +3748,8 @@ impl App {
         // MED, also covers the editor-bypass gap noted in the same finding).
         let snap = self.config_tab.capture_selection(&self.config);
 
-        // Resolve editor: $VISUAL → $EDITOR → platform default.
-        let editor = std::env::var("VISUAL")
-            .or_else(|_| std::env::var("EDITOR"))
-            .unwrap_or_else(|_| {
-                if cfg!(windows) {
-                    "notepad".to_string()
-                } else {
-                    "vi".to_string()
-                }
-            });
+        // Same order as `sshi config`: $VISUAL → $EDITOR → platform default.
+        let editor = crate::commands::config::resolve_editor();
 
         // Stage 1 — PAUSE: leave alternate screen + disable raw mode.
         let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);

@@ -145,7 +145,7 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 - **Delete Entry (`d`)**: Press `d` to request deletion of the selected `host`, `check`, or `sync` entry. A confirmation popup (`ConfirmState`) prompts before deletion.
 
 #### External Editor & Comment Preservation
-- **External Editor (`E`)**: Press `E` to suspend the TUI and open `config.toml` in `$VISUAL`, `$EDITOR`, or `vi`. The TUI tracks file modification timestamps (`config_mtime`) and automatically reloads and re-validates the configuration upon editor exit.
+- **External Editor (`E`)**: Press `E` to suspend the TUI and open `config.toml` in `$VISUAL`, `$EDITOR`, or `vi` (`notepad` on Windows) — the same order as `sshi config` (`commands::config::resolve_editor`). The TUI tracks file modification timestamps (`config_mtime`) and automatically reloads and re-validates the configuration upon editor exit.
 - **Comment Preservation**: All programmatic writes use `toml_edit` (`src/config/app.rs`), preserving user comments, whitespace, formatting, and unrecognized top-level tables.
 
 ---

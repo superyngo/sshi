@@ -292,7 +292,7 @@ sshi config [OPTIONS]
 - `-H, --help`: Print help.
 
 #### Editor resolution
-Resolves editor from `$EDITOR`, falling back to `$VISUAL`, then `vi` on Unix / `notepad` on Windows (`commands::config::run`).
+Resolves the editor from `$VISUAL`, then `$EDITOR` (empty values skipped), then `vi` on Unix / `notepad` on Windows (`commands::config::resolve_editor`, shared with the TUI `E` key).
 
 ---
 
