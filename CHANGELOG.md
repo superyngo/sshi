@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- docs: add the 2026-09-25 code audit record `docs/audit/2026-09-25-code-audit.md` (whole-crate review for bugs, optimization, simplicity, clarity and integration, with reproductions) and file its 42 actionable findings as backlog rows B20–B61.
 - chore: remove stray tracked root files (`CHANGELOG` duplicate, `temp`, `.claude/scheduled_tasks.lock`); ignore `.claude/`.
 - docs: archive the v0.x changelog series verbatim to `docs/reference/changelog/v0.x.md` (root keeps `[Unreleased]` + v1.x); link the archive and the backlog from `CONTEXT.md`.
 - docs: add the living backlog `docs/plan/BACKLOG.md` (19 open items consolidated from frozen records plus code defects found by this audit) and the audit record `docs/audit/2026-09-25-documentation-audit.md`; index both.

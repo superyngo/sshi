@@ -6,7 +6,9 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 
 ## In progress
 
-None.
+| Date | Document | Status |
+|---|---|---|
+| 2026-09-25 | [2026-09-25-code-audit.md](2026-09-25-code-audit.md) | In progress |
 
 ## Landed
 
