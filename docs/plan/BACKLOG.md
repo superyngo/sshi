@@ -101,7 +101,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B28 | Per-host `PassphraseCache`, overlapping CLI prompts, TUI popup replaced by a second request (rejected-unencrypted-key prompts were already fixed by B20) | HASH-B28 — `SharedPassphraseCache` + `unlock_key` under one lock; `PopupState::push_auth`/`next_auth` queue |
+| B28 | Per-host `PassphraseCache`, overlapping CLI prompts, TUI popup replaced by a second request (rejected-unencrypted-key prompts were already fixed by B20) | `f885002` — `SharedPassphraseCache` + `unlock_key` under one lock; `PopupState::push_auth`/`next_auth` queue |
 | B29 | `SecretString` derived `Debug`, printing the secret | `84a2cbf` — redacting `Debug` impl; `test_secret_string_debug` |
 | B27 | Auth, `open_sftp` and DNS escaped the connect timeout; DNS blocked a worker thread | `966c95c` — `resolve_addr` (`lookup_host`), `auth::net` per round-trip, `open_sftp_bounded` |
 | B24 | SFTP transfers wrote in place; interrupted transfer truncated the destination; whole transfer bounded by `default_timeout`; close errors discarded | `252cbc7` — temp + rename (`temp_sibling`, `write_local_atomic`), idle timeout per step (`copy_idle`) |
