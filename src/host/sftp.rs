@@ -39,7 +39,7 @@ pub async fn remote_home_dir(
 }
 
 /// Open an SFTP session on the given SSH handle.
-/// Callers are responsible for wrapping this in a timeout.
+/// Unbounded: callers use `session_pool::open_sftp_bounded`.
 pub(crate) async fn open_sftp(handle: &Handle<SshHandler>) -> Result<SftpSession> {
     let channel = handle
         .channel_open_session()

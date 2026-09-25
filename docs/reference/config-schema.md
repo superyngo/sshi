@@ -27,7 +27,7 @@ The `[settings]` table contains global application settings. All fields are opti
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `default_timeout` | `integer` (`u64`) | `30` | Default timeout in seconds for SSH commands and operations. For SFTP transfers it is an idle limit per step (no progress for this long), not a cap on the whole transfer. |
+| `default_timeout` | `integer` (`u64`) | `30` | Default timeout in seconds for SSH commands and operations. Each connection step (DNS, connect, every authentication round-trip, SFTP open) gets its own limit; time at a credential prompt is not counted. For SFTP transfers it is an idle limit per step (no progress for this long), not a cap on the whole transfer. |
 | `data_retention_days` | `integer` (`u64`) | `90` | Number of days to retain historical snapshot and operation log data in SQLite. |
 | `conflict_strategy` | `string` (`"newest"` \| `"skip"`) | `"newest"` | Default conflict resolution strategy during file sync when file timestamps differ. |
 | `propagate_deletes` | `boolean` (`bool`) | `false` | When `true`, deleting a file on the source will propagate the deletion to target hosts during sync. |

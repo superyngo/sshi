@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::future::Future;
-use std::net::ToSocketAddrs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -359,7 +358,7 @@ impl RusshSessionPool {
     /// Get a cached `SftpSession` for `host_alias`, opening one on first use.
     /// Subsequent calls return the cached channel, avoiding a fresh SFTP
     /// subsystem negotiation per file transfer.
-    async fn sftp_session(&self, host_alias: &str) -> Result<Arc<SftpSession>> {
+    async fn sftp_session(&self, host_alias: &str, timeout: Duration) -> Result<Arc<SftpSession>> {
         let handle = self
             .sessions
             .get(host_alias)
@@ -371,7 +370,7 @@ impl RusshSessionPool {
                 let alias = alias.clone();
                 async move {
                     tracing::debug!("Opening SFTP channel for {}", alias);
-                    crate::host::sftp::open_sftp(&handle).await
+                    open_sftp_bounded(&handle, timeout).await
                 }
             })
             .await
@@ -385,7 +384,9 @@ impl RusshSessionPool {
         remote_path: &str,
         timeout_secs: u64,
     ) -> Result<()> {
-        let sftp = self.sftp_session(&host.ssh_host).await?;
+        let sftp = self
+            .sftp_session(&host.ssh_host, Duration::from_secs(timeout_secs))
+            .await?;
         let home = self
             .home_dir(
                 &host.ssh_host,
@@ -411,7 +412,9 @@ impl RusshSessionPool {
         local_path: &std::path::Path,
         timeout_secs: u64,
     ) -> Result<()> {
-        let sftp = self.sftp_session(&host.ssh_host).await?;
+        let sftp = self
+            .sftp_session(&host.ssh_host, Duration::from_secs(timeout_secs))
+            .await?;
         let home = self
             .home_dir(
                 &host.ssh_host,
@@ -450,7 +453,7 @@ impl RusshSessionPool {
                 let home = crate::host::sftp::remote_home_dir(&handle, shell, timeout).await;
                 match home {
                     Err(e) => (ssh_host, None, None, Some(format!("home dir: {:#}", e))),
-                    Ok(home_dir) => match crate::host::sftp::open_sftp(&handle).await {
+                    Ok(home_dir) => match open_sftp_bounded(&handle, timeout).await {
                         Err(e) => (ssh_host, Some(home_dir), None, Some(format!("{:#}", e))),
                         Ok(sftp) => {
                             match crate::host::sftp::sftp_probe(&sftp, &home_dir, timeout).await {
@@ -540,6 +543,29 @@ async fn connect_one(
     }
 }
 
+/// Resolve `host:port` off the runtime worker threads, bounded by `timeout`.
+async fn resolve_addr(host: &str, port: u16, timeout: Duration) -> Result<std::net::SocketAddr> {
+    let target = format!("{host}:{port}");
+    tokio::time::timeout(timeout, tokio::net::lookup_host(target.clone()))
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "Cannot resolve {target}: DNS timed out after {}s",
+                timeout.as_secs()
+            )
+        })?
+        .with_context(|| format!("Cannot resolve {target}"))?
+        .next()
+        .with_context(|| format!("No address resolved for {target}"))
+}
+
+/// Bound SFTP subsystem negotiation by `timeout`.
+async fn open_sftp_bounded(handle: &Handle<SshHandler>, timeout: Duration) -> Result<SftpSession> {
+    tokio::time::timeout(timeout, crate::host::sftp::open_sftp(handle))
+        .await
+        .map_err(|_| anyhow::anyhow!("SFTP channel open timed out after {}s", timeout.as_secs()))?
+}
+
 /// Open a direct TCP connection to `config.hostname:config.port` and authenticate.
 async fn connect_direct(
     config: &ResolvedHostConfig,
@@ -563,12 +589,7 @@ async fn connect_direct(
         port: config.port,
     };
 
-    let addr = format!("{}:{}", config.hostname, config.port);
-    let addr = addr
-        .to_socket_addrs()
-        .with_context(|| format!("Cannot resolve {}", addr))?
-        .next()
-        .with_context(|| format!("No address resolved for {}", addr))?;
+    let addr = resolve_addr(&config.hostname, config.port, timeout).await?;
 
     let mut handle = tokio::time::timeout(timeout, client::connect(russh_config, addr, handler))
         .await
@@ -583,6 +604,7 @@ async fn connect_direct(
         config.identities_only,
         cache,
         auth_sender,
+        timeout,
     )
     .await
     .with_context(|| {
@@ -664,6 +686,7 @@ async fn connect_via_proxy(
         target.identities_only,
         cache,
         auth_sender,
+        timeout,
     )
     .await
     .with_context(|| {
@@ -981,5 +1004,52 @@ mod tests {
         assert_eq!(collected.len(), 16);
         collected.sort_unstable();
         assert_eq!(collected, (0..16).collect::<Vec<_>>());
+    }
+
+    #[cfg(test)]
+    mod b27_timeout_tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn resolve_addr_resolves_localhost() {
+            let a = resolve_addr("127.0.0.1", 22, Duration::from_secs(2))
+                .await
+                .unwrap();
+            assert_eq!(a.port(), 22);
+        }
+
+        #[tokio::test]
+        async fn silent_server_fails_within_timeout() {
+            // Accepts TCP but never sends a banner.
+            let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = l.local_addr().unwrap().port();
+            tokio::spawn(async move {
+                let _held = l.accept().await;
+                std::future::pending::<()>().await
+            });
+            let cfg = ResolvedHostConfig {
+                alias: "t".into(),
+                hostname: "127.0.0.1".into(),
+                port,
+                user: "u".into(),
+                identity_files: vec![],
+                proxy_jump: None,
+                identities_only: true,
+            };
+            let start = std::time::Instant::now();
+            let r = connect_direct(
+                &cfg,
+                Duration::from_millis(300),
+                &mut PassphraseCache::new(),
+                None,
+            )
+            .await;
+            assert!(r.is_err());
+            assert!(
+                start.elapsed() < Duration::from_secs(3),
+                "{:?}",
+                start.elapsed()
+            );
+        }
     }
 }

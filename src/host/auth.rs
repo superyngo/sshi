@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use russh::client::Handle;
@@ -63,6 +64,7 @@ pub type SshAuthSender = tokio::sync::mpsc::UnboundedSender<SshAuthRequest>;
 /// When `auth_sender` is `Some`, credential prompts are routed through the
 /// TUI auth bridge (`SshAuthRequest` over the supplied mpsc, reply via the
 /// embedded oneshot). When `None`, the CLI path uses `rpassword` directly.
+#[allow(clippy::too_many_arguments)]
 pub async fn authenticate(
     handle: &mut Handle<SshHandler>,
     user: &str,
@@ -71,24 +73,33 @@ pub async fn authenticate(
     identities_only: bool,
     cache: &mut PassphraseCache,
     auth_sender: Option<&SshAuthSender>,
+    timeout: Duration,
 ) -> Result<()> {
     // RSA keys need the server's preferred SHA-2 signature hash (rsa-sha2-*).
-    let rsa_hash = handle
-        .best_supported_rsa_hash()
-        .await
+    let rsa_hash = net(timeout, handle.best_supported_rsa_hash())
+        .await?
         .context("Public key authentication error")?
         .flatten();
 
     // Step 1: ssh-agent
     #[cfg(unix)]
-    if try_agent(handle, user, identity_files, identities_only, rsa_hash).await {
+    if try_agent(
+        handle,
+        user,
+        identity_files,
+        identities_only,
+        rsa_hash,
+        timeout,
+    )
+    .await?
+    {
         return Ok(());
     }
 
     // Step 2: identity files that need no passphrase
     for path in identity_files {
         if let Ok(key) = russh::keys::load_secret_key(path, None) {
-            if try_pubkey(handle, user, key, rsa_hash).await? {
+            if try_pubkey(handle, user, key, rsa_hash, timeout).await? {
                 return Ok(());
             }
         }
@@ -109,7 +120,7 @@ pub async fn authenticate(
             continue;
         }
         if let Ok(key) = russh::keys::load_secret_key(path, Some(passphrase.as_str())) {
-            if try_pubkey(handle, user, key, rsa_hash).await? {
+            if try_pubkey(handle, user, key, rsa_hash, timeout).await? {
                 return Ok(());
             }
         }
@@ -119,11 +130,13 @@ pub async fn authenticate(
     if !identities_only {
         let prompt = password_prompt(user, host_name);
         let password = prompt_credential(prompt, auth_sender).await?;
-        if handle
-            .authenticate_password(user, password.as_str())
-            .await
-            .context("Password authentication failed")?
-            .success()
+        if net(
+            timeout,
+            handle.authenticate_password(user, password.as_str()),
+        )
+        .await?
+        .context("Password authentication failed")?
+        .success()
         {
             return Ok(());
         }
@@ -141,13 +154,14 @@ async fn try_agent(
     identity_files: &[PathBuf],
     identities_only: bool,
     rsa_hash: Option<russh::keys::HashAlg>,
-) -> bool {
+    timeout: Duration,
+) -> Result<bool> {
     use russh::keys::agent::{client::AgentClient, AgentIdentity};
     let Ok(mut agent) = AgentClient::connect_env().await else {
-        return false;
+        return Ok(false);
     };
     let Ok(identities) = agent.request_identities().await else {
-        return false;
+        return Ok(false);
     };
     let allowed: Vec<russh::keys::PublicKey> = identity_files
         .iter()
@@ -169,16 +183,18 @@ async fn try_agent(
         } else {
             None
         };
-        match handle
-            .authenticate_publickey_with(user, key, hash, &mut agent)
-            .await
+        match net(
+            timeout,
+            handle.authenticate_publickey_with(user, key, hash, &mut agent),
+        )
+        .await?
         {
-            Ok(r) if r.success() => return true,
+            Ok(r) if r.success() => return Ok(true),
             Ok(_) => {}
             Err(e) => tracing::debug!("ssh-agent auth attempt failed: {e}"),
         }
     }
-    false
+    Ok(false)
 }
 
 /// Whether `path` is a private key that needs a passphrase. Missing,
@@ -220,16 +236,29 @@ fn password_prompt(user: &str, host_name: &str) -> String {
     format!("{}@{} password: ", user, host_name)
 }
 
+/// Bound one server round-trip of the auth exchange by `timeout`. Only
+/// network calls are wrapped, so time spent at a credential prompt never
+/// counts against it.
+async fn net<F: std::future::Future>(timeout: Duration, fut: F) -> Result<F::Output> {
+    tokio::time::timeout(timeout, fut).await.map_err(|_| {
+        anyhow::anyhow!(
+            "Authentication timed out (server did not answer within {}s)",
+            timeout.as_secs()
+        )
+    })
+}
+
 /// Try public-key auth with a loaded key. Returns true if auth succeeded.
 async fn try_pubkey(
     handle: &mut Handle<SshHandler>,
     user: &str,
     key: PrivateKey,
     rsa_hash: Option<russh::keys::HashAlg>,
+    timeout: Duration,
 ) -> Result<bool> {
-    let authed = handle
-        .authenticate_publickey(user, PrivateKeyWithHashAlg::new(Arc::new(key), rsa_hash))
-        .await
+    let key = PrivateKeyWithHashAlg::new(Arc::new(key), rsa_hash);
+    let authed = net(timeout, handle.authenticate_publickey(user, key))
+        .await?
         .context("Public key authentication error")?;
     Ok(authed.success())
 }

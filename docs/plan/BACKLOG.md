@@ -34,7 +34,6 @@ this file existed are recorded in those source documents, not here.
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
 | B18 | 2026-09-25 | 2026-09-25 | P2 | `distribute_pooled` acquires the global permit before the per-host one, opposite to `ConcurrencyLimiter::acquire` | `src/commands/sync/distribute.rs` `distribute_pooled` | S | Uses `ConcurrencyLimiter::acquire` (per-host first) |
 | B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
-| B27 | 2026-09-25 | 2026-09-25 | P2 | Auth, `open_sftp` and DNS resolution escape the connect timeout; DNS blocks a worker thread | `src/host/session_pool.rs` `connect_direct`, `connect_via_proxy`, `RusshSessionPool::sftp_session`, `run_sftp_probe` | S | Each step bounded by `timeout_secs`; `tokio::net::lookup_host` inside the bound |
 | B28 | 2026-09-25 | 2026-09-25 | P2 | Credential prompts: per-host `PassphraseCache`; concurrent blocking `rpassword` prompts on CLI; TUI replaces an open `AuthPopup`, failing the first host; passphrase asked for rejected unencrypted keys | `src/host/session_pool.rs` `RusshSessionPool::setup`; `src/host/auth.rs` `authenticate`, `try_pubkey`; `src/tui/app.rs` `App::handle_tui_event` | M | Three hosts sharing an encrypted key prompt once; prompts serialized on CLI and queued in TUI |
 | B29 | 2026-09-25 | 2026-09-25 | P2 | `SecretString` derives `Debug`, printing the secret | `src/host/auth.rs` `SecretString` | S | `format!("{:?}")` prints a redacted placeholder; test asserts the secret is absent |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
@@ -104,6 +103,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B27 | Auth, `open_sftp` and DNS escaped the connect timeout; DNS blocked a worker thread | HASH-B27 — `resolve_addr` (`lookup_host`), `auth::net` per round-trip, `open_sftp_bounded` |
 | B24 | SFTP transfers wrote in place; interrupted transfer truncated the destination; whole transfer bounded by `default_timeout`; close errors discarded | `252cbc7` — temp + rename (`temp_sibling`, `write_local_atomic`), idle timeout per step (`copy_idle`) |
 | B26 | No shared remote-quoting layer (sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`) | `8dbf80d` — `host::quote` used at every site; parity tests per `ShellType` |
 | B1 | PowerShell directory expansion interpolated paths in double quotes, so `$(...)` executed | `8dbf80d` — closed by B26 |
