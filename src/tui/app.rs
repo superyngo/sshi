@@ -152,6 +152,24 @@ pub struct App {
 
 impl App {
     pub fn from_context(ctx: &Context, log_buffer: Option<LogBufferHandle>) -> Self {
+        // Resolve TUI state file path; on failure fall back to a path in the
+        // OS temp dir so save/load remain functional even with unusual configs.
+        let state_file_path = persist::state_file_path(&ctx.config, ctx.config_path.as_deref())
+            .unwrap_or_else(|e| {
+                tracing::warn!("Failed to resolve TUI state path; using temp dir: {e}");
+                std::env::temp_dir().join("sshi_tui_state.toml")
+            });
+        Self::from_context_with_state_path(ctx, log_buffer, state_file_path)
+    }
+    /// Construct an `App` with an explicit TUI state file path.
+    ///
+    /// Tests must pass an explicit path (e.g. in a temp directory) to avoid
+    /// resolving the real user state directory and triggering legacy migrations.
+    pub fn from_context_with_state_path(
+        ctx: &Context,
+        log_buffer: Option<LogBufferHandle>,
+        state_file_path: PathBuf,
+    ) -> Self {
         let columns = DisplayColumns::from_context(ctx);
         let host_names: Vec<&str> = ctx.config.host.iter().map(|h| h.name.as_str()).collect();
         let snapshots = if host_names.is_empty() {
@@ -161,14 +179,6 @@ impl App {
         };
         let mut viewport = Viewport::new();
         viewport.set_dims(snapshots.len(), 0);
-
-        // Resolve TUI state file path; on failure fall back to a path in the
-        // OS temp dir so save/load remain functional even with unusual configs.
-        let state_file_path = persist::state_file_path(&ctx.config, ctx.config_path.as_deref())
-            .unwrap_or_else(|e| {
-                tracing::warn!("Failed to resolve TUI state path; using temp dir: {e}");
-                std::env::temp_dir().join("sshi_tui_state.toml")
-            });
 
         // Load persisted state and validate against current config (§16.2).
         let mut persisted = persist::load(&state_file_path);
@@ -4933,8 +4943,21 @@ mod navbar_focus_tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::Arc;
 
+    static TEST_DIR: std::sync::LazyLock<tempfile::TempDir> =
+        std::sync::LazyLock::new(|| tempfile::tempdir().expect("test tempdir"));
+    static TEST_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
     fn minimal_app() -> App {
-        let config = crate::config::schema::AppConfig::default();
+        let id = TEST_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let state_path = TEST_DIR.path().join(format!("tui_state_{}.toml", id));
+        minimal_app_with_state_path(state_path)
+    }
+
+    fn minimal_app_with_state_path(state_file_path: std::path::PathBuf) -> App {
+        let mut config = crate::config::schema::AppConfig::default();
+        if let Some(parent) = state_file_path.parent() {
+            config.settings.state_dir = Some(parent.to_path_buf());
+        }
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         crate::state::db::migrate_for_test(&conn); // never the real per-user state DB
         let ctx = Context {
@@ -4948,7 +4971,15 @@ mod navbar_focus_tests {
             verbose: false,
             auth_sender: None,
         };
-        App::from_context(&ctx, None)
+        App::from_context_with_state_path(&ctx, None, state_file_path)
+    }
+
+    #[test]
+    fn app_from_context_with_state_path_uses_explicit_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let state_path = dir.path().join("custom_state.toml");
+        let app = minimal_app_with_state_path(state_path.clone());
+        assert_eq!(app.state_file_path, state_path);
     }
 
     fn question_mark_key() -> KeyEvent {
