@@ -227,7 +227,7 @@ CREATE INDEX IF NOT EXISTS idx_operation_log_host
 | `command` | `TEXT` | No | Subcommand name (`"check"`, `"sync"`, `"run"`, `"exec"`, `"cp"`). |
 | `host` | `TEXT` | No | Target host alias. |
 | `action` | `TEXT` | No | Action detail (e.g., `"metrics_batch"`, command line string, sync file path). |
-| `status` | `TEXT` | No | Execution status (`"ok"`, `"error"`). |
+| `status` | `TEXT` | No | Execution status: `"ok"` (online or partial), `"skipped"`, or `"error"` (offline, unreachable, timed out, error) — one mapping for every command (`report::host_status_to_log_status`). A failed log write is warned and never aborts a command after hosts ran. |
 | `duration_ms` | `INTEGER` | Yes | Total execution duration in milliseconds (`NULL` if unavailable; `sync` records `0`). |
 | `note` | `TEXT` | Yes | Optional error message, failure reason, or detail note (`NULL` on success). |
 | `stdout` | `TEXT` | Yes | Captured stdout preview for `exec` and `run` commands (added in schema v2, `NULL` otherwise). |

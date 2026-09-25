@@ -16,7 +16,7 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
 use super::report::{
-    printer_sink_with_partial, CommandReport, CpHostResult, CpReport, HostOutcome, HostStatus,
+    default_printer_sink, CommandReport, CpHostResult, CpReport, HostOutcome, HostStatus,
     ProgressSink,
 };
 use super::Context;
@@ -141,8 +141,9 @@ pub async fn cp_core(
             (
                 HostStatus::Partial,
                 format!(
-                    "{} copied, {} failed ({:.1}s) — {}",
+                    "{} of {} file(s) copied; {} failed ({:.1}s) — {}",
                     copied,
+                    copied + failed,
                     failed,
                     elapsed.as_secs_f64(),
                     errors.first().map(|s| s.as_str()).unwrap_or("unknown")
@@ -150,21 +151,24 @@ pub async fn cp_core(
             )
         };
 
-        let status_str = if failed == 0 { "ok" } else { "error" };
-        if let Err(e) = ctx.db.execute(
-            "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms) \
-             VALUES (?1, 'cp', ?2, ?3, ?4, ?5)",
-            vec![
-                crate::state::db::boxed_param(now),
-                crate::state::db::boxed_param(host.name.clone()),
-                crate::state::db::boxed_param(format!("cp {} -> {}", local, remote_base)),
-                crate::state::db::boxed_param(status_str),
-                crate::state::db::boxed_param(ms as i64),
-            ],
+        let note = if errors.is_empty() {
+            None
+        } else {
+            Some(errors.join("; "))
+        };
+
+        crate::commands::report::record_operation_log(
+            &ctx.db,
+            now,
+            "cp",
+            &host.name,
+            &format!("cp {} -> {}", local, remote_base),
+            status,
+            ms as i64,
+            note.as_deref(),
+            None,
         )
-        .await {
-            tracing::warn!(error = %e, "failed to record operation_log entry");
-        }
+        .await;
 
         if let Some(p) = progress {
             p.host_completed(&host.name, status, &detail, ms);
@@ -219,7 +223,7 @@ pub async fn run(
         return Ok(HostOutcome::default());
     }
 
-    let sink = printer_sink_with_partial();
+    let sink = default_printer_sink();
     let raw = cp_core(ctx, local, remote, Some(&sink)).await?;
     let CommandReport::Cp(report) = &raw else {
         unreachable!("cp_core always returns CommandReport::Cp")
@@ -227,11 +231,7 @@ pub async fn run(
 
     let mut summary = Summary::default();
     for h in &report.hosts {
-        match h.status {
-            HostStatus::Online => summary.add_success(),
-            HostStatus::Skipped => summary.add_skip(),
-            _ => summary.add_failure(&h.host, &h.detail),
-        }
+        crate::commands::report::update_summary(&mut summary, &h.host, h.status, &h.detail);
     }
     summary.print();
 

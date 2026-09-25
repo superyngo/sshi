@@ -14,7 +14,7 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
 use super::report::{
-    printer_sink_with_skip, CommandReport, ExecHostResult, ExecReport, HostOutcome, HostStatus,
+    default_printer_sink, CommandReport, ExecHostResult, ExecReport, HostOutcome, HostStatus,
     ProgressSink,
 };
 use super::Context;
@@ -144,20 +144,24 @@ pub async fn exec_core(
                 if let Some(p) = progress {
                     p.host_completed(&host.name, HostStatus::Online, &detail, ms);
                 }
-                ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, stdout) \
-                     VALUES (?1, 'exec', ?2, ?3, 'ok', ?4, ?5)",
-                    vec![
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(script.to_string()),
-                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
-                        crate::state::db::boxed_param(
-                            exec_stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string())
-                        ),
-                    ],
+                let stdout_preview = exec_stdout
+                    .lines()
+                    .next()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.trim_end());
+
+                crate::commands::report::record_operation_log(
+                    &ctx.db,
+                    now,
+                    "exec",
+                    &host.name,
+                    script,
+                    HostStatus::Online,
+                    elapsed.as_millis() as i64,
+                    None,
+                    stdout_preview,
                 )
-                .await?;
+                .await;
                 host_results.push(ExecHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Online,
@@ -172,18 +176,18 @@ pub async fn exec_core(
                 if let Some(p) = progress {
                     p.host_completed(&host.name, HostStatus::Error, &detail, ms);
                 }
-                ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
-                     VALUES (?1, 'exec', ?2, ?3, 'error', ?4, ?5)",
-                    vec![
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(script.to_string()),
-                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
-                        crate::state::db::boxed_param(e.to_string()),
-                    ],
+                crate::commands::report::record_operation_log(
+                    &ctx.db,
+                    now,
+                    "exec",
+                    &host.name,
+                    script,
+                    HostStatus::Error,
+                    elapsed.as_millis() as i64,
+                    Some(&e.to_string()),
+                    None,
                 )
-                .await?;
+                .await;
                 host_results.push(ExecHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Error,
@@ -237,7 +241,7 @@ pub async fn run(
         return Ok(HostOutcome::default());
     }
 
-    let sink = printer_sink_with_skip();
+    let sink = default_printer_sink();
     let raw = exec_core(ctx, script, sudo, keep, Some(&sink)).await?;
     let CommandReport::Exec(report) = &raw else {
         unreachable!("exec_core always returns CommandReport::Exec")
@@ -245,14 +249,7 @@ pub async fn run(
 
     let mut summary = Summary::default();
     for h in &report.hosts {
-        match h.status {
-            HostStatus::Online => summary.add_success(),
-            HostStatus::Skipped => summary.add_skip(),
-            HostStatus::Unreachable | HostStatus::Error => {
-                summary.add_failure(&h.host, &h.detail);
-            }
-            _ => {}
-        }
+        crate::commands::report::update_summary(&mut summary, &h.host, h.status, &h.detail);
     }
 
     summary.print();

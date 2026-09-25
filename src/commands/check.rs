@@ -15,8 +15,8 @@ use crate::output::summary::Summary;
 use crate::state::retention;
 
 use super::report::{
-    printer_sink_with_partial, CheckHostResult, CheckReport, CommandReport, HostOutcome,
-    HostStatus, ProgressSink,
+    default_printer_sink, CheckHostResult, CheckReport, CommandReport, HostOutcome, HostStatus,
+    ProgressSink,
 };
 use super::Context;
 
@@ -72,30 +72,37 @@ pub async fn check_core(
 
     let mut results: Vec<CheckHostResult> = Vec::new();
 
-    // Unreachable hosts (from pool setup): report immediately, write offline rows.
+    // Pending per-host DB writes collected as handles resolve. Executing
+    // them inside a single transaction at the end turns N auto-commit
+    // fsyncs into one (audit §3.5 MED, B37).
+    #[allow(clippy::type_complexity)]
+    let mut pending_writes: Vec<(
+        String,
+        i64,
+        i64,
+        String,
+        bool,
+        HostStatus,
+        i64,
+        Option<String>,
+    )> = Vec::new();
+
+    // Unreachable hosts (from pool setup): report immediately, queue offline rows.
     for (name, err) in pool.failed_hosts() {
-        ctx.db.execute(
-            "INSERT INTO check_snapshots (host, collected_at, online, raw_json) VALUES (?1, ?2, 0, '{}')",
-            vec![
-                crate::state::db::boxed_param(name.clone()),
-                crate::state::db::boxed_param(now_ts),
-            ],
-        )
-        .await?;
-        ctx.db
-            .execute(
-                "INSERT INTO host_last_seen (host, last_seen, last_online) VALUES (?1, ?2, 0) \
-             ON CONFLICT(host) DO UPDATE SET last_seen = ?2",
-                vec![
-                    crate::state::db::boxed_param(name.clone()),
-                    crate::state::db::boxed_param(now_ts),
-                ],
-            )
-            .await?;
         let detail = format!("unreachable — {}", err);
         if let Some(p) = progress {
             p.host_completed(&name, HostStatus::Unreachable, &detail, 0);
         }
+        pending_writes.push((
+            name.clone(),
+            now_ts,
+            0,
+            "{}".to_string(),
+            false,
+            HostStatus::Unreachable,
+            0,
+            Some(detail.clone()),
+        ));
         results.push(CheckHostResult {
             host: name.clone(),
             status: HostStatus::Unreachable,
@@ -134,13 +141,6 @@ pub async fn check_core(
             (host, result, elapsed)
         });
     }
-
-    // Pending per-host DB writes collected as handles resolve. Executing
-    // them inside a single transaction at the end turns N auto-commit
-    // fsyncs into one (audit §3.5 MED).
-    #[allow(clippy::type_complexity)]
-    let mut pending_writes: Vec<(String, i64, i64, String, bool, String, i64, Option<String>)> =
-        Vec::new();
 
     while let Some(joined) = set.join_next().await {
         let (host, result, elapsed) = joined.context("task panic")?;
@@ -194,12 +194,6 @@ pub async fn check_core(
                     )
                 };
 
-                let status_str = if matches!(status, HostStatus::Online | HostStatus::Partial) {
-                    "ok"
-                } else {
-                    "error"
-                };
-
                 if let Some(p) = progress {
                     p.host_completed(&host.name, status, &detail, ms);
                 }
@@ -210,7 +204,7 @@ pub async fn check_core(
                     online_int,
                     json_str,
                     online_int == 1,
-                    status_str.to_string(),
+                    status,
                     ms as i64,
                     None,
                 ));
@@ -239,7 +233,7 @@ pub async fn check_core(
                     0,
                     "{}".to_string(),
                     false,
-                    "error".to_string(),
+                    HostStatus::Error,
                     ms as i64,
                     Some(detail.clone()),
                 ));
@@ -259,9 +253,9 @@ pub async fn check_core(
         }
     }
 
-    ctx.db
+    if let Err(e) = ctx.db
         .transaction(move |tx| -> Result<()> {
-            for (host, now, online_int, json_str, online_set_to_now, status_str, ms, note) in
+            for (host, now, online_int, json_str, online_set_to_now, status, ms, note) in
                 &pending_writes
             {
                 tx.execute(
@@ -284,18 +278,26 @@ pub async fn check_core(
                         rusqlite::params![host, now],
                     )?;
                 }
-                if let Err(e) = tx.execute(
-                    "INSERT INTO operation_log \
-                     (timestamp, command, host, action, status, duration_ms, note) \
-                     VALUES (?1, 'check', ?2, 'metrics_batch', ?3, ?4, ?5)",
-                    rusqlite::params![now, host, status_str, ms, note],
+                if let Err(e) = crate::commands::report::record_operation_log_tx(
+                    tx,
+                    *now,
+                    "check",
+                    host,
+                    "metrics_batch",
+                    *status,
+                    *ms,
+                    note.as_deref(),
+                    None,
                 ) {
-                    tracing::warn!(error = %e, "failed to record operation_log entry");
+                    tracing::warn!(error = %e, host = %host, "failed to record operation_log entry");
                 }
             }
             Ok(())
         })
-        .await?;
+        .await
+    {
+        tracing::warn!(error = %e, "failed to record check snapshots and operation_log");
+    }
 
     pool.shutdown().await;
     retention::cleanup(&ctx.db, ctx.config.settings.data_retention_days).await?;
@@ -346,7 +348,7 @@ pub async fn run(
         return Ok(HostOutcome::default());
     }
 
-    let sink = printer_sink_with_partial();
+    let sink = default_printer_sink();
     let raw = check_core(ctx, names, Some(&sink)).await?;
     let CommandReport::Check(report) = &raw else {
         unreachable!("check_core always returns CommandReport::Check")
@@ -355,19 +357,7 @@ pub async fn run(
     // Build the legacy Summary from the typed CheckReport for stdout.
     let mut summary = Summary::default();
     for h in &report.hosts {
-        match h.status {
-            HostStatus::Online | HostStatus::Partial => summary.add_success(),
-            HostStatus::Offline | HostStatus::Error | HostStatus::TimedOut => {
-                summary.add_failure(&h.host, &h.detail);
-            }
-            HostStatus::Unreachable => {
-                let err = h.detail.strip_prefix("unreachable — ").unwrap_or(&h.detail);
-                summary.add_failure(&h.host, err);
-            }
-            HostStatus::Skipped => {
-                summary.add_skip();
-            }
-        }
+        crate::commands::report::update_summary(&mut summary, &h.host, h.status, &h.detail);
     }
 
     summary.print();

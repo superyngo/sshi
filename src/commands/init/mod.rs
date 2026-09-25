@@ -24,7 +24,7 @@ use anyhow::Result;
 
 use std::sync::Arc;
 
-use crate::commands::report::printer_sink_with_skip;
+use crate::commands::report::default_printer_sink;
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config;
 use crate::host::session_pool::RusshSessionPool;
@@ -344,7 +344,7 @@ pub async fn run(ctx: &Context, dry_run: bool, skip: Vec<String>) -> Result<()> 
     // `&dyn SessionPool`; the unsized coercion from `&RusshSessionPool`
     // happens at field assignment for the bare reference, and via `.map()`
     // for the `Option<&_>` fields (Rust does not auto-coerce through Option).
-    let sink = printer_sink_with_skip();
+    let sink = default_printer_sink();
     let pools = InitPools {
         session: &session_pool,
         retry: retry_pool.as_ref().map(|p| p as &dyn SessionPool),

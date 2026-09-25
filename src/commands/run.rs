@@ -13,7 +13,7 @@ use crate::output::report::maybe_write_report;
 use crate::output::summary::Summary;
 
 use super::report::{
-    printer_sink_simple, CommandReport, HostOutcome, HostStatus, ProgressSink, RunHostResult,
+    default_printer_sink, CommandReport, HostOutcome, HostStatus, ProgressSink, RunHostResult,
     RunReport,
 };
 use super::Context;
@@ -113,26 +113,30 @@ pub async fn run_core(
                     p.host_completed(&host.name, status, &detail, ms);
                 }
 
-                ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note, stdout) \
-                     VALUES (?1, 'run', ?2, ?3, ?4, ?5, ?6, ?7)",
-                    vec![
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(command.to_string()),
-                        crate::state::db::boxed_param(
-                            if matches!(status, HostStatus::Online) { "ok".to_string() } else { "error".to_string() }
-                        ),
-                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
-                        crate::state::db::boxed_param(
-                            if matches!(status, HostStatus::Error) { Some(exec_output.stderr.trim().to_string()) } else { None::<String> }
-                        ),
-                        crate::state::db::boxed_param(
-                            exec_output.stdout.lines().next().filter(|l| !l.trim().is_empty()).map(|l| l.trim_end().to_string())
-                        ),
-                    ],
+                let note = if matches!(status, HostStatus::Error) {
+                    Some(exec_output.stderr.trim())
+                } else {
+                    None
+                };
+                let stdout_preview = exec_output
+                    .stdout
+                    .lines()
+                    .next()
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| l.trim_end());
+
+                crate::commands::report::record_operation_log(
+                    &ctx.db,
+                    now,
+                    "run",
+                    &host.name,
+                    command,
+                    status,
+                    elapsed.as_millis() as i64,
+                    note,
+                    stdout_preview,
                 )
-                .await?;
+                .await;
 
                 host_results.push(RunHostResult {
                     host: host.name.clone(),
@@ -148,18 +152,18 @@ pub async fn run_core(
                 if let Some(p) = progress {
                     p.host_completed(&host.name, HostStatus::Error, &detail, ms);
                 }
-                ctx.db.execute(
-                    "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note) \
-                     VALUES (?1, 'run', ?2, ?3, 'error', ?4, ?5)",
-                    vec![
-                        crate::state::db::boxed_param(now),
-                        crate::state::db::boxed_param(host.name.clone()),
-                        crate::state::db::boxed_param(command.to_string()),
-                        crate::state::db::boxed_param(elapsed.as_millis() as i64),
-                        crate::state::db::boxed_param(e.to_string()),
-                    ],
+                crate::commands::report::record_operation_log(
+                    &ctx.db,
+                    now,
+                    "run",
+                    &host.name,
+                    command,
+                    HostStatus::Error,
+                    elapsed.as_millis() as i64,
+                    Some(&e.to_string()),
+                    None,
                 )
-                .await?;
+                .await;
                 host_results.push(RunHostResult {
                     host: host.name.clone(),
                     status: HostStatus::Error,
@@ -205,7 +209,7 @@ pub async fn run(
         return Ok(HostOutcome::default());
     }
 
-    let sink = printer_sink_simple();
+    let sink = default_printer_sink();
     let raw = run_core(ctx, command, sudo, Some(&sink)).await?;
     let CommandReport::Run(report) = &raw else {
         unreachable!("run_core always returns CommandReport::Run")
@@ -213,13 +217,7 @@ pub async fn run(
 
     let mut summary = Summary::default();
     for h in &report.hosts {
-        match h.status {
-            HostStatus::Online => summary.add_success(),
-            HostStatus::Unreachable | HostStatus::Error => {
-                summary.add_failure(&h.host, &h.detail);
-            }
-            _ => {}
-        }
+        crate::commands::report::update_summary(&mut summary, &h.host, h.status, &h.detail);
     }
 
     summary.print();

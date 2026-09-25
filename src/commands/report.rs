@@ -45,11 +45,8 @@ pub trait ProgressSink: Send + Sync {
 
 /// `ProgressSink` impl that prints per-host lines via `output::printer`.
 ///
-/// Construct with one of the public helper functions whose name describes the
-/// status→kind mapping:
-/// - `printer_sink_simple()`        — Online→"ok", else→"error"
-/// - `printer_sink_with_partial()`   — Online→"ok", Partial/Skipped→"skip", else→"error"
-/// - `printer_sink_with_skip()`      — Online→"ok", Skipped→"skip", else→"error"
+/// Construct with [`default_printer_sink`], which uses the one status→kind
+/// mapping shared by every command ([`host_status_to_printer_kind`], B37).
 pub struct PrinterSink {
     status_kind: fn(HostStatus) -> &'static str,
 }
@@ -69,30 +66,134 @@ impl ProgressSink for PrinterSink {
     }
 }
 
-/// Online → "ok", everything else → "error"  (used by `run`).
-pub fn printer_sink_simple() -> PrinterSink {
-    PrinterSink::new(|s| match s {
-        HostStatus::Online => "ok",
-        _ => "error",
-    })
-}
-
-/// Online → "ok", Partial/Skipped → "skip", else → "error"  (used by `check`, `cp`).
-pub fn printer_sink_with_partial() -> PrinterSink {
-    PrinterSink::new(|s| match s {
-        HostStatus::Online => "ok",
-        HostStatus::Partial | HostStatus::Skipped => "skip",
-        _ => "error",
-    })
-}
-
-/// Online → "ok", Skipped → "skip", else → "error"  (used by `exec`).
-pub fn printer_sink_with_skip() -> PrinterSink {
-    PrinterSink::new(|s| match s {
-        HostStatus::Online => "ok",
+/// Map `HostStatus` to `output::printer` status kind.
+///
+/// Under ADR 0004:
+/// - Online and Partial map to "ok" (green ✓)
+/// - Skipped maps to "skip" (yellow ⊘)
+/// - Offline, Unreachable, TimedOut, and Error map to "error" (red ✗)
+pub fn host_status_to_printer_kind(status: HostStatus) -> &'static str {
+    match status {
+        HostStatus::Online | HostStatus::Partial => "ok",
         HostStatus::Skipped => "skip",
-        _ => "error",
-    })
+        HostStatus::Offline
+        | HostStatus::Unreachable
+        | HostStatus::TimedOut
+        | HostStatus::Error => "error",
+    }
+}
+
+/// Standard progress sink mapping HostStatus to printer status kinds (B37).
+pub fn default_printer_sink() -> PrinterSink {
+    PrinterSink::new(host_status_to_printer_kind)
+}
+
+/// Unified mapping from HostStatus to Summary entry across all commands (B37).
+///
+/// Under ADR 0004:
+/// - Online and Partial count as success.
+/// - Skipped counts as skipped.
+/// - Offline, Error, TimedOut, and Unreachable count as failure (unreachable prefix stripped).
+pub fn update_summary(
+    summary: &mut crate::output::summary::Summary,
+    host: &str,
+    status: HostStatus,
+    detail: &str,
+) {
+    match status {
+        HostStatus::Online | HostStatus::Partial => summary.add_success(),
+        HostStatus::Skipped => summary.add_skip(),
+        HostStatus::Offline | HostStatus::Error | HostStatus::TimedOut => {
+            summary.add_failure(host, detail);
+        }
+        HostStatus::Unreachable => {
+            let err = detail.strip_prefix("unreachable — ").unwrap_or(detail);
+            summary.add_failure(host, err);
+        }
+    }
+}
+
+/// Map HostStatus to the operation_log status column string ("ok", "error", "skipped").
+///
+/// Follows ADR 0004: Online and Partial map to "ok".
+pub fn host_status_to_log_status(status: HostStatus) -> &'static str {
+    match status {
+        HostStatus::Online | HostStatus::Partial => "ok",
+        HostStatus::Skipped => "skipped",
+        HostStatus::Offline
+        | HostStatus::Unreachable
+        | HostStatus::TimedOut
+        | HostStatus::Error => "error",
+    }
+}
+
+/// Shared helper to record an operation_log row (B37).
+///
+/// Log-write failure: the remote op already happened, so this warns and continues
+/// (never aborts after hosts ran) consistently across all commands.
+#[allow(clippy::too_many_arguments)]
+pub async fn record_operation_log(
+    db: &crate::state::db::DbHandle,
+    timestamp: i64,
+    command: &str,
+    host: &str,
+    action: &str,
+    status: HostStatus,
+    duration_ms: i64,
+    note: Option<&str>,
+    stdout: Option<&str>,
+) {
+    let status_str = host_status_to_log_status(status);
+    if let Err(e) = db
+        .execute(
+            "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note, stdout) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            vec![
+                crate::state::db::boxed_param(timestamp),
+                crate::state::db::boxed_param(command.to_string()),
+                crate::state::db::boxed_param(host.to_string()),
+                crate::state::db::boxed_param(action.to_string()),
+                crate::state::db::boxed_param(status_str.to_string()),
+                crate::state::db::boxed_param(duration_ms),
+                crate::state::db::boxed_param(note.map(|s| s.to_string())),
+                crate::state::db::boxed_param(stdout.map(|s| s.to_string())),
+            ],
+        )
+        .await
+    {
+        tracing::warn!(error = %e, host = %host, command = %command, "failed to record operation_log entry");
+    }
+}
+
+/// Shared helper to record an operation_log row inside an active transaction (B37).
+#[allow(clippy::too_many_arguments)]
+pub fn record_operation_log_tx(
+    tx: &rusqlite::Transaction<'_>,
+    timestamp: i64,
+    command: &str,
+    host: &str,
+    action: &str,
+    status: HostStatus,
+    duration_ms: i64,
+    note: Option<&str>,
+    stdout: Option<&str>,
+) -> rusqlite::Result<()> {
+    let status_str = host_status_to_log_status(status);
+    tx.execute(
+        "INSERT INTO operation_log (timestamp, command, host, action, status, duration_ms, note, stdout) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            timestamp,
+            command,
+            host,
+            action,
+            status_str,
+            duration_ms,
+            note,
+            stdout,
+        ],
+    )?;
+    Ok(())
 }
 
 /// Per-host typed result of a `check_core` run.
@@ -370,5 +471,108 @@ mod host_outcome_tests {
             4
         );
         assert_eq!(outcome(&[Skipped, Offline]).exit_code(), 4);
+    }
+
+    #[test]
+    fn mapping_and_summary_follows_adr_0004() {
+        use super::*;
+        use crate::output::summary::Summary;
+
+        // 1. Printer kinds
+        assert_eq!(host_status_to_printer_kind(HostStatus::Online), "ok");
+        assert_eq!(host_status_to_printer_kind(HostStatus::Partial), "ok");
+        assert_eq!(host_status_to_printer_kind(HostStatus::Skipped), "skip");
+        assert_eq!(host_status_to_printer_kind(HostStatus::Offline), "error");
+        assert_eq!(
+            host_status_to_printer_kind(HostStatus::Unreachable),
+            "error"
+        );
+        assert_eq!(host_status_to_printer_kind(HostStatus::TimedOut), "error");
+        assert_eq!(host_status_to_printer_kind(HostStatus::Error), "error");
+
+        // 2. Log status
+        assert_eq!(host_status_to_log_status(HostStatus::Online), "ok");
+        assert_eq!(host_status_to_log_status(HostStatus::Partial), "ok");
+        assert_eq!(host_status_to_log_status(HostStatus::Skipped), "skipped");
+        assert_eq!(host_status_to_log_status(HostStatus::Offline), "error");
+        assert_eq!(host_status_to_log_status(HostStatus::Unreachable), "error");
+        assert_eq!(host_status_to_log_status(HostStatus::TimedOut), "error");
+        assert_eq!(host_status_to_log_status(HostStatus::Error), "error");
+
+        // 3. Update summary
+        let mut summary = Summary::default();
+        update_summary(&mut summary, "h1", HostStatus::Online, "ok");
+        update_summary(&mut summary, "h2", HostStatus::Partial, "partial warning");
+        update_summary(&mut summary, "h3", HostStatus::Skipped, "skipped");
+        update_summary(&mut summary, "h4", HostStatus::Offline, "offline");
+        update_summary(
+            &mut summary,
+            "h5",
+            HostStatus::Unreachable,
+            "unreachable — connection refused",
+        );
+        update_summary(&mut summary, "h6", HostStatus::TimedOut, "timed out");
+        update_summary(&mut summary, "h7", HostStatus::Error, "error");
+
+        assert_eq!(summary.succeeded, 2); // h1 (Online) + h2 (Partial)
+        assert_eq!(summary.skipped, 1); // h3
+        assert_eq!(summary.failed, 4); // h4, h5, h6, h7
+        assert_eq!(summary.errors.len(), 4);
+        // Verify unreachable prefix stripping
+        assert_eq!(summary.errors[1].message, "connection refused");
+    }
+
+    #[tokio::test]
+    async fn record_operation_log_writes_and_does_not_abort_on_db_error() {
+        use super::*;
+        use crate::state::db::{migrate_for_test, DbHandle};
+
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        migrate_for_test(&conn);
+        let db = DbHandle::new(conn);
+
+        // Successful write
+        record_operation_log(
+            &db,
+            1717000000,
+            "run",
+            "h1",
+            "echo 1",
+            HostStatus::Online,
+            100,
+            None,
+            Some("1"),
+        )
+        .await;
+
+        // Verify row was written
+        let count: i64 = db
+            .transaction(|tx| {
+                let c: i64 =
+                    tx.query_row("SELECT COUNT(*) FROM operation_log", [], |r| r.get(0))?;
+                Ok(c)
+            })
+            .await
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // Now break the database by dropping the table
+        db.execute("DROP TABLE operation_log", vec![])
+            .await
+            .unwrap();
+
+        // Calling record_operation_log must NOT abort or panic (warn and continue)
+        record_operation_log(
+            &db,
+            1717000001,
+            "run",
+            "h2",
+            "echo 2",
+            HostStatus::Error,
+            200,
+            Some("failed"),
+            None,
+        )
+        .await;
     }
 }
