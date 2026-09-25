@@ -16,7 +16,7 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
-| B36 | Unknown `-n` exited 0 with a wrong hint; missing explicit `-c` became an empty config | HASH-B36 — `ensure_check_names` / `ensure_sync_names` + `load_config` (init and TUI exempt); real binary: typo/missing path exit 1, `init` still creates |
+| B36 | Unknown `-n` exited 0 with a wrong hint; missing explicit `-c` became an empty config | `752b3c8` — `ensure_check_names` / `ensure_sync_names` + `load_config` (init and TUI exempt); real binary: typo/missing path exit 1, `init` still creates |
 | B14 | `checkout --history` / `--since` parsed but ignored | `f5f2424` — flags removed from CLI, docs and README (option A); real binary rejects them with exit 2 |
 | B13 | `-v/--verbose` rejected after the subcommand | `e53fbe9` — `global = true` on `Cli::verbose`; real binary `check -a -v` accepted |
 | B43 | Config save panicked on inline `settings`, replaced a symlinked config, skipped fsync, dropped unknown per-entry keys | `45fee17` — inline table converted; symlink canonicalized; `sync_all` before persist; unknown keys merged by `id`/`name`; real binary `init` verified |
