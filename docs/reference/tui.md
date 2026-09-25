@@ -135,6 +135,7 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 #### Editing & Value Mutation
 - **Inline Scalar Edit**: Press `e` or `Enter` on a scalar field (`String`, `OptionalString`, `U64`) to activate inline `InputField`. Press `Enter` to commit or `Esc` to cancel.
 - **Option / Enum Cycling**: Press `Space`, `e`, or `Enter` on an enum, boolean, or tri-bool field (`FieldKind::Enum`, `FieldKind::Bool`, `FieldKind::TriBool`, `FieldKind::ShellEnum`) to cycle variants in place.
+- **Read-only rows**: a check entry's `path:N` rows (`[[check.path]]`) are shown read-only; edit them in `config.toml` (`E`). A setting that must be a number (`default_timeout`, `data_retention_days`, the concurrency limits) keeps its editor open with an error until the value parses (B45).
 - **Quick-Clear Optional**: Press `Delete` on an `OptionalString` field to instantly clear its value (required fields like `name` cannot be cleared).
 - **Direct Sub-Popups**:
   - `groups` (`FieldKind::VecString`): Opens `DirectGroupPickerState` showing all known groups across the config with toggle checkboxes.
@@ -331,7 +332,7 @@ The TUI automatically persists UI navigation and filter state on exit (`src/tui/
 - **Atomic Persistence**: Written atomically via `tempfile::NamedTempFile::persist()` to prevent corruption on sudden termination.
 - **Debounced writes**: a state change schedules one write once input has been idle for 500 ms (`STATE_SAVE_DEBOUNCE`), plus a final write on quit — not one write per keypress.
 - **UI thread**: `render` does no I/O. View data (SQLite) loads in the event loop before a frame is drawn, `--out`/export report files are written on a blocking task (the result arrives as a footer notice), the results popup is built once when a report arrives, and the target-count badge is recomputed only when the config or filter changes.
-- **Fault Tolerance**: Missing, unreadable, or invalid state files fall back to defaults silently without panicking.
+- **Fault Tolerance**: Missing, unreadable, or invalid state files fall back to defaults silently without panicking. An unrecognised enum value (e.g. written by a newer version) falls back to that field's default only; the rest of the file still loads (`persist::deserialize_enum_or_default`, B49).
 
 ### TOML Schema Structure
 

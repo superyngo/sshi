@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- docs: `tui.md` now describes per-field fallback for unknown saved enum values (B49) and the read-only check-path rows / numeric-setting validation (B45).
 - fix: `~/.ssh/config` options written before the first `Host` line (OpenSSH applies them to every host, e.g. a global `Port` or `IdentityFile`) were silently dropped, as were options at the top of a file `Include`d inside a `Host` block; both now apply as in OpenSSH. `config-schema.md` now documents the OpenSSH-style rules from B42 (first value wins across matching blocks, `Match`, `Include`), which it still described the old way (B75).
 - docs: removed stale references (per-file sync collector, "currently inserted" `sync_state` columns) and recorded the verified "one SFTP channel per host" pending item as done.
 - refactor: operation scaffolding is no longer copied per command: the `exec`/`run`/`cp`/`check` cores return their typed reports (the CLI wrappers lose their `unreachable!` matches) and share one per-host fan-out (`commands::fanout::FanOut`); the five TUI `execute_*` methods share one launch helper (`App::launch_operation`), which also fixes sync's differently worded "already running" message; and the 1,125-line `App::handle_key` is split into a short router plus one handler per popup layer, the tab bar, global keys and each tab (largest now 214 lines). No behaviour change otherwise (B53).
