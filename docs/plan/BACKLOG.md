@@ -88,7 +88,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B18 | `distribute_pooled` acquired the global permit before the per-host one | HASH-B18 — `distribute_pooled` uses `ConcurrencyLimiter::acquire`; test `test_distribute_pooled_acquires_per_host_first`; `ssh-transport.md` note updated |
+| B18 | `distribute_pooled` acquired the global permit before the per-host one | `ae57ce5` — `distribute_pooled` uses `ConcurrencyLimiter::acquire`; test `test_distribute_pooled_acquires_per_host_first`; `ssh-transport.md` note updated |
 | B3 | Config tab breadcrumb indexed `config.host/check/sync[*i]` directly; stale index panicked | `613d3c7` — `.get(*i)` with `?` fallback in `ConfigTabState::breadcrumb`; test `breadcrumb_stale_index_does_not_panic` |
 | B8 | `batch_keyscan_and_accept` panicked if the home directory could not be resolved | `1bb5769` — `append_keys_to_known_hosts` returns `anyhow` context errors; caller propagates; unit tests for missing home and append |
 | B41 | `fetch_latest_snapshots` read the whole snapshot history | `4f7de17` — `latest_snapshot_sql` window query (newest `collected_at`, then `id`); tests: 15 history rows → 2, missing host kept |
