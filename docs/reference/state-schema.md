@@ -161,7 +161,7 @@ CREATE TABLE IF NOT EXISTS host_last_seen (
 
 ### 3. `sync_state`
 
-Records file synchronization events across sync entries and target hosts. Currently, the sync engine operates without consulting this table (change detection queries hosts live), making `sync_state` an audit log of synced paths.
+**Legacy — no longer written.** sshi wrote one placeholder row per synced file and target host here (`mtime`/`size_bytes` `0`, `blake3` `""`) but never read the table: change detection queries hosts live. Writes stopped in B19; the table and any existing rows are kept in existing databases (no migration drops them). Sync events are recorded in `operation_log`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -275,4 +275,4 @@ DELETE FROM operation_log WHERE timestamp < (strftime('%s', 'now') - ?1);
 | `check_snapshots` | **Yes** | Time-series metrics data grows proportionally with check frequency. |
 | `operation_log` | **Yes** | Audit log grows with every executed command. |
 | `host_last_seen` | **No** | Stores exactly one high-water mark row per host. |
-| `sync_state` | **No** | Represents file synchronization audit records; currently write-only and never read by sync planning. |
+| `sync_state` | **No** | Legacy table, no longer written (B19); existing rows are left as they are. |

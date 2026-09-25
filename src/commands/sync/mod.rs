@@ -293,7 +293,6 @@ async fn sync_inner(
             &sessions,
             dry_run,
             verbose,
-            &label,
             &mut summary,
             &mut host_file_map,
         )
@@ -308,7 +307,6 @@ async fn sync_inner(
             &sessions,
             dry_run,
             push_missing,
-            &label,
             verbose,
             &mut summary,
         )
@@ -664,7 +662,6 @@ async fn distribute_batch(
     sessions: &Arc<dyn SessionPool>,
     dry_run: bool,
     verbose: bool,
-    label: &str,
     summary: &mut SyncSummary,
     host_file_map: &mut HashMap<String, (Vec<String>, Vec<String>)>,
 ) -> Result<()> {
@@ -703,7 +700,6 @@ async fn distribute_batch(
     // Collect per-decision DB writes as decisions resolve. Executing
     // them inside one transaction at the end turns N auto-commit
     // fsyncs into one (audit §3.5 MED).
-    let mut pending_sync_state: Vec<(String, String, String, i64)> = Vec::new();
     let mut pending_op_log: Vec<(i64, String, String)> = Vec::new();
 
     for decision in all_decisions {
@@ -741,14 +737,6 @@ async fn distribute_batch(
                     }
 
                     let now = chrono::Utc::now().timestamp();
-                    for target in &succeeded {
-                        pending_sync_state.push((
-                            label.to_string(),
-                            target.clone(),
-                            decision.path.clone(),
-                            now,
-                        ));
-                    }
                     pending_op_log.push((
                         now,
                         decision.source_host.clone(),
@@ -810,7 +798,6 @@ async fn distribute_batch(
     flush_sync_rows(
         ctx,
         SyncRows {
-            sync_state: pending_sync_state,
             op_log: pending_op_log,
         },
     )
@@ -833,7 +820,6 @@ async fn run_recursive_entries(
     sessions: &Arc<dyn SessionPool>,
     dry_run: bool,
     push_missing: bool,
-    label: &str,
     verbose: bool,
     summary: &mut SyncSummary,
 ) -> Result<()> {
@@ -940,7 +926,6 @@ async fn run_recursive_entries(
             &scoped_hosts,
             &expanded_paths,
             limiter,
-            label,
             dry_run,
             push_missing,
             *effective_source,
@@ -964,32 +949,19 @@ async fn run_recursive_entries(
 /// [`flush_sync_rows`] in one transaction instead of one auto-commit each.
 #[derive(Default)]
 pub(crate) struct SyncRows {
-    /// `(sync_group, host, path, synced_at)`
-    pub(crate) sync_state: Vec<(String, String, String, i64)>,
     /// `(timestamp, source_host, action)`
     pub(crate) op_log: Vec<(i64, String, String)>,
 }
 
-/// Write collected `sync_state` / `operation_log` rows in one transaction.
-/// Row failures only warn, as before.
+/// Write collected `operation_log` rows in one transaction. Row failures only
+/// warn. (`sync_state` is no longer written: its rows were placeholders that
+/// nothing read, B19.)
 async fn flush_sync_rows(ctx: &Context, rows: SyncRows) -> Result<()> {
-    if rows.sync_state.is_empty() && rows.op_log.is_empty() {
+    if rows.op_log.is_empty() {
         return Ok(());
     }
     ctx.db
         .transaction(move |tx| -> Result<()> {
-            for (group, target, path, now) in &rows.sync_state {
-                if let Err(e) = tx.execute(
-                    "INSERT INTO sync_state \
-                     (sync_group, host, path, mtime, size_bytes, blake3, synced_at) \
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-                     ON CONFLICT(sync_group, host, path) DO UPDATE \
-                     SET mtime=?4, size_bytes=?5, blake3=?6, synced_at=?7",
-                    rusqlite::params![group, target, path, 0i64, 0i64, "", now],
-                ) {
-                    tracing::warn!(error = %e, "failed to record sync_state entry");
-                }
-            }
             for (now, source_host, action) in &rows.op_log {
                 if let Err(e) = tx.execute(
                     "INSERT INTO operation_log \
@@ -1024,7 +996,6 @@ async fn sync_path_across(
     hosts: &[Arc<HostEntry>],
     paths: &[String],
     limiter: &crate::host::concurrency::ConcurrencyLimiter,
-    group_name: &str,
     dry_run: bool,
     push_missing: bool,
     source_override: Option<&str>,
@@ -1167,14 +1138,6 @@ async fn sync_path_across(
                         }
 
                         let now = chrono::Utc::now().timestamp();
-                        for target in &succeeded {
-                            rows.sync_state.push((
-                                group_name.to_string(),
-                                target.clone(),
-                                decision.path.clone(),
-                                now,
-                            ));
-                        }
                         rows.op_log.push((
                             now,
                             decision.source_host.clone(),

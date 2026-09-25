@@ -21,7 +21,6 @@ this file existed are recorded in those source documents, not here.
 | B11 | 2026-07-18 | 2026-09-25 | P3 | Kill ring is per-`InputField`; yank does not cross fields | `src/tui/components/input_field.rs` `InputField` | M | Text killed in one field can be yanked in another |
 | B12 | 2026-07-18 | 2026-09-25 | P3 | Windows close button (`CTRL_CLOSE_EVENT`) not handled; `TODO(post-MVP windows)` | `src/tui/app.rs` `spawn_signal_listener` | M | Terminal restored when the console window is closed |
 | B17 | 2026-09-25 | 2026-09-25 | P3 | Editor precedence differs: `sshi config` tries `$EDITOR` first, TUI `E` tries `$VISUAL` first | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | One shared resolver, `$VISUAL` then `$EDITOR` |
-| B19 | 2026-09-25 | 2026-09-25 | P3 | `sync_state` rows are written with placeholder `mtime`/`size_bytes`/`blake3` (0/0/"") and never read | `src/commands/sync/mod.rs` (inserts into `sync_state`) | M | Either real values are written and used, or the table is dropped by migration |
 | B30 | 2026-09-25 | 2026-09-25 | P2 | Dead SSH/SFTP sessions are never evicted or reconnected | `src/host/session_pool.rs` `LazyCache`, `RusshSessionPool` | M | After a dropped connection the next op on that host reconnects once |
 | B31 | 2026-09-25 | 2026-09-25 | P2 | Windows `--sudo` never observes the elevated command's exit status; `run --sudo --dry-run` previews the sh form | `src/host/shell.rs` `sudo_wrap`; `src/commands/run.rs` `run` | M | Windows `--sudo` either reports the real exit status or is refused with an error; preview uses the host shell |
 | B46 | 2026-09-25 | 2026-09-25 | P2 | Config tab editors: Esc commits in form, discards in direct popup; entry-form viewport height 0 and ignores hint rows; form/direct editors duplicated; mode state as `Option::unwrap()` | `src/tui/tabs/config_tab.rs` `handle_vec_editor_key`, `handle_direct_vec_editor_key`, `render_entry_form` | M | One vec/group editor used by both paths with one Esc rule; long forms scroll with a sticky cursor |
@@ -51,6 +50,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | Item | Blocked on | Ready when |
 |---|---|---|
+| Drop the legacy `sync_state` table (B19 follow-up): writes stopped, the table and old placeholder rows remain in existing DBs | User approval — a `DROP TABLE` migration deletes stored rows irreversibly | User approves the drop; add migration 003 `DROP TABLE IF EXISTS sync_state` and bump `CURRENT_VERSION` |
 | `rsa` Marvin timing side channel RUSTSEC-2023-0071 (via `russh` → `ssh-key`; accepted after B64) | Upstream: no fixed `rsa` release; `russh` pins `rsa` 0.10 pre-release | A `russh` release depends on a fixed `rsa`; re-run `cargo audit` |
 
 ## Watching
@@ -69,6 +69,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B19 | `sync_state` rows written with placeholder `mtime`/`size_bytes`/`blake3` and never read | HASH-B19 — writes removed from `distribute_batch`/`sync_path_across`/`flush_sync_rows` (and the now-unused `label`/`group_name` params); table kept — DROP awaits user approval (Awaiting external); docs updated; real binary: sync adds 1 `operation_log` row, 0 `sync_state` rows |
 | B58 | `migrate` rewrote `user_version` downward under an older binary | `a94f11c` — `migrate` bails when `user_version > CURRENT_VERSION`; `open` adds the DB path as context; test `migrate_refuses_newer_schema_and_keeps_version`; real binary: v99 DB → exit 1, version stays 99 (old binary: rewrote it to 2) |
 | B72 | Every `sync` logged "session_pool has 2 strong references at shutdown"; sessions never closed gracefully; `?` exits skipped shutdown | `c0bfcce` — phases 1–4 in one async block in `sync_inner`, `drop(sessions)` then `SshPool::shutdown` before `phases?`; real binary: warning gone for recursive, fixed-source skip and dry-run syncs |
 | B34 | Recursive sync ran one exec per host per file and used legacy `distribute`, bypassing per-host limits | `4920bba` — `sync_path_across` takes all expanded paths → `batch_collect_all_metadata` with `chunk_paths`/`batch_cmd_budget` and per-chunk timeout; `distribute_pooled`; legacy `distribute` and per-file `collect_file_metadata` removed; tests: exec count O(hosts), 5000-path chunking under budget for sh/PowerShell/cmd; real binary (timeout 1 s): 500 files synced both with and without `source` |

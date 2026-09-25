@@ -213,7 +213,6 @@ async fn distribute_batch_happy_path_records_upload_and_download() {
         &sessions,
         false, // dry_run = false → real distribute
         false,
-        "test-group",
         &mut summary,
         &mut host_file_map,
     )
@@ -258,7 +257,6 @@ async fn distribute_batch_dry_run_skips_all_io() {
         &sessions,
         true, // dry_run = true → skip distribute entirely
         false,
-        "test-group",
         &mut summary,
         &mut host_file_map,
     )
@@ -293,7 +291,6 @@ async fn distribute_batch_records_failed_upload() {
         &sessions,
         false,
         false,
-        "test-group",
         &mut summary,
         &mut host_file_map,
     )
@@ -343,7 +340,6 @@ async fn sync_path_across_distributes_newest_to_older() {
         &hosts,
         &["~/.bashrc".to_string()],
         &limiter,
-        "test-group",
         false, // dry_run
         true,  // push_missing
         None,  // source_override
@@ -361,8 +357,6 @@ async fn sync_path_across_distributes_newest_to_older() {
     assert_eq!(mock.uploads().len(), 1);
     assert_eq!(mock.uploads()[0].0, "host-a");
     // B5: DB rows are collected for one transaction, not written per file.
-    assert_eq!(rows.sync_state.len(), 1);
-    assert_eq!(rows.sync_state[0].1, "host-a");
     assert_eq!(rows.op_log.len(), 1);
     assert_eq!(rows.op_log[0].1, "host-b");
 }
@@ -397,7 +391,6 @@ async fn sync_path_across_in_sync_no_io() {
         &hosts,
         &["~/.bashrc".to_string()],
         &limiter,
-        "test-group",
         false,
         true,
         None,
@@ -431,7 +424,6 @@ async fn run_recursive_entries_empty_returns_noop() {
         &sessions,
         false,
         true,
-        "test-group",
         false,
         &mut summary,
     )
@@ -491,7 +483,6 @@ async fn run_recursive_entries_without_source_unions_expansions() {
         &sessions,
         false,
         true,
-        "test-group",
         false,
         &mut summary,
     )
@@ -693,7 +684,6 @@ async fn run_recursive_entries_batch_exec_count_is_order_of_hosts() {
         &sessions,
         false,
         true,
-        "test-group",
         false,
         &mut summary,
     )
