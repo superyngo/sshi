@@ -12,7 +12,7 @@ use russh::client::{self, Handle};
 use russh::keys::PublicKeyOrCertificate;
 use russh_sftp::client::SftpSession;
 
-use super::auth::{authenticate, PassphraseCache, SshAuthSender};
+use super::auth::{authenticate, SharedPassphraseCache, SshAuthSender};
 use crate::config::schema::HostEntry;
 use crate::config::ssh_config::ResolvedHostConfig;
 
@@ -256,17 +256,18 @@ impl RusshSessionPool {
         let ssh_config = Arc::new(crate::config::ssh_config::load_ssh_config()?);
         let mut set = tokio::task::JoinSet::new();
 
+        let cache = SharedPassphraseCache::default();
         for host in hosts {
             let alias = host.ssh_host.clone();
+            let cache = cache.clone();
             let sem = sem.clone();
             let config = ssh_config.clone();
             let auth_sender = auth_sender.clone();
 
             set.spawn(async move {
                 let _permit = sem.acquire_owned().await.unwrap();
-                let mut cache = PassphraseCache::new();
                 let result =
-                    connect_one(&alias, timeout, &mut cache, &config, auth_sender.as_ref()).await;
+                    connect_one(&alias, timeout, &cache, &config, auth_sender.as_ref()).await;
                 (alias, result)
             });
         }
@@ -522,7 +523,7 @@ impl RusshSessionPool {
 async fn connect_one(
     alias: &str,
     timeout: Duration,
-    cache: &mut PassphraseCache,
+    cache: &SharedPassphraseCache,
     ssh_config: &crate::config::ssh_config::ParsedSshConfig,
     auth_sender: Option<&SshAuthSender>,
 ) -> Result<(Handle<SshHandler>, Option<tokio::sync::oneshot::Sender<()>>)> {
@@ -570,7 +571,7 @@ async fn open_sftp_bounded(handle: &Handle<SshHandler>, timeout: Duration) -> Re
 async fn connect_direct(
     config: &ResolvedHostConfig,
     timeout: Duration,
-    cache: &mut PassphraseCache,
+    cache: &SharedPassphraseCache,
     auth_sender: Option<&SshAuthSender>,
 ) -> Result<Handle<SshHandler>> {
     let russh_config = Arc::new(client::Config {
@@ -622,7 +623,7 @@ async fn connect_via_proxy(
     proxy: &ResolvedHostConfig,
     target: &ResolvedHostConfig,
     timeout: Duration,
-    cache: &mut PassphraseCache,
+    cache: &SharedPassphraseCache,
     auth_sender: Option<&SshAuthSender>,
 ) -> Result<(Handle<SshHandler>, tokio::sync::oneshot::Sender<()>)> {
     // Step 1: connect and authenticate to the proxy
@@ -1040,7 +1041,7 @@ mod tests {
             let r = connect_direct(
                 &cfg,
                 Duration::from_millis(300),
-                &mut PassphraseCache::new(),
+                &SharedPassphraseCache::default(),
                 None,
             )
             .await;

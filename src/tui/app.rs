@@ -35,9 +35,7 @@ use crate::commands::{Context, TargetMode};
 use crate::config::schema::AppConfig;
 use crate::tui::state::persist::ViewOperationKind;
 
-use super::app_state::{
-    AuthPopup, EscLevel, ExportPopup, OperateState, PopupState, ViewFocus, ViewState,
-};
+use super::app_state::{EscLevel, ExportPopup, OperateState, PopupState, ViewFocus, ViewState};
 use super::async_bridge::{EventSender, RunningOp, TuiEvent};
 use super::components::input_field::{InputField, InputMode};
 use super::components::member_picker::{MemberPicker, PickerResult, PickerTarget};
@@ -872,7 +870,7 @@ impl App {
                 true
             }
             TuiEvent::SshAuthRequired(req) => {
-                self.popup.auth = Some(AuthPopup::new(req));
+                self.popup.push_auth(req);
                 true
             }
         }
@@ -2083,11 +2081,11 @@ impl App {
             match key.code {
                 KeyCode::Enter => {
                     popup.submit();
-                    self.popup.auth = None;
+                    self.popup.next_auth();
                 }
                 KeyCode::Esc => {
                     popup.cancel();
-                    self.popup.auth = None;
+                    self.popup.next_auth();
                 }
                 _ => {
                     popup.input.handle_key(key);

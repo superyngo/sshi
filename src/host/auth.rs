@@ -43,6 +43,11 @@ impl Drop for SecretString {
 /// Avoids re-prompting for the same key file within a single run.
 pub type PassphraseCache = HashMap<PathBuf, SecretString>;
 
+/// One cache shared by every host in a connect batch. Its lock is also held
+/// across each credential prompt, so prompts are serialized and a host
+/// waiting on the lock reuses a passphrase another host just entered.
+pub type SharedPassphraseCache = Arc<tokio::sync::Mutex<PassphraseCache>>;
+
 /// A request sent from the SSH auth layer to the TUI to prompt the user for a
 /// credential (passphrase or password). The responder is a oneshot channel; the
 /// TUI sends the entered value back through it.
@@ -78,7 +83,7 @@ pub async fn authenticate(
     host_name: &str,
     identity_files: &[PathBuf],
     identities_only: bool,
-    cache: &mut PassphraseCache,
+    cache: &SharedPassphraseCache,
     auth_sender: Option<&SshAuthSender>,
     timeout: Duration,
 ) -> Result<()> {
@@ -114,19 +119,7 @@ pub async fn authenticate(
 
     // Step 3: encrypted identity files — prompt for the passphrase
     for path in identity_files.iter().filter(|p| is_encrypted_key(p)) {
-        let passphrase = match cache.get(path) {
-            Some(pp) => pp.clone(),
-            None => {
-                let prompt = format!("Enter passphrase for {}: ", path.display());
-                let secret = prompt_credential(prompt, auth_sender).await?;
-                cache.insert(path.clone(), secret.clone());
-                secret
-            }
-        };
-        if passphrase.as_str().is_empty() {
-            continue;
-        }
-        if let Ok(key) = russh::keys::load_secret_key(path, Some(passphrase.as_str())) {
+        if let Some(key) = unlock_key(cache, path, auth_sender).await? {
             if try_pubkey(handle, user, key, rsa_hash, timeout).await? {
                 return Ok(());
             }
@@ -136,7 +129,10 @@ pub async fn authenticate(
     // Step 4: password fallback (only if IdentitiesOnly is not set)
     if !identities_only {
         let prompt = password_prompt(user, host_name);
-        let password = prompt_credential(prompt, auth_sender).await?;
+        let password = {
+            let _one_prompt_at_a_time = cache.lock().await;
+            prompt_credential(prompt, auth_sender).await?
+        };
         if net(
             timeout,
             handle.authenticate_password(user, password.as_str()),
@@ -204,6 +200,36 @@ async fn try_agent(
     Ok(false)
 }
 
+/// Decrypt encrypted key `path`, prompting at most once per batch. Holds the
+/// shared cache lock across the prompt and the decrypt, so concurrent hosts
+/// wait and reuse the answer. Only a passphrase that decrypts is cached; an
+/// empty answer skips the key.
+async fn unlock_key(
+    cache: &SharedPassphraseCache,
+    path: &Path,
+    auth_sender: Option<&SshAuthSender>,
+) -> Result<Option<PrivateKey>> {
+    let mut cache = cache.lock().await;
+    if let Some(pp) = cache.get(path) {
+        return Ok(russh::keys::load_secret_key(path, Some(pp.as_str())).ok());
+    }
+    let prompt = format!("Enter passphrase for {}: ", path.display());
+    let secret = prompt_credential(prompt, auth_sender).await?;
+    if secret.as_str().is_empty() {
+        return Ok(None);
+    }
+    match russh::keys::load_secret_key(path, Some(secret.as_str())) {
+        Ok(key) => {
+            cache.insert(path.to_path_buf(), secret);
+            Ok(Some(key))
+        }
+        Err(e) => {
+            tracing::debug!("passphrase did not decrypt {}: {e}", path.display());
+            Ok(None)
+        }
+    }
+}
+
 /// Whether `path` is a private key that needs a passphrase. Missing,
 /// unreadable, or unparsable files are not, so they never trigger a prompt.
 fn is_encrypted_key(path: &Path) -> bool {
@@ -232,7 +258,11 @@ async fn prompt_credential(prompt: String, sender: Option<&SshAuthSender>) -> Re
             Ok(SecretString::new(credential))
         }
         None => {
-            let pw = rpassword::prompt_password(&prompt)
+            // Blocking TTY read: keep it off the async worker threads.
+            let p = prompt.clone();
+            let pw = tokio::task::spawn_blocking(move || rpassword::prompt_password(&p))
+                .await
+                .context("credential prompt task failed")?
                 .with_context(|| format!("Failed to read credential: {prompt}"))?;
             Ok(SecretString::new(pw))
         }
@@ -429,6 +459,52 @@ mod tests {
         assert!(
             result.is_err(),
             "dropping the responder must surface as an error"
+        );
+    }
+
+    /// B28: hosts sharing an encrypted key prompt once; a wrong answer is not
+    /// cached, so the next host asks again and the right answer then sticks.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn shared_cache_prompts_once_for_concurrent_hosts() {
+        let t = tempfile::tempdir().unwrap();
+        let key = t.path().join("k");
+        assert!(std::process::Command::new("ssh-keygen")
+            .args(["-q", "-t", "ed25519", "-N", "pw", "-f"])
+            .arg(&key)
+            .status()
+            .unwrap()
+            .success());
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<SshAuthRequest>();
+        let prompts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let n = prompts.clone();
+        tokio::spawn(async move {
+            while let Some(req) = rx.recv().await {
+                let i = n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let _ = req
+                    .responder
+                    .send(if i == 0 { "wrong" } else { "pw" }.into());
+            }
+        });
+        let cache = SharedPassphraseCache::default();
+        let tasks: Vec<_> = (0..4)
+            .map(|_| {
+                let (c, k, tx) = (cache.clone(), key.clone(), tx.clone());
+                tokio::spawn(async move { unlock_key(&c, &k, Some(&tx)).await.unwrap().is_some() })
+            })
+            .collect();
+        let mut unlocked = 0;
+        for h in tasks {
+            unlocked += h.await.unwrap() as usize;
+        }
+        assert_eq!(
+            prompts.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "wrong, then right, then cached"
+        );
+        assert_eq!(
+            unlocked, 3,
+            "the host that typed the wrong passphrase skips the key"
         );
     }
 }

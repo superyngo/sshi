@@ -216,12 +216,31 @@ impl ViewState {
 /// Popup state: auth, export, member picker, results.
 pub struct PopupState {
     pub auth: Option<AuthPopup>,
+    /// Credential requests waiting behind the open `auth` popup.
+    pub auth_queue: std::collections::VecDeque<SshAuthRequest>,
     pub export: Option<ExportPopup>,
     pub member_picker: Option<MemberPicker>,
     pub reopen_name_picker: Option<PickerTarget>,
     pub reopen_view_edit: Option<usize>,
     pub progress_scroll: Option<usize>,
     pub completed_report_scroll: usize,
+}
+
+impl PopupState {
+    /// Show `req` now, or queue it if a credential popup is already open
+    /// (replacing it would drop the first host's responder).
+    pub fn push_auth(&mut self, req: SshAuthRequest) {
+        if self.auth.is_some() {
+            self.auth_queue.push_back(req);
+        } else {
+            self.auth = Some(AuthPopup::new(req));
+        }
+    }
+
+    /// Close the current credential popup and show the next queued one.
+    pub fn next_auth(&mut self) {
+        self.auth = self.auth_queue.pop_front().map(AuthPopup::new);
+    }
 }
 
 impl Default for PopupState {
@@ -234,6 +253,7 @@ impl PopupState {
     pub fn new() -> Self {
         Self {
             auth: None,
+            auth_queue: Default::default(),
             export: None,
             member_picker: None,
             reopen_name_picker: None,
@@ -241,5 +261,40 @@ impl PopupState {
             progress_scroll: None,
             completed_report_scroll: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod auth_queue_tests {
+    use super::*;
+
+    fn req(p: &str) -> (SshAuthRequest, tokio::sync::oneshot::Receiver<String>) {
+        let (responder, rx) = tokio::sync::oneshot::channel();
+        (
+            SshAuthRequest {
+                prompt: p.into(),
+                responder,
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn second_request_is_queued_not_replacing_first() {
+        let mut s = PopupState::new();
+        let (r1, mut rx1) = req("first");
+        let (r2, mut rx2) = req("second");
+        s.push_auth(r1);
+        s.push_auth(r2);
+        assert_eq!(s.auth.as_ref().unwrap().prompt, "first");
+        s.auth.as_mut().unwrap().input.value = "a".into();
+        s.auth.as_mut().unwrap().submit();
+        s.next_auth();
+        assert_eq!(rx1.try_recv().unwrap(), "a", "first host got its answer");
+        assert_eq!(s.auth.as_ref().unwrap().prompt, "second");
+        assert!(rx2.try_recv().is_err(), "second still pending, not dropped");
+        s.auth.as_mut().unwrap().cancel();
+        s.next_auth();
+        assert!(s.auth.is_none());
     }
 }

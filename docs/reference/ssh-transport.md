@@ -166,26 +166,27 @@ For each connection, credentials are evaluated in the following sequence:
 2. **Unencrypted Public Keys**: Iterates over all configured `identity_files` in order, attempting `russh::keys::load_secret_key(path, None)` and `handle.authenticate_publickey` (wrapped in `PrivateKeyWithHashAlg` with the server's `best_supported_rsa_hash`, so RSA keys sign with `rsa-sha2-*`). Unencrypted keys authenticate immediately without prompting.
    `identity_files` holds every `IdentityFile`, or the OpenSSH default keys when none is configured (see [config-schema.md](config-schema.md)).
 3. **Encrypted Public Keys with Passphrase**: Only for identity files that exist and are encrypted (`auth::is_encrypted_key`: OpenSSH-format key with a cipher, or legacy PEM/PKCS#8 encrypted header). Missing or unparsable files never trigger a prompt:
-   - Checks `PassphraseCache` (`HashMap<PathBuf, SecretString>`), an in-memory process-scoped cache.
-   - If uncached, prompts the user for the passphrase and caches the resulting `SecretString`.
-   - Calls `russh::keys::load_secret_key(path, Some(passphrase))` and `handle.authenticate_publickey`.
-4. **Password Fallback**: If all identity files fail and `IdentitiesOnly` is not enabled in SSH config (`!identities_only`), prompts the user with `<user>@<host> password: ` and calls `handle.authenticate_password`.
+   - `auth::unlock_key` locks the `SharedPassphraseCache` (`Arc<Mutex<HashMap<PathBuf, SecretString>>>`), created once per `RusshSessionPool::setup` and shared by every host in the batch.
+   - If the key's passphrase is cached it is reused; otherwise the user is prompted **while the lock is held**, so hosts sharing a key are asked once and other hosts wait for that answer.
+   - Only a passphrase that actually decrypts the key (`load_secret_key(path, Some(pp))`) is cached; a wrong one is not reused, so the next host needing the key asks again. An empty answer skips the key.
+   - The unlocked key is then offered with `handle.authenticate_publickey`.
+4. **Password Fallback**: If all identity files fail and `IdentitiesOnly` is not enabled in SSH config (`!identities_only`), prompts the user with `<user>@<host> password: ` (also under the shared lock, so prompts never overlap; passwords are not cached) and calls `handle.authenticate_password`.
 
 If all available methods are exhausted without success, authentication fails with `All authentication methods exhausted for user '<user>'`.
 
 ### Credential Memory Security (`SecretString`)
 
-Passphrases and passwords are stored in `SecretString` (`src/host/auth.rs`), which implements `zeroize::Zeroize` on `Drop`. When dropped, the underlying buffer memory is zeroed out.
+Passphrases and passwords are stored in `SecretString` (`src/host/auth.rs`), which implements `zeroize::Zeroize` on `Drop`. When dropped, the underlying buffer memory is zeroed out. Its `Debug` output is redacted (`SecretString(***)`).
 
 ### TUI Auth Bridge
 
 Interactive prompts (`prompt_credential`) support two operating modes:
 
-- **CLI Path (`auth_sender: None`)**: Prompts directly on the terminal via `rpassword::prompt_password`.
+- **CLI Path (`auth_sender: None`)**: Prompts directly on the terminal via `rpassword::prompt_password`, run in `spawn_blocking` so the TTY read never blocks an async worker.
 - **TUI Bridge Path (`auth_sender: Some(&SshAuthSender)`)**: Non-blocking asynchronous bridge connecting the background SSH task to the TUI event loop:
   1. Spawns a `tokio::sync::oneshot::channel::<String>()`.
   2. Sends `SshAuthRequest { prompt, responder: tx }` over an unbounded `mpsc` channel to the TUI main loop.
-  3. The TUI displays a modal input popup with masked text entry.
+  3. The TUI displays a modal input popup with masked text entry. A request that arrives while a popup is open is queued (`PopupState::push_auth`) and shown when the current one is submitted or cancelled (`PopupState::next_auth`); it never replaces the open popup.
   4. On Enter, the TUI sends the entered credential string across the oneshot channel to unblock the SSH authentication task. If the user cancels (Escape), the responder is dropped, surfacing an error to the auth task.
   5. Architecture and lifecycle decisions are documented in [ADR 0001: SSH Auth TUI Popup](../adr/0001-ssh-auth-tui-popup.md).
 
