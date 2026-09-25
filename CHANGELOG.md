@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- docs: backlog records the decision to keep the unused legacy `sync_state` table (no `DROP TABLE` migration); it moves from Awaiting external to Watching.
 - docs: `AGENTS.md` now says `*_core` functions return typed reports convertible into `CommandReport` (B53), not a `CommandReport` variant.
 - fix: `cp` to several hosts that share one filesystem (e.g. an NFS home) failed on all but one host, because every upload of a path used the same temp name `.<name>.sshi-tmp.<pid>`; temp names now carry a per-upload counter (`.<name>.sshi-tmp.<pid>-<n>`), and the stale-temp sweep still recognises the old form (B77).
 - ci: the release workflow no longer splices the manual `version` input into its shell script (passed via `env`), checksums files with `sha256sum --`, and writes step outputs through one quoted `"$GITHUB_OUTPUT"` redirect; actionlint/shellcheck report nothing (B76).
