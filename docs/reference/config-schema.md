@@ -183,11 +183,11 @@ Configuration file I/O is managed by `src/config/app.rs` using `toml_edit::Docum
 1. **UTF-8 BOM Stripping**: On load, leading UTF-8 Byte Order Marks (`\u{feff}`) are stripped automatically.
 2. **First-time File Creation**: When no existing `config.toml` exists, the configuration is serialized and default explanatory comment templates (`inject_config_comments`) are added for `[settings]`, `[[check]]`, and `[[sync]]`.
 3. **Structured In-Place Updates**:
-   - `[settings]` scalars are mutated in place via `set_scalar`, preserving whitespace, formatting, and per-key inline comments (e.g. `max_concurrency = 10  # max 50`).
+   - `[settings]` scalars are mutated in place via `set_scalar`, preserving whitespace, formatting, and per-key inline comments (e.g. `max_concurrency = 10  # max 50`). An inline `settings = { … }` table is accepted and rewritten as a `[settings]` section.
    - Unknown top-level keys inside `[settings]` or the document root are retained across saves.
-   - Array-of-tables (`[[host]]`, `[[check]]`, `[[sync]]`) are fully reconstructed from in-memory structs on write: top-level section comments survive, but individual per-entry inline comments inside table entries are replaced.
+   - Array-of-tables (`[[host]]`, `[[check]]`, `[[sync]]`) are fully reconstructed from in-memory structs on write: top-level section comments survive, but individual per-entry inline comments inside table entries are replaced. Keys that are not schema fields are carried over from the matching existing entry (matched by non-empty `id`, else `name`); removed schema fields stay removed.
 4. **Validation**: Before writing to disk, the generated TOML is round-trip validated with `toml::from_str::<AppConfig>` to ensure syntactic validity.
-5. **Atomic Write**: Saves write to a temporary file (`.sshi-config-*.tmp`) in the configuration directory and atomically rename it (`tempfile::persist`) to prevent corrupted or partial writes.
+5. **Atomic Write**: Saves write to a temporary file (`.sshi-config-*.tmp`) next to the config, `fsync` it, and atomically rename it (`tempfile::persist`) to prevent corrupted or partial writes. If the config path is a symlink, it is resolved first so the target file is replaced and the link is kept.
 
 ---
 

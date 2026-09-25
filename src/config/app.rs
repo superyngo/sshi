@@ -84,6 +84,12 @@ fn warn_legacy_entry_names(config: &AppConfig) {
 /// Atomic write via `tempfile::persist()` (cross-platform safe).
 pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
     let path = resolve_path(custom_path)?;
+    // B43: write through a symlinked config (rename would replace the link).
+    let path = match std::fs::symlink_metadata(&path) {
+        Ok(m) if m.file_type().is_symlink() => std::fs::canonicalize(&path)
+            .with_context(|| format!("Failed to resolve symlink {}", path.display()))?,
+        _ => path,
+    };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create {}", parent.display()))?;
@@ -94,7 +100,7 @@ pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
             let trimmed = strip_bom(&original);
             match trimmed.parse::<DocumentMut>() {
                 Ok(mut doc) => {
-                    apply_config_to_doc(&mut doc, config);
+                    apply_config_to_doc(&mut doc, config)?;
                     let candidate = doc.to_string();
                     // Round-trip validate: catch apply_config_to_doc bugs before writing.
                     toml::from_str::<AppConfig>(&candidate)
@@ -130,6 +136,9 @@ pub fn save(config: &AppConfig, custom_path: Option<&Path>) -> Result<()> {
     tmp.as_file_mut()
         .flush()
         .context("Failed to flush temp config file")?;
+    tmp.as_file()
+        .sync_all()
+        .context("Failed to fsync temp config file")?;
     tmp.persist(&path)
         .map_err(|e| e.error)
         .with_context(|| format!("Failed to persist {}", path.display()))?;
@@ -163,14 +172,18 @@ fn set_scalar<V: Into<Value>>(table: &mut Table, key: &str, v: V) {
     }
 }
 
-fn apply_config_to_doc(doc: &mut DocumentMut, config: &AppConfig) {
-    // Ensure [settings] exists as a table.
-    if !doc.contains_key("settings") {
-        doc.insert("settings", Item::Table(Table::new()));
+fn apply_config_to_doc(doc: &mut DocumentMut, config: &AppConfig) -> Result<()> {
+    // Ensure [settings] exists as a table; B43: accept inline `settings = {…}`.
+    let replacement = match doc.get_mut("settings") {
+        None => Some(Table::new()),
+        Some(Item::Table(_)) => None,
+        Some(Item::Value(Value::InlineTable(t))) => Some(std::mem::take(t).into_table()),
+        Some(_) => anyhow::bail!("`settings` in the config file must be a table"),
+    };
+    if let Some(t) = replacement {
+        doc.insert("settings", Item::Table(t));
     }
-    let settings = doc["settings"]
-        .as_table_mut()
-        .expect("settings must be a table");
+    let settings = doc["settings"].as_table_mut().expect("settings is a table");
 
     set_scalar(
         settings,
@@ -242,14 +255,47 @@ fn apply_config_to_doc(doc: &mut DocumentMut, config: &AppConfig) {
     // entries are rare in practice. Previously these sections were never
     // written back, so any Hosts/Checks/Syncs edit through the TUI was
     // silently dropped on save (only [settings] persisted).
-    write_aot(doc, "host", &config.host, |h: &Arc<HostEntry>| {
-        host_to_table(h)
-    });
-    write_aot(doc, "check", &config.check, check_to_table);
-    write_aot(doc, "sync", &config.sync, sync_to_table);
+    write_aot(
+        doc,
+        "host",
+        &config.host,
+        HOST_KEYS,
+        |h: &Arc<HostEntry>| host_to_table(h),
+    );
+    write_aot(doc, "check", &config.check, CHECK_KEYS, check_to_table);
+    write_aot(doc, "sync", &config.sync, SYNC_KEYS, sync_to_table);
+    Ok(())
 }
 
-fn write_aot<T, F>(doc: &mut DocumentMut, key: &str, items: &[T], to_table: F)
+/// Schema-known keys per entry type; anything else found in the existing
+/// entry is carried over on save (B43).
+const HOST_KEYS: &[&str] = &["name", "ssh_host", "shell", "groups", "proxy_jump"];
+const CHECK_KEYS: &[&str] = &["name", "id", "enabled", "path"];
+const SYNC_KEYS: &[&str] = &[
+    "name",
+    "id",
+    "paths",
+    "recursive",
+    "mode",
+    "propagate_deletes",
+    "source",
+];
+
+/// Same logical entry: matching non-empty `id`, else matching `name`.
+fn same_entry(a: &Table, b: &Table) -> bool {
+    let get = |t: &Table, k: &str| {
+        t.get(k)
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    match (get(a, "id"), get(b, "id")) {
+        (Some(x), Some(y)) => x == y,
+        _ => get(a, "name").is_some() && get(a, "name") == get(b, "name"),
+    }
+}
+
+fn write_aot<T, F>(doc: &mut DocumentMut, key: &str, items: &[T], known: &[&str], to_table: F)
 where
     F: Fn(&T) -> Table,
 {
@@ -257,9 +303,22 @@ where
         doc.remove(key);
         return;
     }
+    let old: Vec<Table> = doc
+        .get(key)
+        .and_then(|i| i.as_array_of_tables())
+        .map(|a| a.iter().cloned().collect())
+        .unwrap_or_default();
     let mut aot = ArrayOfTables::new();
     for item in items {
-        aot.push(to_table(item));
+        let mut t = to_table(item);
+        if let Some(prev) = old.iter().find(|o| same_entry(o, &t)) {
+            for (k, v) in prev.iter() {
+                if !known.contains(&k) && !t.contains_key(k) {
+                    t.insert(k, v.clone());
+                }
+            }
+        }
+        aot.push(t);
     }
     doc.insert(key, Item::ArrayOfTables(aot));
 }
@@ -517,6 +576,56 @@ unknown_future_option = true
             after.contains("unknown_future_option = true"),
             "unknown key dropped:\n{after}"
         );
+    }
+
+    /// B43: inline `settings = {…}` must save (was a panic), and reload.
+    #[test]
+    fn b43_inline_settings_table_saves() {
+        let f = write_tmp("settings = { default_timeout = 9, custom = 1 }\n");
+        let cfg = load(Some(&*f)).unwrap().unwrap();
+        save(&cfg, Some(&*f)).unwrap();
+        let after = std::fs::read_to_string(&*f).unwrap();
+        assert!(after.contains("custom = 1"), "{after}");
+        let again = load(Some(&*f)).unwrap().unwrap();
+        assert_eq!(again.settings.default_timeout, 9);
+    }
+
+    /// B43: saving through a symlinked config updates the target and keeps the link.
+    #[cfg(unix)]
+    #[test]
+    fn b43_save_writes_through_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.toml");
+        let link = dir.path().join("link.toml");
+        std::fs::write(&real, "[settings]\ndefault_timeout = 3\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mut cfg = load(Some(&link)).unwrap().unwrap();
+        cfg.settings.default_timeout = 11;
+        save(&cfg, Some(&link)).unwrap();
+        assert!(std::fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        let real_after = std::fs::read_to_string(&real).unwrap();
+        assert!(real_after.contains("default_timeout = 11"), "{real_after}");
+    }
+
+    /// B43: unknown per-entry keys survive a save; removed known keys stay removed.
+    #[test]
+    fn b43_unknown_entry_keys_preserved() {
+        let f = write_tmp(
+            "[[host]]\nname = \"h1\"\nssh_host = \"h1\"\nshell = \"sh\"\nproxy_jump = \"b\"\nnote = \"keep me\"\n\n\
+             [[sync]]\nname = \"t\"\npaths = [\"~/x\"]\nfuture_key = 7\n",
+        );
+        let mut cfg = load(Some(&*f)).unwrap().unwrap();
+        let mut h = (*cfg.host[0]).clone();
+        h.proxy_jump = None;
+        cfg.host[0] = Arc::new(h);
+        save(&cfg, Some(&*f)).unwrap();
+        let after = std::fs::read_to_string(&*f).unwrap();
+        assert!(after.contains("note = \"keep me\""), "{after}");
+        assert!(after.contains("future_key = 7"), "{after}");
+        assert!(!after.contains("proxy_jump"), "{after}");
     }
 
     /// Regression: editing a Host/Check/Sync field must persist across a

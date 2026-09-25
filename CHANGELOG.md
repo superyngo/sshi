@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: config save accepts an inline `settings = {…}` table (was a panic), writes through a symlinked config instead of replacing the link, fsyncs before the rename, and keeps unknown keys inside `[[host]]` / `[[check]]` / `[[sync]]` entries (B43).
 - fix: recursive `[[sync]]` entries without `source` now expand the directory on every host and sync the union of files; previously the directory itself was treated as one file, failing the download or reporting "synced" with nothing copied (B66).
 - test: `list` and TUI navbar tests use an in-memory database instead of the real per-user state DB, fixing a CI race (`duplicate column name` / `file is not a database`) when parallel tests migrated the same fresh file (B67).
 - fix: recursive `sync` records its database rows in one transaction per run instead of one auto-commit per row, sharing the batch path's writer; rows of transfers that completed are still written if a later file errors. Measured wall time unchanged (per-file remote round-trips dominate, B34) (B5).
