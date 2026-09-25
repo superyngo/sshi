@@ -104,8 +104,8 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B26 | No shared remote-quoting layer (sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`) | HASH-B26 — `host::quote` used at every site; parity tests per `ShellType` |
-| B1 | PowerShell directory expansion interpolated paths in double quotes, so `$(...)` executed | HASH-B26 — closed by B26 |
+| B26 | No shared remote-quoting layer (sync Cmd batch, sh path probes, `exec` chmod/rm, PowerShell `sudo_wrap`) | `8dbf80d` — `host::quote` used at every site; parity tests per `ShellType` |
+| B1 | PowerShell directory expansion interpolated paths in double quotes, so `$(...)` executed | `8dbf80d` — closed by B26 |
 | B20 | Auth tried neither ssh-agent nor default keys; one `IdentityFile` kept; `IdentitiesOnly` ignored | `0bc35f2` — OpenSSH order in `auth::authenticate`; `ssh_config` keeps all `IdentityFile`s, parses `IdentitiesOnly` |
 | B57 | `cargo audit`: russh 0.44 advisories (RUSTSEC-2026-0153/0154), yanked spin | `27422dc` — russh 0.63 (russh-keys folded into `russh::keys`); remaining advisories moved to B64 |
 | B44 | `XDG_CONFIG_HOME`/`XDG_STATE_HOME` ignored; macOS used hard-coded `~/.config` / `~/.local/state` | `684a99d` — `util::app_dir`: XDG → platform default; legacy dirs copied forward once |
