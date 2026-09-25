@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: the `~/.ssh/config` reader diverged from OpenSSH: `Match` directives overwrote the preceding `Host`, duplicate `Host` blocks did not merge, keywords and host patterns were case-sensitive, `!negated` patterns were ignored and `Include` was skipped; it now applies first-obtained-value-wins across all matching blocks in file order, matches case-insensitively, honours negation, skips `Match` blocks other than `Match all` (with a warning) and follows `Include` (globs, relative to `~/.ssh`, depth-limited, warning on unreadable files) (B42).
 - fix: Windows path probes: cmd `dir` output was never parsed (size 0, reported success) and PowerShell reported an empty directory as `MISSING`; PowerShell now emits a locale-independent `---SIZE:<bytes>` marker (0 for an empty directory), cmd uses `dir /s /-c` and a missing path yields `MISSING` (B40).
 - fix: sh probes misread macOS/BSD hosts — load average shifted by one field, disk sizes ×1024, memory and battery empty, path sizes reported `MISSING` (no `du -b`); probes now fall back to `sysctl`/`vm_stat`/`du -sk` and the parsers recognise both GNU and BSD output (captured fixtures for Linux and macOS) (B39).
 - fix: TUI help and tab-info text documented an `f` filter popup that has no key handler; help now lists only handled keys (inline target rows, member picker), and the never-compiled `components/target_filter.rs` is removed (B52).
