@@ -92,6 +92,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B71 | CI/release actions on deprecated Node 20/16 runtimes (found while closing B36) | HASH-B71 — checkout@v5, upload-artifact@v6, download-artifact@v7, action-gh-release@v3 (smallest node24 majors; inputs unchanged, actionlint clean); CI annotation checked after push |
 | B64 | `cargo audit`: rsa Marvin, anyhow unsound `downcast_mut`, lru ×2 + paste (via ratatui 0.29), number_prefix (via indicatif 0.17) | `8c4d5ee` — ratatui 0.30 / crossterm 0.29 / indicatif 0.18 / anyhow 1.0.104, no code changes; `cargo audit`: only rsa left (Awaiting external); real binary: TUI tabs render identically (pyte), `check -a` progress OK |
 | B9 | HTML report templating lived inside the general report module | `9841414` — `render_html_report` and helpers moved to `output::html`; 391/240 tests unchanged |
 | B36 | Unknown `-n` exited 0 with a wrong hint; missing explicit `-c` became an empty config | `752b3c8` — `ensure_check_names` / `ensure_sync_names` + `load_config` (init and TUI exempt); real binary: typo/missing path exit 1, `init` still creates |
