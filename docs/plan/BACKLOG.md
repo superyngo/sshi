@@ -16,7 +16,7 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
-| B43 | Config save panicked on inline `settings`, replaced a symlinked config, skipped fsync, dropped unknown per-entry keys | HASH-B43 — inline table converted; symlink canonicalized; `sync_all` before persist; unknown keys merged by `id`/`name`; real binary `init` verified |
+| B43 | Config save panicked on inline `settings`, replaced a symlinked config, skipped fsync, dropped unknown per-entry keys | `45fee17` — inline table converted; symlink canonicalized; `sync_all` before persist; unknown keys merged by `id`/`name`; real binary `init` verified |
 | B66 | Recursive `[[sync]]` without `source` never expanded the directory (sync failed or copied nothing) | `3148ae4` — per-host recursive expansion + `union_dir_expansions`; real binary: 500/500 files copied, split-content case converges |
 | B3 | 2026-05-21 | 2026-09-25 | P2 | Config tab breadcrumb indexes `config.host/check/sync[*i]` directly in the FieldTable branch; stale index panics | `src/tui/tabs/config_tab.rs` `breadcrumb` | S | Uses `.get(*i)` with fallback; stale index renders without panic |
 | B4 | 2026-07-18 | 2026-09-25 | P2 | `HostEntry` has no stable `id`; Config selection restore after delete is positional | `src/config/schema.rs` `HostEntry`; `src/tui/tabs/config_tab.rs` `restore_selection` | M | Deleting host 2 of 5 restores the cursor by identity |
