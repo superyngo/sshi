@@ -86,7 +86,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B62 | Sync source-skip and `-v` unreachable/sftp-failed lines swapped host and status in `print_host_line` | HASH-B62 — arguments swapped back in `decide_batch`, `sync_path_across`, `sync_inner`; real binary: `[h1 ] ⊘ does not have …` |
+| B62 | Sync source-skip and `-v` unreachable/sftp-failed lines swapped host and status in `print_host_line` | `80a187f` — arguments swapped back in `decide_batch`, `sync_path_across`, `sync_inner`; real binary: `[h1 ] ⊘ does not have …` |
 | B60 | `output::printer` (and `log`/`checkout` tables) wrote ANSI colours with no TTY/`NO_COLOR` gate | `6fd0848` — `printer::should_color` (TTY + `NO_COLOR`), `format_host_line`; `log` and `checkout` gated too; real binary: piped `list`/`log`/`checkout` contain no `^[[` |
 | B18 | `distribute_pooled` acquired the global permit before the per-host one | `ae57ce5` — `distribute_pooled` uses `ConcurrencyLimiter::acquire`; test `test_distribute_pooled_acquires_per_host_first`; `ssh-transport.md` note updated |
 | B3 | Config tab breadcrumb indexed `config.host/check/sync[*i]` directly; stale index panicked | `613d3c7` — `.get(*i)` with `?` fallback in `ConfigTabState::breadcrumb`; test `breadcrumb_stale_index_does_not_panic` |
