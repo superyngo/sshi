@@ -945,7 +945,7 @@ impl ConfigTabState {
             | FieldKind::Enum { .. } => return false,
             _ => {}
         }
-        let raw_value = strip_unit(&field.display_value);
+        let raw_value = strip_unit(&field.kind, &field.display_value);
         let mut input = InputField::new(&raw_value);
         input.activate();
         self.editing_field = Some(input);
@@ -1207,7 +1207,7 @@ impl ConfigTabState {
                                 }
                             }
                             _ => {
-                                let raw = strip_unit(&field.display_value);
+                                let raw = strip_unit(&field.kind, &field.display_value);
                                 form.input = InputField::new(&raw);
                                 form.input.activate();
                                 form.active_input = Some(idx);
@@ -2789,11 +2789,13 @@ fn cycle_option_value(kind: &FieldKind, current: &str) -> Option<String> {
     }
 }
 
-fn strip_unit(s: &str) -> String {
-    s.trim_end_matches('s')
-        .trim_end_matches('d')
-        .trim_end_matches('%')
-        .to_string()
+/// Editable text for a field: U64 fields are displayed with a unit suffix
+/// (`30s`, `90d`) that must be removed; every other kind is edited verbatim.
+fn strip_unit(kind: &FieldKind, s: &str) -> String {
+    match kind {
+        FieldKind::U64 => s.trim_end_matches(['s', 'd']).to_string(),
+        _ => s.to_string(),
+    }
 }
 
 // Collect known groups across config (Step 3)
@@ -2826,6 +2828,15 @@ use super::super::components::popup::centered_rect;
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn strip_unit_only_touches_u64_fields() {
+        assert_eq!(strip_unit(&FieldKind::U64, "30s"), "30");
+        assert_eq!(strip_unit(&FieldKind::U64, "90d"), "90");
+        assert_eq!(strip_unit(&FieldKind::String, "prod"), "prod");
+        assert_eq!(strip_unit(&FieldKind::String, "hosts"), "hosts");
+        assert_eq!(strip_unit(&FieldKind::OptionalString, "50%"), "50%");
+    }
     use super::*;
     use ratatui::layout::Rect;
     use ratatui::{backend::TestBackend, Terminal};
