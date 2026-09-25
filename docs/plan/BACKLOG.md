@@ -97,7 +97,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B32 | Sync metadata collection silently dropped a host whose query failed | HASH-B32 — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |
+| B32 | Sync metadata collection silently dropped a host whose query failed | `59fe57a` — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |
 | B7 | TUI auth-bridge wait had no timeout; stale popups stayed open | `e237fc7` — `await_credential` with `AUTH_POPUP_TIMEOUT` (120 s); `PopupState::prune_stale_auth` |
 | B2 | TUI auth popup kept the typed credential in plain `String`s (value, undo/kill rings), never zeroized | `99be018` — `InputField::new_secret` + `wipe`; `AuthPopup` wipes on submit/cancel/drop; unit-test verified only |
 | B56 | No CI since `83aea4d`; headless build warned (unused imports in `commands::checkout`) | `f51974e` — `.github/workflows/ci.yml` (ubuntu+macos × default/headless, `-D warnings`); re-exports gated on `tui` |
