@@ -18,11 +18,7 @@ use crate::tui::state::persist::ShellMode;
 /// "powershell", "cmd"). Used by Operate, View, and the target-filter
 /// popup.
 pub fn shell_label(s: ShellMode) -> &'static str {
-    match s {
-        ShellMode::Sh => "sh",
-        ShellMode::PowerShell => "powershell",
-        ShellMode::Cmd => "cmd",
-    }
+    s.as_str()
 }
 
 /// Join a list of strings with `", "`. If the list is empty, return

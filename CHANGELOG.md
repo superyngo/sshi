@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- refactor: shell variants, the `ShellMode` labels, the check-probe catalog and the script-extension → shell mapping are each defined once (`ShellType::VARIANTS`/`as_str`, `ShellMode::as_str`/`cycle`, `DEFAULT_CHECK_ENABLED`, `exec::script_extension_to_shell`); the new-config template now lists probes from the same catalog; no behaviour change (B61).
 - fix: removed the TUI's persisted `checkout_history` toggle, which nothing read after B14; state files that still contain it load normally (B70).
 - fix: removed `init --update`: it had no effect in any case (with a config present every host was already re-detected; without one there were no existing hosts to skip), so `init` behaves exactly as before and `--update` is now rejected (B15).
 - fix: recursive `cp` silently skipped symlinks and unreadable files; symlinks (not followed, to avoid loops) and special files are now reported as warnings, and an unreadable file or directory entry stops the command with an error naming it (B38).

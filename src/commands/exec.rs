@@ -19,6 +19,21 @@ use super::report::{
 };
 use super::Context;
 
+/// Resolve the compatible remote shell for a script from its file extension.
+pub fn script_extension_to_shell(path: &Path) -> Option<ShellType> {
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match extension.as_str() {
+        "sh" => Some(ShellType::Sh),
+        "ps1" => Some(ShellType::PowerShell),
+        "bat" | "cmd" => Some(ShellType::Cmd),
+        _ => None,
+    }
+}
+
 /// Pure command core: uploads and executes a script on each host, writes to
 /// the operation log, and returns a typed `ExecReport`.
 ///
@@ -35,18 +50,7 @@ pub async fn exec_core(
         bail!("Script not found: {}", script);
     }
 
-    let extension = script_path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-
-    let compatible_shell = match extension.as_str() {
-        "sh" => Some(ShellType::Sh),
-        "ps1" => Some(ShellType::PowerShell),
-        "bat" | "cmd" => Some(ShellType::Cmd),
-        _ => None,
-    };
+    let compatible_shell = script_extension_to_shell(&script_path);
 
     let hosts = ctx.resolve_hosts()?;
     let executed_at = chrono::Utc::now().to_rfc3339();
@@ -218,17 +222,7 @@ pub async fn run(
         if !script_path.exists() {
             bail!("Script not found: {}", script);
         }
-        let extension = script_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let compatible_shell: Option<ShellType> = match extension.as_str() {
-            "sh" => Some(ShellType::Sh),
-            "ps1" => Some(ShellType::PowerShell),
-            "bat" | "cmd" => Some(ShellType::Cmd),
-            _ => None,
-        };
+        let compatible_shell = script_extension_to_shell(&script_path);
         println!("[dry-run] Script: {}", script);
         println!("[dry-run] Compatible shell: {:?}", compatible_shell);
         let hosts = ctx.resolve_hosts()?;
@@ -385,4 +379,35 @@ async fn get_expanded_temp_dir_pooled(
     }
 
     Ok(output.stdout.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_script_extension_to_shell() {
+        assert_eq!(
+            script_extension_to_shell(Path::new("test.sh")),
+            Some(ShellType::Sh)
+        );
+        assert_eq!(
+            script_extension_to_shell(Path::new("TEST.SH")),
+            Some(ShellType::Sh)
+        );
+        assert_eq!(
+            script_extension_to_shell(Path::new("test.ps1")),
+            Some(ShellType::PowerShell)
+        );
+        assert_eq!(
+            script_extension_to_shell(Path::new("test.bat")),
+            Some(ShellType::Cmd)
+        );
+        assert_eq!(
+            script_extension_to_shell(Path::new("test.cmd")),
+            Some(ShellType::Cmd)
+        );
+        assert_eq!(script_extension_to_shell(Path::new("test.py")), None);
+        assert_eq!(script_extension_to_shell(Path::new("test")), None);
+    }
 }

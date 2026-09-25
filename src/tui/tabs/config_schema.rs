@@ -85,18 +85,7 @@ impl FieldDescriptor {
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-pub const CHECK_ENABLED_OPTIONS: &[(&str, &str)] = &[
-    ("online", "Check if host is online"),
-    ("system_info", "System info (uname / systeminfo)"),
-    ("cpu_arch", "CPU architecture"),
-    ("memory", "Memory usage"),
-    ("swap", "Swap usage"),
-    ("disk", "Disk usage"),
-    ("cpu_load", "CPU load"),
-    ("network", "Network interface info"),
-    ("battery", "Battery status"),
-    ("ip_address", "IP address"),
-];
+pub use crate::config::schema::DEFAULT_CHECK_ENABLED as CHECK_ENABLED_OPTIONS;
 
 // ── Field definitions (canonical) ────────────────────────────────────────────
 

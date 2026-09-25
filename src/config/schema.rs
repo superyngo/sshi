@@ -39,6 +39,21 @@ pub struct AppConfig {
     pub sync: Vec<SyncEntry>,
 }
 
+/// The check probe catalog: `(metric key, description)`. The single source for
+/// the default `[[check]]` entry, the TUI picker and the new-config template.
+pub const DEFAULT_CHECK_ENABLED: &[(&str, &str)] = &[
+    ("online", "Check if host is online"),
+    ("system_info", "System info (uname / systeminfo)"),
+    ("cpu_arch", "CPU architecture"),
+    ("memory", "Memory usage"),
+    ("swap", "Swap usage"),
+    ("disk", "Disk usage"),
+    ("cpu_load", "CPU load"),
+    ("network", "Network interface info"),
+    ("battery", "Battery status"),
+    ("ip_address", "IP address"),
+];
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -47,18 +62,10 @@ impl Default for AppConfig {
             check: vec![CheckEntry {
                 name: Some("default".to_string()),
                 id: String::new(),
-                enabled: vec![
-                    "online".to_string(),
-                    "system_info".to_string(),
-                    "cpu_arch".to_string(),
-                    "memory".to_string(),
-                    "swap".to_string(),
-                    "disk".to_string(),
-                    "cpu_load".to_string(),
-                    "network".to_string(),
-                    "battery".to_string(),
-                    "ip_address".to_string(),
-                ],
+                enabled: DEFAULT_CHECK_ENABLED
+                    .iter()
+                    .map(|(k, _)| (*k).to_string())
+                    .collect(),
                 path: Vec::new(),
             }],
             sync: Vec::new(),
@@ -178,16 +185,24 @@ pub enum ShellType {
     Cmd,
 }
 
-impl std::fmt::Display for ShellType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.pad(match self {
+impl ShellType {
+    pub const ALL: [ShellType; 3] = [ShellType::Sh, ShellType::PowerShell, ShellType::Cmd];
+    pub const VARIANTS: [&'static str; 3] = ["sh", "powershell", "cmd"];
+
+    pub const fn as_str(&self) -> &'static str {
+        match self {
             ShellType::Sh => "sh",
             ShellType::PowerShell => "powershell",
             ShellType::Cmd => "cmd",
-        })
+        }
     }
 }
 
+impl std::fmt::Display for ShellType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(self.as_str())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CheckEntry {
     /// Selection key: `check -n <name>` runs this entry. Absent name → only

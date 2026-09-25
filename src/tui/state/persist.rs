@@ -105,6 +105,33 @@ pub enum ShellMode {
 }
 
 impl ShellMode {
+    pub const ALL: [ShellMode; 3] = [ShellMode::Sh, ShellMode::PowerShell, ShellMode::Cmd];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ShellMode::Sh => "sh",
+            ShellMode::PowerShell => "powershell",
+            ShellMode::Cmd => "cmd",
+        }
+    }
+
+    pub fn from_label(s: &str) -> Option<Self> {
+        match s {
+            "sh" => Some(ShellMode::Sh),
+            "powershell" => Some(ShellMode::PowerShell),
+            "cmd" => Some(ShellMode::Cmd),
+            _ => None,
+        }
+    }
+
+    pub fn cycle(self) -> Self {
+        match self {
+            ShellMode::Sh => ShellMode::PowerShell,
+            ShellMode::PowerShell => ShellMode::Cmd,
+            ShellMode::Cmd => ShellMode::Sh,
+        }
+    }
+
     pub fn to_shell_type(self) -> ShellType {
         match self {
             ShellMode::Sh => ShellType::Sh,
@@ -120,6 +147,12 @@ impl ShellMode {
             ShellType::PowerShell => ShellMode::PowerShell,
             ShellType::Cmd => ShellMode::Cmd,
         }
+    }
+}
+
+impl std::fmt::Display for ShellMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.pad(self.as_str())
     }
 }
 

@@ -407,23 +407,20 @@ fn inject_config_comments(toml_str: &str) -> String {
 #                                          #   ~/Library/Application Support/sshi (macOS), %LOCALAPPDATA%/sshi (Windows)
 ";
 
-    let check_comment = "\
+    // The probe list comes from `DEFAULT_CHECK_ENABLED` so the template can't
+    // drift from the catalog (B61).
+    let probes: String = crate::config::schema::DEFAULT_CHECK_ENABLED
+        .iter()
+        .map(|(key, desc)| format!("#       {:<21}# {desc}\n", format!("\"{key}\",")))
+        .collect();
+    let check_comment = format!(
+        "\
 # [[check]] Check tasks (selected with `check -n <name>`, or default when omitted)
 #
 # Fields:
 #   name = \"default\"         # Selection identifier and TUI label (optional)
 #   enabled = [              # Available metric probes:
-#       \"online\",            # Check if host is online
-#       \"system_info\",       # System info (uname / systeminfo)
-#       \"cpu_arch\",          # CPU architecture
-#       \"memory\",            # Memory usage
-#       \"swap\",              # Swap usage
-#       \"disk\",              # Disk usage
-#       \"cpu_load\",          # CPU load
-#       \"network\",           # Network interface info
-#       \"battery\",           # Battery status
-#       \"ip_address\",        # IP address
-#   ]
+{probes}#   ]
 #
 # [[check.path]] Custom path monitoring:
 #   path  = \"/var/log\"       # Path to monitor
@@ -440,7 +437,8 @@ fn inject_config_comments(toml_str: &str) -> String {
 # [[check.path]]
 # path = \"/var/log/nginx\"
 # label = \"Nginx Logs\"
-";
+"
+    );
 
     let sync_comment = "\
 # [[sync]] Sync tasks (selected with `sync -n <name>`, or default when omitted)
@@ -470,7 +468,7 @@ fn inject_config_comments(toml_str: &str) -> String {
         if line.trim() == "[settings]" {
             result.push_str(settings_comment);
         } else if line.trim() == "[[check]]" && !has_check {
-            result.push_str(check_comment);
+            result.push_str(&check_comment);
             has_check = true;
         } else if line.trim() == "[[sync]]" && !has_sync {
             result.push_str(sync_comment);
@@ -483,7 +481,7 @@ fn inject_config_comments(toml_str: &str) -> String {
     // Append comment blocks for sections that are empty / absent in the TOML
     if !has_check {
         result.push('\n');
-        result.push_str(check_comment);
+        result.push_str(&check_comment);
     }
     if !has_sync {
         result.push('\n');

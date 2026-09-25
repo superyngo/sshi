@@ -2769,7 +2769,7 @@ fn enum_cycle(variants: &[&str], current: &str, forward: bool) -> String {
     variants[next].to_string()
 }
 
-const SHELL_VARIANTS: &[&str] = &["sh", "powershell", "cmd"];
+const SHELL_VARIANTS: &[&str] = &ShellType::VARIANTS;
 
 fn shell_cycle_fwd(s: &str) -> String {
     if !SHELL_VARIANTS.contains(&s) {
