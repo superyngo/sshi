@@ -26,7 +26,6 @@ this file existed are recorded in those source documents, not here.
 | B53 | 2026-09-25 | 2026-09-25 | P3 | Operation scaffolding duplicated (five `App::execute_*`, four command cores); `*_core` returns an enum callers `unreachable!`; `App::handle_key` 1010 lines | `src/tui/app.rs`; `src/commands/{exec,run,cp,check}.rs` | L | One launch helper and one fan-out helper; typed core returns; `handle_key` split by tab/popup |
 | B54 | 2026-09-25 | 2026-09-25 | P3 | Parallel implementations: TUI export vs CLI report builders (checkout `task` differs), `resolve_target_names` vs `Context::resolve_hosts`, `Summary`/`SyncSummary` printing, Operate/View target rows, `parse_ssh_config`/`load_ssh_config` | `src/tui/app.rs`; `src/output/summary.rs`; `src/tui/tabs/{operate_tab,view_tab}.rs`; `src/config/ssh_config.rs` | M | Each pair reduced to one implementation; TUI and CLI checkout exports byte-identical |
 | B55 | 2026-09-25 | 2026-09-25 | P3 | Dead code and misleading comments (list in the 2026-09-25 code audit) | `src/tui/tabs/operate_schema.rs`; `src/commands/sync/collect.rs`; `src/tui/event.rs`; `src/commands/init/report.rs`; `src/tui/async_bridge.rs`; `src/host/sftp.rs`; `src/config/app.rs` | S | Items removed or comments match code |
-| B74 | 2026-09-25 | 2026-09-25 | P3 | `$VISUAL`/`$EDITOR` values with arguments (e.g. `code --wait`, `emacsclient -t`) fail: the whole value is passed to `Command::new` as the program name (found while fixing B17) | `src/commands/config.rs` `run`; `src/tui/app.rs` `App::do_open_editor` | S | On Unix an editor value with arguments runs like git does (`sh -c '<editor> "$1"'`); a plain program name is unchanged |
 
 ## Pending verification
 
@@ -63,6 +62,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
+| B74 | `$VISUAL`/`$EDITOR` values with arguments failed (whole value used as the program name) | HASH-B74 — `commands::config::editor_command` (Unix `sh -c` for values with whitespace) used by `config::run` and `App::do_open_editor`; test `editor_with_arguments_runs_through_sh`; real binary: `VISUAL="fake --wait"` → editor got `--wait c.toml` (old: "Failed to open editor") |
 | B17 | Editor precedence differed: `sshi config` tried `$EDITOR` first, TUI `E` tried `$VISUAL` first | `0615950` — `commands::config::resolve_editor` (`editor_from`, pure, tested) used by `config::run` and `App::do_open_editor`; `cli.md`/`tui.md`/README updated; real binary: `VISUAL=fake EDITOR=false sshi config` opens fake (old binary ran `false`) |
 | B6 | Unused focus-model types kept alive by `#![allow(dead_code)]` | `107cc41` — `src/tui/focus.rs` deleted (no callers; its own tests went with it), `pub mod focus` removed; 447/289 tests pass |
 | B73 | sh `swap` probe was `free -b` only; macOS/BSD hosts never reported swap | `2f6ff2a` — `sh::command_for("swap")` falls back to `sysctl -n vm.swapusage`; `parse_bsd_swapusage` (K/M/G units); fixtures `macos_swap*.txt` + test; real binary: snapshot `swap` = `{"total_bytes":0,"used_bytes":0}` on the macOS rig (was `{}`) |

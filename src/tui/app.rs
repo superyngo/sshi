@@ -3757,7 +3757,7 @@ impl App {
         let _ = io::stdout().flush();
 
         // Stage 2 — EXECUTE.
-        let status = std::process::Command::new(&editor).arg(&path).status();
+        let status = crate::commands::config::editor_command(&editor, &path).status();
 
         // Stage 3 — RESTORE: re-enter alternate screen.
         let _ = terminal::enable_raw_mode();

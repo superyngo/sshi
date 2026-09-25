@@ -292,7 +292,7 @@ sshi config [OPTIONS]
 - `-H, --help`: Print help.
 
 #### Editor resolution
-Resolves the editor from `$VISUAL`, then `$EDITOR` (empty values skipped), then `vi` on Unix / `notepad` on Windows (`commands::config::resolve_editor`, shared with the TUI `E` key).
+Resolves the editor from `$VISUAL`, then `$EDITOR` (empty values skipped), then `vi` on Unix / `notepad` on Windows (`commands::config::resolve_editor`, shared with the TUI `E` key). On Unix a value with arguments such as `code --wait` runs through `sh -c`, as git does (`editor_command`).
 
 ---
 

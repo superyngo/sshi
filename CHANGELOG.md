@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: `$VISUAL`/`$EDITOR` values with arguments (`code --wait`, `emacsclient -t`) failed with "Failed to open editor" because the whole value was used as the program name; on Unix such values now run through `sh -c '<editor> "$1"'` like git, for both `sshi config` and the TUI `E` key (B74).
 - fix: `sshi config` tried `$EDITOR` before `$VISUAL` while the TUI `E` key tried `$VISUAL` first, so the two could open different editors; both now use `commands::config::resolve_editor` — `$VISUAL`, then `$EDITOR` (empty values skipped), then `vi`/`notepad` (B17).
 - refactor: removed `tui::focus` (`Direction`, `Axis`, `AxisFreedom`, `FocusZone`, `EscapeOutcome`, `escape_to_parent`, `FocusPath`): nothing outside the module used it and it compiled only behind `#![allow(dead_code)]`; no behaviour change (B6).
 - fix: the sh swap probe only ran `free -b`, so macOS/BSD hosts never reported swap (stored `{}`, shown `-`); it now falls back to `sysctl -n vm.swapusage` and parses its `total = …M used = …M` line into total/used bytes (B73).
