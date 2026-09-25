@@ -269,7 +269,7 @@ jobs:
         run: |
           cd release_files
           if [ -n "$(ls -A)" ]; then
-            sha256sum * > SHA256SUMS
+            sha256sum -- * > SHA256SUMS
             echo "Checksums generated:"
             cat SHA256SUMS
           else
@@ -279,20 +279,25 @@ jobs:
 
       - name: Get tag message
         id: tag_message
+        env:
+          # Passed through the environment, not spliced into the script.
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            TAG_NAME="${{ github.event.inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            TAG_NAME="$INPUT_VERSION"
           else
-            TAG_NAME=${GITHUB_REF#refs/tags/}
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
           fi
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
           TAG_MESSAGE=$(git tag -l --format='%(contents)' "$TAG_NAME")
           if [ -z "$TAG_MESSAGE" ]; then
             TAG_MESSAGE="Release $TAG_NAME"
           fi
-          echo "message<<EOF" >> $GITHUB_OUTPUT
-          echo "$TAG_MESSAGE" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "tag_name=$TAG_NAME"
+            echo "message<<EOF"
+            echo "$TAG_MESSAGE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         uses: softprops/action-gh-release@v3

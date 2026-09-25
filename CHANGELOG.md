@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- ci: the release workflow no longer splices the manual `version` input into its shell script (passed via `env`), checksums files with `sha256sum --`, and writes step outputs through one quoted `"$GITHUB_OUTPUT"` redirect; actionlint/shellcheck report nothing (B76).
 - docs: `tui.md` now describes per-field fallback for unknown saved enum values (B49) and the read-only check-path rows / numeric-setting validation (B45).
 - fix: `~/.ssh/config` options written before the first `Host` line (OpenSSH applies them to every host, e.g. a global `Port` or `IdentityFile`) were silently dropped, as were options at the top of a file `Include`d inside a `Host` block; both now apply as in OpenSSH. `config-schema.md` now documents the OpenSSH-style rules from B42 (first value wins across matching blocks, `Match`, `Include`), which it still described the old way (B75).
 - docs: removed stale references (per-file sync collector, "currently inserted" `sync_state` columns) and recorded the verified "one SFTP channel per host" pending item as done.
