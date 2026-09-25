@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- fix: host lines, `sshi log` status glyphs and `checkout` online/threshold colours wrote ANSI escape codes even when piped; colour is now used only when stdout is a terminal and `NO_COLOR` is unset or empty (`printer::should_color`) (B60).
 - fix: sync uploads (`distribute_pooled`) took the global concurrency permit before the per-host one, the opposite of every other command, so a saturated host could hold global slots while idle hosts waited; they now use `ConcurrencyLimiter::acquire` (per-host first) (B18).
 - fix: the Config tab breadcrumb indexed hosts/checks/syncs directly and could panic on a stale selection index; it now renders `?` instead (B3).
 - fix: `init` panicked when the home directory could not be resolved while writing scanned host keys; `batch_keyscan_and_accept` now returns an error naming the problem (`append_keys_to_known_hosts`) (B8).

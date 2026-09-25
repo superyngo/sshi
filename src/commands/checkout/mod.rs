@@ -348,20 +348,26 @@ fn print_table_report(snapshots: &[HostSnapshot], columns: &DisplayColumns) {
     println!("{}", header);
     println!("{}", "-".repeat(header.len().max(78)));
 
+    let color = crate::output::printer::should_color();
     for snap in snapshots {
-        let status = if snap.online {
-            "\x1b[32m✓ online\x1b[0m"
+        let (status, status_width) = if color {
+            if snap.online {
+                ("\x1b[32m✓ online\x1b[0m", 20)
+            } else {
+                ("\x1b[31m✗ offline\x1b[0m", 20)
+            }
+        } else if snap.online {
+            ("✓ online", 12)
         } else {
-            "\x1b[31m✗ offline\x1b[0m"
+            ("✗ offline", 12)
         };
         let last_seen = format_relative_time(snap.last_online);
 
-        // Status has ANSI codes (8 extra chars), so pad wider
-        let mut line = format!("{:<16} {:<20}", snap.host, status);
+        let mut line = format!("{:<16} {:<width$}", snap.host, status, width = status_width);
         for metric in &columns.metrics {
             let w = metric_width(metric);
             let (val, critical) = extract_metric_value(&snap.data, metric);
-            if critical {
+            if critical && color {
                 line.push_str(&format!(" \x1b[31m{:<width$}\x1b[0m", val, width = w));
             } else {
                 line.push_str(&format!(" {:<width$}", val, width = w));

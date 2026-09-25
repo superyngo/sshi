@@ -355,3 +355,13 @@ Instead:
    - `4`: every host that ran failed.
 
    A host fails when its status is `offline` (including a remote command that exited non-zero), `unreachable`, `timedout` or `error`; `online` and `partial` count as success. `--dry-run` for `check`, `run`, `exec` and `cp` contacts no host and exits `0`; `sync --dry-run` connects to compare files, so its host failures count. `init`, `checkout`, `list`, `log` and `config` never use `3` or `4`.
+
+---
+
+## Color and terminal formatting
+
+CLI progress lines (e.g. `[host        ]  ✓ detail`) format status indicators with ANSI color codes when written to an interactive terminal (`std::io::IsTerminal`).
+
+Colors are suppressed (plain text output) when:
+- Standard output (`stdout`) is not an interactive terminal (e.g. piped to another program or redirected to a file).
+- The `NO_COLOR` environment variable is set to any non-empty value (per [no-color.org](https://no-color.org)).

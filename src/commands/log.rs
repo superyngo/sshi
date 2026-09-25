@@ -118,10 +118,14 @@ pub async fn run(
             .as_deref()
             .map(|n| format!(" — {}", n))
             .unwrap_or_default();
-        let status_icon = match r.status.as_str() {
-            "ok" => "\x1b[32m✓\x1b[0m",
-            "error" => "\x1b[31m✗\x1b[0m",
-            "skipped" => "\x1b[33m⊘\x1b[0m",
+        let color = crate::output::printer::should_color();
+        let status_icon = match (r.status.as_str(), color) {
+            ("ok", true) => "\x1b[32m✓\x1b[0m",
+            ("ok", false) => "✓",
+            ("error", true) => "\x1b[31m✗\x1b[0m",
+            ("error", false) => "✗",
+            ("skipped", true) => "\x1b[33m⊘\x1b[0m",
+            ("skipped", false) => "⊘",
             _ => "·",
         };
         println!(
