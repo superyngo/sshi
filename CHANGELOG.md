@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-09-25
+- chore: remove stray tracked root files (`CHANGELOG` duplicate, `temp`, `.claude/scheduled_tasks.lock`); ignore `.claude/`.
 - docs: archive the v0.x changelog series verbatim to `docs/reference/changelog/v0.x.md` (root keeps `[Unreleased]` + v1.x); link the archive and the backlog from `CONTEXT.md`.
 - docs: add the living backlog `docs/plan/BACKLOG.md` (19 open items consolidated from frozen records plus code defects found by this audit) and the audit record `docs/audit/2026-09-25-documentation-audit.md`; index both.
 - docs: correct reference docs, README, and AGENTS.md against the code — TUI is built by default (headless is `--no-default-features`); fix invented TUI fields/keys/probe catalog/operation order, CLI exit codes and flag matrix, transport/sync/state claims, and README config example; add nine glossary terms; contributor rules live only in `AGENTS.md`; `.github/copilot-instructions.md` is now a pointer.
