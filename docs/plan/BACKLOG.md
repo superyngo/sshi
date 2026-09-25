@@ -96,7 +96,7 @@ Blocked on a person or third party. **Not counted as open.**
 
 | ID | Finding | Closed by |
 |---|---|---|
-| B5 | Recursive sync wrote DB rows one auto-commit each | HASH-B5 — `SyncRows` + shared `flush_sync_rows` (one transaction); 500-file run: same rows, time unchanged (~9.9 s) |
+| B5 | Recursive sync wrote DB rows one auto-commit each | `3d44f34` — `SyncRows` + shared `flush_sync_rows` (one transaction); 500-file run: same rows, time unchanged (~9.9 s) |
 | B33 | "newest" picked the source by host reply order on equal mtimes | `1f22bfe` — tie with different contents is a conflict (`newest_tie_hosts` via `skip_conflict_hosts`); option A chosen by user |
 | B32 | Sync metadata collection silently dropped a host whose query failed | `59fe57a` — `failed` in `CollectResult`/`BatchCollectResult`, `record_collect_failures`; PS/cmd `Get-FileHash -ErrorAction SilentlyContinue` → `NOHASH` |
 | B7 | TUI auth-bridge wait had no timeout; stale popups stayed open | `e237fc7` — `await_credential` with `AUTH_POPUP_TIMEOUT` (120 s); `PopupState::prune_stale_auth` |
