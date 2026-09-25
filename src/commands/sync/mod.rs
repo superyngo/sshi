@@ -254,61 +254,68 @@ async fn sync_inner(
     // requires the destination type to be inferred from context, not via `as`).
     let concrete: Arc<RusshSessionPool> = Arc::clone(&pool.session_pool);
     let sessions: Arc<dyn SessionPool> = concrete;
-    expand_paths(
-        ctx,
-        &reachable_hosts,
-        &mut all_paths,
-        &mut path_source_map,
-        &mut host_applicable_paths,
-        &sessions,
-        verbose,
-    )
-    .await?;
+    // Phases 1–4 run in one block so every exit path reaches the shutdown
+    // below, and `sessions` is dropped first: `SshPool::shutdown` can only
+    // close the SSH sessions while it holds the sole reference (B72).
+    let phases: Result<()> = async {
+        expand_paths(
+            ctx,
+            &reachable_hosts,
+            &mut all_paths,
+            &mut path_source_map,
+            &mut host_applicable_paths,
+            &sessions,
+            verbose,
+        )
+        .await?;
 
-    // ── Phase 2: batch-collect metadata + make decisions (steps 4–5) ───────
-    let all_decisions = decide_batch(
-        ctx,
-        &reachable_hosts,
-        &all_paths,
-        &path_source_map,
-        &host_applicable_paths,
-        &sessions,
-        cli_source,
-        push_missing,
-        verbose,
-        &mut summary,
-    )
-    .await?;
+        // ── Phase 2: batch-collect metadata + make decisions (steps 4–5) ───
+        let all_decisions = decide_batch(
+            ctx,
+            &reachable_hosts,
+            &all_paths,
+            &path_source_map,
+            &host_applicable_paths,
+            &sessions,
+            cli_source,
+            push_missing,
+            verbose,
+            &mut summary,
+        )
+        .await?;
 
-    // ── Phase 3: distribute (step 6, dry-run or real) ──────────────────────
-    distribute_batch(
-        ctx,
-        &reachable_hosts,
-        &all_decisions,
-        &pool.limiter,
-        &sessions,
-        dry_run,
-        verbose,
-        &label,
-        &mut summary,
-        &mut host_file_map,
-    )
-    .await?;
+        // ── Phase 3: distribute (step 6, dry-run or real) ──────────────────
+        distribute_batch(
+            ctx,
+            &reachable_hosts,
+            &all_decisions,
+            &pool.limiter,
+            &sessions,
+            dry_run,
+            verbose,
+            &label,
+            &mut summary,
+            &mut host_file_map,
+        )
+        .await?;
 
-    // ── Phase 4: recursive entries (batch flow) ───────────────────────────
-    run_recursive_entries(
-        ctx,
-        &reachable_hosts,
-        &recursive_entries,
-        &pool.limiter,
-        &sessions,
-        dry_run,
-        push_missing,
-        &label,
-        verbose,
-        &mut summary,
-    )
-    .await?;
+        // ── Phase 4: recursive entries (batch flow) ────────────────────────
+        run_recursive_entries(
+            ctx,
+            &reachable_hosts,
+            &recursive_entries,
+            &pool.limiter,
+            &sessions,
+            dry_run,
+            push_missing,
+            &label,
+            verbose,
+            &mut summary,
+        )
+        .await
+    }
+    .await;
+    drop(sessions);
 
     let failed_host_names: Vec<String> = {
         let mut names = Vec::new();
@@ -322,6 +329,7 @@ async fn sync_inner(
     };
 
     pool.shutdown().await;
+    phases?;
 
     if verbose {
         summary.print();
