@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### 2026-09-29
+- docs: the `AGENTS.md` import example separates std / third-party / `crate::` groups with blank lines; written as one block, `cargo fmt` reordered it and put `crate::` first.
 ### 2026-09-26
 - docs: backlog records the decision to keep the unused legacy `sync_state` table (no `DROP TABLE` migration); it moves from Awaiting external to Watching.
 - docs: `AGENTS.md` now says `*_core` functions return typed reports convertible into `CommandReport` (B53), not a `CommandReport` variant.

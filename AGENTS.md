@@ -52,14 +52,17 @@ cargo fmt --check
 - Example: `fs::read_to_string(path).context("Failed to read config")?`
 
 ### Imports
-- Group imports: std extern crates -> third-party -> local modules
+- Group imports: std -> third-party crates -> local (`crate::`) modules, with a blank line
+  between groups (`cargo fmt` sorts within each contiguous block, so the blank lines keep the order)
 - Use `use crate::module::item` for local imports
 - Keep imports at file top, sorted alphabetically within groups
 - Example:
   ```rust
   use std::path::PathBuf;
+
   use anyhow::{Context, Result};
   use tokio::process::Command;
+
   use crate::config::schema::HostEntry;
   ```
 
