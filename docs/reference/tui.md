@@ -15,9 +15,9 @@ The TUI is organized into three primary tabs defined in `src/tui/tabs/mod.rs` (`
 ### Layout & Frame Allocation
 
 The screen layout is divided vertically into three zones (`src/tui/app.rs`):
-1. **Tab bar** (`Length(3)`): Displays the application title `sshi`, version number right-aligned, and the active tab selection widget (`1:Config`, `2:Operate`, `3:View`).
+1. **Tab bar** (`Length(1)`, no border): One row with the application title `sshi`, the tab selection widget, and the version number right-aligned (`1:Config`, `2:Operate`, `3:View`).
 2. **Main content** (`Min(0)`): Houses the active tab widget and all nested viewports.
-3. **Status bar** (`Length(2)`): Displays keybinding hints for whatever has the keys (`App::status_hints`): the top overlay (e.g. `y:Delete n/Esc:Cancel` on a delete confirm), else an active text field (`Enter:Apply Esc:Revert`), else the tab (Operate puts `Enter:Run` first on Execute). Hints are listed most important first; on a narrow terminal trailing hints are dropped, but on a tab `?:Help q:Quit` always stays (`fit_hints`) — and transient notifications or error messages (`app.error`, styled in bold red).
+3. **Status bar** (`Length(1)`): Displays keybinding hints for whatever has the keys (`App::status_hints`): the top overlay (e.g. `y:Delete n/Esc:Cancel` on a delete confirm), else an active text field (`Enter:Apply Esc:Revert`), else the tab (Operate puts `Enter:Run` first on Execute). Hints are listed most important first; on a narrow terminal trailing hints are dropped, but on a tab `?:Help q:Quit` always stays (`fit_hints`). A transient notification ("Config saved") or an error message (`app.error`, red, suffixed `(Esc: dismiss)`) replaces the hints on that row until it expires or is dismissed.
 
 ### Terminal Size Guard
 
@@ -123,6 +123,8 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 │ ▶ Syncs (1)                ││                                              │
 └────────────────────────────┘└──────────────────────────────────────────────┘
 ```
+
+Unset optional values render as dim `(none)`. The breadcrumb row below the panes shows the selection path, `*` when unsaved, and the config file path with `$HOME` as `~`, middle-elided with `…` to fit.
 
 #### Zones & Navigation
 - **Sidebar (Left Zone)**: Hierarchical tree showing sections and child entries.
@@ -232,7 +234,7 @@ The View tab (`src/tui/tabs/view_tab.rs`) is a multi-mode inspection dashboard. 
 #### Sub-Views
 1. **Checkout (`ViewOperationKind::Checkout`)**:
    - Displays latest system metrics from SQLite (`check_snapshots` table).
-   - **Columns**: `Host`, `Status` (`✓ online` / `✗ offline`), dynamic metric columns from configured check probes, and `Last Seen` relative timestamp.
+   - **Columns**: `Host`, `Status` (`✓ online` / `✗ offline`, or dim `? unknown` for a host with no snapshot yet), dynamic metric columns from configured check probes, and `Last Seen` relative timestamp (`—` if never seen online).
    - **Combined View (`c` / Space)**: Toggles between point-in-time snapshot view and combined latest metric compilation across all check runs.
    - **Navigation**: `↑` / `↓` / `j` / `k` move row selection; `PgUp` / `PgDn` / `Home` / `End` scroll viewport.
 2. **List (`ViewOperationKind::List`)**:

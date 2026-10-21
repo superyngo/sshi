@@ -3108,9 +3108,9 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                Constraint::Length(1),
                 Constraint::Min(0),
-                Constraint::Length(2),
+                Constraint::Length(1),
             ])
             .split(area);
 
@@ -3283,23 +3283,30 @@ impl App {
         } else {
             Style::default().fg(accent).add_modifier(Modifier::BOLD)
         };
-        let block_border_style = if self.navbar_focused {
-            Style::default().fg(accent)
-        } else {
-            Style::default().fg(self.theme.border_inactive)
+        // One row: " sshi " · tabs · version right-aligned.
+        let version = format!("v{} ", env!("CARGO_PKG_VERSION"));
+        frame.render_widget(
+            Paragraph::new(version.as_str())
+                .style(Style::default().fg(self.theme.inactive))
+                .right_aligned(),
+            area,
+        );
+        let name = Span::styled(
+            " sshi ",
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        );
+        let name_w = name.width() as u16;
+        frame.render_widget(Paragraph::new(name), area);
+        let tabs_area = Rect {
+            x: area.x + name_w.min(area.width),
+            width: area.width.saturating_sub(name_w + version.len() as u16),
+            ..area
         };
         let tabs = Tabs::new(titles)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" sshi ")
-                    .title(Line::from(format!("v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
-                    .border_style(block_border_style),
-            )
             .select(selected)
             .style(Style::default().fg(self.theme.inactive))
             .highlight_style(highlight);
-        frame.render_widget(tabs, area);
+        frame.render_widget(tabs, tabs_area);
     }
 
     fn render_config(&mut self, area: Rect, frame: &mut ratatui::Frame) {
@@ -4203,30 +4210,29 @@ Log overlay
     }
 
     fn render_status_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Length(1)])
-            .split(area);
-
+        // One row: a banner or error replaces the hints until dismissed.
         if self.active_tab == TabId::Config && self.config_tab.banner_active() {
             let p = Paragraph::new(format!("  {} Config saved", self.theme.glyphs.ok)).style(
                 Style::default()
                     .fg(self.theme.warning)
                     .add_modifier(Modifier::BOLD),
             );
-            frame.render_widget(p, chunks[0]);
-        } else if let Some(err) = &self.error {
-            let p = Paragraph::new(err.as_str()).style(Style::default().fg(self.theme.error));
-            frame.render_widget(p, chunks[0]);
+            frame.render_widget(p, area);
+            return;
         }
-
+        if let Some(err) = &self.error {
+            let p = Paragraph::new(format!("{err}  (Esc: dismiss)"))
+                .style(Style::default().fg(self.theme.error));
+            frame.render_widget(p, area);
+            return;
+        }
         let (items, tail) = self.status_hints();
-        let hints = fit_hints(items, tail, chunks[1].width as usize);
+        let hints = fit_hints(items, tail, area.width as usize);
         let p = Paragraph::new(Line::from(vec![Span::styled(
             hints.as_str(),
             Style::default().fg(self.theme.inactive),
         )]));
-        frame.render_widget(p, chunks[1]);
+        frame.render_widget(p, area);
     }
 
     /// Status-bar hints for what currently has the keys: the top overlay, an

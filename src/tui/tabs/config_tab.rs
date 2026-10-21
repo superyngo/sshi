@@ -1649,8 +1649,14 @@ impl ConfigTabState {
 
         let crumb = self.breadcrumb(config);
         let dirty_star = if self.config_dirty { " *" } else { "" };
+        let used = crumb.width() + dirty_star.len() + 4;
         let path_hint = config_path
-            .map(|p| format!("  [{}]", p.display()))
+            .map(|p| {
+                format!(
+                    "  [{}]",
+                    short_path(p, (vert[1].width as usize).saturating_sub(used))
+                )
+            })
             .unwrap_or_default();
         let crumb_line = Line::from(vec![
             Span::styled(crumb, Style::default().fg(theme.inactive)),
@@ -1853,6 +1859,8 @@ impl ConfigTabState {
 
                 let val = if is_editing {
                     format!("{}▏", form.input.value)
+                } else if field.display_value.is_empty() {
+                    "(none)".to_string()
                 } else {
                     field.display_value.clone()
                 };
@@ -2124,10 +2132,16 @@ impl ConfigTabState {
                 } else {
                     Style::default()
                 };
+                // Unset optional values read "(none)", like empty lists.
+                let (val, val_style) = if f.display_value.is_empty() {
+                    ("(none)", val_style.fg(theme.inactive))
+                } else {
+                    (f.display_value.as_str(), val_style)
+                };
                 Row::new(vec![
                     Cell::from(f.key.as_str()).style(key_style),
                     Cell::from(" = ").style(Style::default().fg(theme.inactive)),
-                    Cell::from(f.display_value.as_str()).style(val_style),
+                    Cell::from(val).style(val_style),
                 ])
             })
             .collect();
@@ -2717,8 +2731,42 @@ fn input_cursor_line<'a>(
     Line::from(spans)
 }
 
+/// `~`-relative path, middle-elided with `…` to at most `max` columns.
+fn short_path(p: &std::path::Path, max: usize) -> String {
+    let full = p.display().to_string();
+    let s = match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && full.starts_with(&home) => {
+            format!("~{}", &full[home.len()..])
+        }
+        _ => full,
+    };
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s;
+    }
+    if max < 2 {
+        return "…".chars().take(max).collect();
+    }
+    let keep = max - 1;
+    let head = keep / 2;
+    let tail = keep - head;
+    let mut out: String = chars[..head].iter().collect();
+    out.push('…');
+    out.extend(&chars[chars.len() - tail..]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    /// B82: breadcrumb path keeps both ends and fits the width.
+    #[test]
+    fn short_path_elides_middle() {
+        let p = std::path::Path::new("/a/very/long/dir/config.toml");
+        assert_eq!(super::short_path(p, 100), "/a/very/long/dir/config.toml");
+        let s = super::short_path(p, 15);
+        assert_eq!(s, "/a/very…ig.toml");
+        assert_eq!(s.chars().count(), 15);
+    }
 
     #[test]
     fn strip_unit_only_touches_u64_fields() {

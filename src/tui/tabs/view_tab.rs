@@ -405,12 +405,18 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
     let mut rows: Vec<Row> = Vec::new();
     for (i, snap) in snapshots[start..end].iter().enumerate() {
         let selected = start + i == data.checkout_selected;
-        let status_text = if snap.online {
+        // No snapshot at all (never checked) is unknown, not a failure.
+        let never_checked = snap.collected_at == 0;
+        let status_text = if never_checked {
+            "? unknown".to_string()
+        } else if snap.online {
             format!("{} online", data.theme.glyphs.ok)
         } else {
             format!("{} offline", data.theme.glyphs.error)
         };
-        let status_style = Style::default().fg(if snap.online {
+        let status_style = Style::default().fg(if never_checked {
+            data.theme.inactive
+        } else if snap.online {
             data.theme.accent_checkout
         } else {
             data.theme.error
@@ -436,7 +442,11 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
             };
             cells.push(Cell::from(val).style(style));
         }
-        cells.push(Cell::from(format_relative_time(snap.last_online)));
+        cells.push(if snap.last_online == 0 {
+            Cell::from("—").style(Style::default().fg(data.theme.inactive))
+        } else {
+            Cell::from(format_relative_time(snap.last_online))
+        });
         let mut row = Row::new(cells);
         if selected && data.result_focused {
             row = row.style(Style::default().add_modifier(Modifier::BOLD | Modifier::REVERSED));

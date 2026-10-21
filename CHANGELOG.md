@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-10-21
+- feat(tui): tab bar and status bar take one row each (3 more body rows at 24 rows; errors replace the hints until Esc); never-checked hosts show `? unknown` / `—` instead of `✗ offline` / `never`; unset Config values show `(none)`; the breadcrumb config path uses `~` and a middle ellipsis (B82 step 4).
 - feat(tui): status-bar hints follow what has the keys — the top popup, an active text field, or the focused tab — instead of always showing the tab's keys (B82 step 3).
 - refactor(tui): member picker, entry form, list editors and the auth popup are sized to their content (`popup::content_rect`) instead of a screen percentage; the picker title is no longer cut off (B82 step 2).
 - refactor(tui): one overlay stack orders drawing and key routing; Config confirm and entry form draw over the body instead of blanking it (B82 step 1).
