@@ -4151,19 +4151,41 @@ Config tab
             frame.render_widget(p, chunks[0]);
         }
 
-        let hints = match self.active_tab {
-            TabId::Config => {
-                "↑↓:Rows ←→:Zones e:Edit Del:Clear E:Editor a:Add d:DelEntry L:Log i:Info ?:Help q:Quit"
-            }
-            TabId::Operate => {
-                "↑↓:Fields ←→/Tab:Value Enter:Pick Space:Toggle Del:Clear e:Exec s:Serial d:Dry ?:Help q:Quit"
-            }
-            TabId::View => {
-                "↑↓:Fields ←→/Tab:Show/Mode Enter:Pick PgUp/PgDn o:Export L:Log i:Info ?:Help q:Quit"
-            }
+        let items: &[&str] = match self.active_tab {
+            TabId::Config => &[
+                "↑↓:Rows",
+                "←→:Zones",
+                "e:Edit",
+                "a:Add",
+                "d:DelEntry",
+                "Del:Clear",
+                "E:Editor",
+                "L:Log",
+                "i:Info",
+            ],
+            TabId::Operate => &[
+                "↑↓:Fields",
+                "←→/Tab:Value",
+                "Enter:Pick",
+                "e:Exec",
+                "Space:Toggle",
+                "Del:Clear",
+                "s:Serial",
+                "d:Dry",
+            ],
+            TabId::View => &[
+                "↑↓:Fields",
+                "←→/Tab:Show/Mode",
+                "Enter:Pick",
+                "PgUp/PgDn",
+                "o:Export",
+                "L:Log",
+                "i:Info",
+            ],
         };
+        let hints = fit_hints(items, &["?:Help", "q:Quit"], chunks[1].width as usize);
         let p = Paragraph::new(Line::from(vec![Span::styled(
-            hints,
+            hints.as_str(),
             Style::default().fg(self.theme.inactive),
         )]));
         frame.render_widget(p, chunks[1]);
@@ -4293,6 +4315,22 @@ fn comma_names(raw: &str) -> Vec<String> {
 /// `content_bytes` is the raw body length in bytes (a heuristic for line count
 /// when exact wrap-width isn't known yet); `lower_bound_rows` is the minimum
 /// popup inner height we want even for tiny content.
+/// Join `items` then `tail` with spaces, dropping trailing `items` until the line fits
+/// `width` display columns. `tail` (help/quit) is always kept (B80).
+fn fit_hints(items: &[&str], tail: &[&str], width: usize) -> String {
+    let tail = tail.join(" ");
+    let mut n = items.len();
+    loop {
+        let mut parts = items[..n].to_vec();
+        parts.push(&tail);
+        let line = parts.join(" ");
+        if n == 0 || unicode_width::UnicodeWidthStr::width(line.as_str()) <= width {
+            return line;
+        }
+        n -= 1;
+    }
+}
+
 fn content_aware_popup_rect(
     area: Rect,
     percent_x: u16,
@@ -5054,5 +5092,29 @@ mod g4_send_futures {
         fn assert_sync<T: Sync>() {}
         assert_send::<Context>();
         assert_sync::<Context>();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fit_hints;
+
+    /// B80: at 80 columns the help/quit tail survives; extra items drop from the right.
+    #[test]
+    fn fit_hints_keeps_tail() {
+        let items = [
+            "↑↓:Fields",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "b",
+        ];
+        assert_eq!(
+            fit_hints(&items[..1], &["?:Help", "q:Quit"], 80),
+            "↑↓:Fields ?:Help q:Quit"
+        );
+        assert_eq!(
+            fit_hints(&items, &["?:Help", "q:Quit"], 30),
+            "↑↓:Fields ?:Help q:Quit"
+        );
+        assert_eq!(fit_hints(&items, &["?:Help"], 3), "?:Help");
     }
 }

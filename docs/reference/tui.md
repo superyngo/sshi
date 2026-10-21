@@ -17,7 +17,7 @@ The TUI is organized into three primary tabs defined in `src/tui/tabs/mod.rs` (`
 The screen layout is divided vertically into three zones (`src/tui/app.rs`):
 1. **Tab bar** (`Length(3)`): Displays the application title `sshi`, version number right-aligned, and the active tab selection widget (`1:Config`, `2:Operate`, `3:View`).
 2. **Main content** (`Min(0)`): Houses the active tab widget and all nested viewports.
-3. **Status bar** (`Length(2)`): Displays contextual keybinding hints and transient notifications or error messages (`app.error`, styled in bold red).
+3. **Status bar** (`Length(2)`): Displays per-tab keybinding hints — listed most important first; on a narrow terminal trailing hints are dropped but `?:Help q:Quit` always stays (`fit_hints`) — and transient notifications or error messages (`app.error`, styled in bold red).
 
 ### Terminal Size Guard
 
