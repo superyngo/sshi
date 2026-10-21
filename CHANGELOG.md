@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-10-21
+- fix: the `?` help described keys that no longer behave that way (`Tab` "cycles tabs" — it cycles fields within a group; old Operate zone names) and lost the indent on wrapped lines; the text is rewritten from the key handlers, shared with the Info popup, and wrapped lines continue under the description column (B81).
 - fix: on an 80-column terminal the status bar cut off `?:Help q:Quit`; hints are now ordered by importance and the least important are dropped first, so help and quit always show (B80).
 - fix: the Config delete/discard confirmation was 20% of the screen tall, so on terminals of 30 rows or fewer its key hints were cut off; it is now sized to its text. Deleting a host/check/sync entry now needs `y` — a bare `Enter` no longer deletes (B79).
 - fix: on small terminals (e.g. 80×24) the Operate tab squeezed its input boxes (Output, Local path, Remote, Script) to a bare border, so typed text was invisible; the body now scrolls to keep the focused field whole (B78).

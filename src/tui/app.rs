@@ -4085,30 +4085,44 @@ impl App {
         "\
 Global keys
   1 / 2 / 3   Switch to Config / Operate / View
-  Tab         Cycle to next tab
-  Shift+Tab   Cycle to previous tab
   q           Quit (state saved)
   Ctrl+C      Quit immediately (state saved)
-  Esc         Close popup / clear error
-  ?           Toggle this help
+  Esc         Close popup / clear error; otherwise move focus
+              out a level (fields → top row → tab bar)
+  ?           Toggle this help (Tab: Help / About)
   L           Toggle log overlay
   i           Toggle contextual info popup
 
+Tab bar (focused)
+  ← → / Tab   Select tab
+  ↓ / Enter   Enter the tab
+
 Operate tab
-  ↑↓ / j k   Navigate zones: OpRadio → ParamPanel → TargetRow → Execute
-  ← → / Tab   (OpRadio / Target row) cycle the selected option
-  Enter       (ParamPanel text field) activate input; (Execute) run operation; (Members/Skip) open picker
-  e           Run the current operation (from anywhere on the tab)
+  ↑↓ / j k    Move field: Operation → Target → Members → Skip →
+              Timeout → Serial → dry-run → Output → params → Execute
+  ← → / Tab   (Operation / Target) cycle option; (Timeout) ±5s
+  Tab         (other fields) next field in the same group, wrapping;
+              Shift+Tab back
+  Enter       (text field) edit; (Members / Skip / Entries) open
+              picker; (Execute) run operation
+  e           Run the current operation (from any field)
   d           Toggle dry-run
   s           Toggle serial execution
-  Space       (checkbox) toggle sudo / keep / dry-run; (Source) cycle host
-  Del         Clear the focused optional field (members/skip/names/source/
-              out/cp-remote); on the ad-hoc input, remove the last path
+  Space       (checkbox) toggle; (Shell members / Source) cycle
+  Del         Clear the focused optional field; on Add path,
+              remove the last path
   Esc         Dismiss results popup / cancel running operation
   (while typing) Enter to confirm, Esc to revert
 
+Sync parameters
+  Enter on Entries / Source  Open the multi/single-select popup
+  Space on Source            Cycle source host (none → host → … → none)
+  Enter on Add path          Add typed path to the list
+  Del on Add path            Remove last path from the list
+
 View tab
-  ← → / Tab   (Show row) cycle checkout / list / log; (Target row) cycle mode
+  ← → / Tab   (Show row) cycle checkout / list / log; (Target row)
+              cycle mode; (results) move row, wrapping
   ↑↓ / j k    Move row selection / fields
   Enter       (Members/Skip) open picker
   Space       (Log row) toggle error filter / cycle shell
@@ -4118,17 +4132,31 @@ View tab
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
 
+Member picker popup (Members / Skip)
+  ↑↓ / j k    Move selection
+  Space / x   Toggle item selection
+  Enter       Apply selection
+  Esc         Cancel
+
 Config tab
   ↑↓ / j k    Move sidebar / field rows
-  ← / →       Switch zones (Sidebar ↔ FieldTable)
-  Tab         Switch zone (Sidebar → FieldTable)
+  ← / →       Switch zone (sidebar ↔ fields)
+  Tab         Next row in the zone, wrapping; Shift+Tab back
+  PgUp/PgDn   Page navigation
+  Home/End    Jump to top / bottom
   e / Enter   Edit text field inline; cycle option fields (bool/shell/enum)
   Space       Cycle the focused option field (bool/shell/tri-bool/enum)
   Del         Clear the focused optional field (required names are kept)
   a           Add new entry (host / check / sync)
-  d           Delete focused entry
-              (changes autosave to disk, format-preserving via toml_edit)
+  d           Delete focused entry (y confirms)
+              Changes autosave to disk, keeping file formatting
   E           Open config in $VISUAL/$EDITOR (TUI suspends, reloads on change)
+
+Log overlay
+  L           Open / close
+  ↑↓ / j k    Scroll
+  PgUp/PgDn   Page navigation
+  Home/End    Jump to top / bottom
 "
         .to_string()
     }
@@ -4194,76 +4222,7 @@ Config tab
     fn render_help_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
         let body = match self.help_section {
             HelpSection::About => self.render_about_body(""),
-            HelpSection::Help => "\
-Global keys
-  1 / 2 / 3   Switch to Config / Operate / View
-  Tab         Cycle to next tab
-  Shift+Tab   Cycle to previous tab
-  q           Quit (state saved)
-  Ctrl+C      Quit immediately (state saved)
-  Esc         Close popup / clear error
-  ?           Toggle this help
-  L           Toggle log overlay
-  i           Toggle contextual info popup
-
-Operate tab
-  ↑↓ / j k   Navigate zones: OpRadio → ParamPanel → TargetRow → Execute
-  ← → / Tab   (OpRadio / Target row) cycle the selected option
-  Enter       (ParamPanel text field) activate input; (Execute) run operation; (Members/Skip) open picker
-  e           Run the current operation (from anywhere on the tab)
-  d           Toggle dry-run
-  s           Toggle serial execution
-  Space       (checkbox) toggle sudo / keep / dry-run; (Source) cycle host
-  Del         Clear the focused optional field (members/skip/names/source/
-              out/cp-remote); on the ad-hoc input, remove the last path
-  Esc         Dismiss results popup / cancel running operation
-  (while typing) Enter to confirm, Esc to revert
-
-Sync operation (ParamPanel)
-  Enter on Entries / Source  Open the multi/single-select popup
-  Space on Source            Cycle source host (none → host → … → none)
-  Enter on Ad-hoc input      Add typed path to the list
-  Del on Ad-hoc input        Remove last path from the list
-  Space on Dry-run       Toggle dry-run flag
-
-View tab
-  ← → / Tab   (Show row) cycle checkout / list / log; (Target row) cycle mode
-  ↑↓ / j k    Move row selection / fields
-  Enter       (Members/Skip) open picker
-  Space       (Log row) toggle error filter / cycle shell
-  c           Toggle combined checkout view
-  e           Edit focused entry in Config (List view)
-  o           Export currently viewed data to report
-  PgUp/PgDn   Page navigation
-  Home/End    Jump to top / bottom
-
-Member picker popup (Members / Skip)
-  ↑↓ / j k    Move selection
-  Space / x   Toggle item selection
-  Enter       Apply selection
-  Esc         Cancel
-
-Config tab
-  ↑↓ / j k    Move sidebar / field rows
-  ← / →       Switch zones (Sidebar ↔ FieldTable)
-  Tab         Switch zone (Sidebar → FieldTable)
-  PgUp/PgDn   Page navigation
-  Home/End    Jump to top / bottom
-  e / Enter   Edit text field inline; cycle option fields (bool/shell/enum)
-  Space       Cycle the focused option field (bool/shell/tri-bool/enum)
-  Del         Clear the focused optional field (required names are kept)
-  a           Add new entry (host / check / sync)
-  d           Delete focused entry
-              (changes autosave to disk, format-preserving via toml_edit)
-  E           Open config in $VISUAL/$EDITOR (TUI suspends, reloads on change)
-
-Log overlay
-  L           Open / close
-  ↑↓ / j k    Scroll
-  PgUp/PgDn   Page navigation
-  Home/End    Jump to top / bottom
-"
-            .to_string(),
+            HelpSection::Help => self.render_help_body(),
         };
         let active_style = Style::default().add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
         let inactive_style = Style::default();
@@ -4309,12 +4268,6 @@ fn comma_names(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// Compute a popup rectangle that is content-aware: small enough to fit the
-/// content, large enough to read, never exceeds `max_percent_y` of the screen.
-///
-/// `content_bytes` is the raw body length in bytes (a heuristic for line count
-/// when exact wrap-width isn't known yet); `lower_bound_rows` is the minimum
-/// popup inner height we want even for tiny content.
 /// Join `items` then `tail` with spaces, dropping trailing `items` until the line fits
 /// `width` display columns. `tail` (help/quit) is always kept (B80).
 fn fit_hints(items: &[&str], tail: &[&str], width: usize) -> String {
@@ -4331,6 +4284,12 @@ fn fit_hints(items: &[&str], tail: &[&str], width: usize) -> String {
     }
 }
 
+/// Compute a popup rectangle that is content-aware: small enough to fit the
+/// content, large enough to read, never exceeds `max_percent_y` of the screen.
+///
+/// `content_bytes` is the raw body length in bytes (a heuristic for line count
+/// when exact wrap-width isn't known yet); `lower_bound_rows` is the minimum
+/// popup inner height we want even for tiny content.
 fn content_aware_popup_rect(
     area: Rect,
     percent_x: u16,
@@ -4365,27 +4324,62 @@ fn wrap_text_to_lines(body: &str, width: usize) -> Vec<Line<'_>> {
             continue;
         }
         let chars: Vec<char> = raw.chars().collect();
+        let hang = hanging_indent(&chars, width);
         let mut start = 0usize;
+        let mut first = true;
         while start < chars.len() {
-            let end = (start + width).min(chars.len());
+            // Continuation rows start at the description column (B81).
+            let indent = if first { 0 } else { hang };
+            let avail = width - indent;
+            let end = (start + avail).min(chars.len());
             // Try to break on the last whitespace within [start, end).
             let mut break_at = end;
             if end < chars.len() {
                 if let Some(ws) = chars[start..end].iter().rposition(|c| c.is_whitespace()) {
-                    break_at = start + ws;
+                    if ws > 0 {
+                        break_at = start + ws;
+                    }
                 }
             }
-            let chunk: String = chars[start..break_at].iter().collect();
+            let chunk: String = std::iter::repeat_n(' ', indent)
+                .chain(chars[start..break_at].iter().copied())
+                .collect();
             out.push(Line::from(chunk));
-            // Skip the single whitespace we broke on, if any.
-            start = if break_at < chars.len() && chars[break_at].is_whitespace() {
-                break_at + 1
-            } else {
-                break_at
-            };
+            first = false;
+            // Skip the whitespace we broke on, if any.
+            start = break_at;
+            while start < chars.len() && chars[start].is_whitespace() {
+                start += 1;
+            }
         }
     }
     out
+}
+
+/// Column where wrapped continuation rows of `chars` start: the description
+/// column of a `  key   description` row (text after the first run of 2+
+/// spaces), else the row's own indent. Capped at half the width.
+fn hanging_indent(chars: &[char], width: usize) -> usize {
+    let lead = chars.iter().take_while(|c| **c == ' ').count();
+    let mut col = lead;
+    let mut i = lead;
+    while i + 1 < chars.len() {
+        if chars[i] == ' ' && chars[i + 1] == ' ' {
+            let mut j = i;
+            while j < chars.len() && chars[j] == ' ' {
+                j += 1;
+            }
+            if j < chars.len() {
+                col = j;
+            }
+            break;
+        }
+        i += 1;
+    }
+    if col > width / 2 {
+        col = lead.min(width / 2);
+    }
+    col
 }
 
 fn cycle_operation(op: OperationKind, forward: bool) -> OperationKind {
@@ -4646,6 +4640,22 @@ mod view_focus_tests {
 mod help_scroll_tests {
     use super::{content_aware_popup_rect, wrap_text_to_lines, Viewport};
     use ratatui::layout::Rect;
+
+    /// B81: wrapped help rows continue under the description column.
+    #[test]
+    fn wrap_text_hangs_continuation_under_description() {
+        let lines = wrap_text_to_lines("  Del         Clear the focused optional field now", 30);
+        let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(
+            text,
+            [
+                "  Del         Clear the",
+                "              focused",
+                "              optional field",
+                "              now"
+            ]
+        );
+    }
 
     #[test]
     fn wrap_text_breaks_long_lines_at_word_boundaries() {
