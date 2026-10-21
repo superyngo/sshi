@@ -145,7 +145,7 @@ The Config tab (`src/tui/tabs/config_tab.rs`) provides an interactive interface 
 
 #### Entry Management
 - **Add Entry (`a`)**: Press `a` while an entry or section is selected to open `EntryFormState` pre-populated with required and default fields for that type. A form taller than its popup scrolls: the field list gets the popup height minus its two hint rows, and the cursor stays put while moving inside the visible window.
-- **Delete Entry (`d`)**: Press `d` to request deletion of the selected `host`, `check`, or `sync` entry. A confirmation popup (`ConfirmState`) prompts before deletion.
+- **Delete Entry (`d`)**: Press `d` to request deletion of the selected `host`, `check`, or `sync` entry. A confirmation popup (`ConfirmState`, sized to its text) prompts before deletion; only `y` deletes — a bare `Enter` does nothing — and `n`/`Esc` cancels. The discard-unsaved-changes prompt also accepts `Enter`.
 
 #### External Editor & Comment Preservation
 - **External Editor (`E`)**: Press `E` to suspend the TUI and open `config.toml` in `$VISUAL`, `$EDITOR`, or `vi` (`notepad` on Windows) — the same order as `sshi config` (`commands::config::resolve_editor`). The TUI tracks file modification timestamps (`config_mtime`) and automatically reloads and re-validates the configuration upon editor exit.

@@ -22,6 +22,7 @@ use crate::config::schema::{
 };
 
 use super::super::components::input_field::{InputField, InputMode};
+use super::super::components::popup::fixed_centered_rect;
 use super::super::components::shared;
 use super::super::components::viewport::Viewport;
 use super::super::theme::Theme;
@@ -1260,30 +1261,38 @@ impl ConfigTabState {
     }
 
     fn handle_confirm_key(&mut self, key: KeyEvent) -> bool {
+        // A bare Enter must not delete an entry (B79): delete takes `y` only.
+        let enter_confirms = !matches!(
+            self.confirm.as_ref().map(|c| &c.action),
+            Some(ConfirmAction::DeleteEntry { .. })
+        );
         match key.code {
-            KeyCode::Char('y') | KeyCode::Enter => {
-                let Some(confirm) = self.confirm.take() else {
-                    return false;
-                };
-                match confirm.action {
-                    ConfirmAction::DeleteEntry { kind, index } => {
-                        // Delete is handled by execute_delete which is called from App
-                        // Re-store for App to pick up.
-                        self.pending_delete = Some((kind, index));
-                    }
-                    ConfirmAction::DiscardDirty => {
-                        self.entry_form = None;
-                        self.editing_field = None;
-                    }
-                }
-                true
-            }
+            KeyCode::Char('y') => self.accept_confirm(),
+            KeyCode::Enter if enter_confirms => self.accept_confirm(),
             KeyCode::Char('n') | KeyCode::Esc => {
                 self.confirm = None;
                 true
             }
             _ => false,
         }
+    }
+
+    fn accept_confirm(&mut self) -> bool {
+        let Some(confirm) = self.confirm.take() else {
+            return false;
+        };
+        match confirm.action {
+            ConfirmAction::DeleteEntry { kind, index } => {
+                // Delete is handled by execute_delete which is called from App
+                // Re-store for App to pick up.
+                self.pending_delete = Some((kind, index));
+            }
+            ConfirmAction::DiscardDirty => {
+                self.entry_form = None;
+                self.editing_field = None;
+            }
+        }
+        true
     }
 
     /// Validate the name of the open Check/Sync entry form. Returns an error
@@ -1570,7 +1579,7 @@ impl ConfigTabState {
                         kind: EntryFormKind::Host,
                         index: i,
                     },
-                    hints: "[y/Enter] Yes   [n/Esc] No",
+                    hints: "[y] Delete   [n/Esc] Cancel",
                 });
             }
             SidebarItem::Check(i) => {
@@ -1586,7 +1595,7 @@ impl ConfigTabState {
                         kind: EntryFormKind::Check,
                         index: i,
                     },
-                    hints: "[y/Enter] Yes   [n/Esc] No",
+                    hints: "[y] Delete   [n/Esc] Cancel",
                 });
             }
             SidebarItem::Sync(i) => {
@@ -1602,7 +1611,7 @@ impl ConfigTabState {
                         kind: EntryFormKind::Sync,
                         index: i,
                     },
-                    hints: "[y/Enter] Yes   [n/Esc] No",
+                    hints: "[y] Delete   [n/Esc] Cancel",
                 });
             }
             _ => {}
@@ -1892,7 +1901,9 @@ impl ConfigTabState {
     }
 
     fn render_confirm(&self, area: Rect, frame: &mut Frame, theme: &Theme, confirm: &ConfirmState) {
-        let popup_area = centered_rect(50, 20, area);
+        // Sized to content (B79): border + blank + prompt + blank + hints.
+        let text_w = confirm.prompt.width().max(confirm.hints.width()) as u16 + 6;
+        let popup_area = fixed_centered_rect(text_w.max(30), 6, area);
         frame.render_widget(Clear, popup_area);
 
         let block = Block::default()
@@ -3736,6 +3747,33 @@ mod tests {
         );
     }
 
+    /// B79: a bare Enter never confirms a delete; `y` does. Discard still takes Enter.
+    #[test]
+    fn delete_confirm_needs_y_not_enter() {
+        let mut config = AppConfig::default();
+        let mut state = ConfigTabState::new(&config, None);
+        let delete = || ConfirmState {
+            prompt: "Delete host \"a\"?".to_string(),
+            action: ConfirmAction::DeleteEntry {
+                kind: EntryFormKind::Host,
+                index: 0,
+            },
+            hints: "[y] Delete   [n/Esc] Cancel",
+        };
+        state.confirm = Some(delete());
+        press(&mut state, &mut config, KeyCode::Enter);
+        assert!(state.confirm.is_some() && state.pending_delete.is_none());
+        press(&mut state, &mut config, KeyCode::Char('y'));
+        assert!(state.confirm.is_none() && state.pending_delete.is_some());
+
+        state.confirm = Some(ConfirmState {
+            prompt: "Discard unsaved changes?".to_string(),
+            action: ConfirmAction::DiscardDirty,
+            hints: "[y/Enter] Yes   [n/Esc] No",
+        });
+        press(&mut state, &mut config, KeyCode::Enter);
+        assert!(state.confirm.is_none());
+    }
     /// B46: the entry-form vec editor and the direct popup obey one rule —
     /// Esc discards the edit, `s` saves it.
     #[test]
