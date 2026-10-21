@@ -50,7 +50,7 @@ Proposed (each item can be accepted/rejected individually):
 
 | # | Today | Proposed |
 |---|---|---|
-| K1 | Focus layers NavBar → TopField → Content; Esc cycles them | Drop the NavBar layer. `1/2/3` switch tabs; `[` / `]` previous/next tab. Esc: close overlay → cancel edit → move focus to the tab's first field; never wraps |
+| K1 | Focus layers NavBar → TopField → Content; Esc cycles them | Drop the NavBar layer. `1/2/3` switch tabs; `Tab` / `Shift+Tab` next/previous tab from anywhere (no overlay open). Field-group `Tab` cycling is removed; `↑↓` move fields, `←→` cycle radio values. Esc: close overlay → cancel edit → move focus to the tab's first field; never wraps |
 | K2 | `e` = edit (Config) / **execute from any field** (Operate) / jump (View) | `e` = edit everywhere. Run operation = `Enter` on Execute or `Ctrl+R` from any Operate field |
 | K3 | `d` = delete (Config) / dry-run toggle (Operate) | Config keeps `d` (+`y` confirm). Operate dry-run → `D`; serial `s` → `S` (rare toggles, uppercase avoids accidents) |
 | K4 | Broad run/exec starts immediately | Confirm overlay when target = All and dry-run off: `Run exec on N hosts? [y] Run [n/Esc] Cancel` |
@@ -89,4 +89,4 @@ overlay only; render tests assert the body is still drawn under a confirm; key-m
 ## 10. Open questions for approval
 
 - Q1: accept K1–K5 as written? (especially K1 removing NavBar focus, K2 `Ctrl+R`)
-- Q2: `[`/`]` vs keeping `Tab` for tab switching (Tab currently cycles fields within a group).
+- Q2: resolved (user, 2026-10-21) — `Tab` / `Shift+Tab` switch tabs; in-group `Tab` cycling removed.
