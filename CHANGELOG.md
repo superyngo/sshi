@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### 2026-10-21
+- docs: TUI mouse + UX assessment (`docs/audit/2026-10-21-tui-mouse-ux-assessment.md`), run against the real binary at 100×30 and 80×24; backlog opens B78–B83 (Operate fields collapse at 80×24, Confirm popup clips its keys, status hints overflow 80 columns, stale help text, structural UX redesign, always-on mouse support).
 ### 2026-09-29
 - docs: the `AGENTS.md` import example separates std / third-party / `crate::` groups with blank lines; written as one block, `cargo fmt` reordered it and put `crate::` first.
 ### 2026-09-26

@@ -9,6 +9,7 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 | Date | Document | Status |
 |---|---|---|
 | 2026-09-25 | [2026-09-25-code-audit.md](2026-09-25-code-audit.md) | In progress |
+| 2026-10-21 | [2026-10-21-tui-mouse-ux-assessment.md](2026-10-21-tui-mouse-ux-assessment.md) | In progress |
 
 ## Landed
 
