@@ -8,7 +8,7 @@ once approved, dated by when it was written, never rewritten. Current behavior l
 
 | Date | Document | Status |
 |---|---|---|
-| 2026-10-21 | [2026-10-21-tui-ux-structure.md](2026-10-21-tui-ux-structure.md) | Draft — awaiting approval (B82) |
+| 2026-10-21 | [2026-10-21-tui-ux-structure.md](2026-10-21-tui-ux-structure.md) | Approved — in progress (B82) |
 
 ## Landed
 

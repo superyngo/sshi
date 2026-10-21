@@ -1,7 +1,7 @@
 # TUI UX structure (B82) — overlay stack, shared geometry, key map
 
 - Date: 2026-10-21
-- Status: Draft — awaiting approval
+- Status: Approved (user, 2026-10-21); K1–K5 accepted
 - Backlog: B82 (prerequisite for B83 mouse)
 - Source: [audit 2026-10-21](../audit/2026-10-21-tui-mouse-ux-assessment.md) U1–U8, plus items deferred
   from B79 (confirm replaces body) and B80 (context-aware hints).
