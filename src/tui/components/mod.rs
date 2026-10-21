@@ -1,3 +1,4 @@
+pub mod hitmap;
 pub mod input_field;
 pub mod member_picker;
 pub mod popup;

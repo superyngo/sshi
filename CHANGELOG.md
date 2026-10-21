@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-10-21
+- feat(tui): mouse support (B83), always on. Click tabs, radio options, checkboxes, fields, Execute, result / sidebar / field rows (a second click opens), picker and form rows, and Confirm `[y]` / `[n]` buttons; the wheel scrolls the list or popup under the pointer. Targets come from a per-frame hit map filled by the renderers, so they match the screen; clicks outside the top popup are ignored. Capture is released on exit, panic and around the `$EDITOR` round-trip.
 - feat(tui)!: new key map (B82 step 5). `Tab` / `Shift+Tab` switch tabs; the tab-bar focus layer is gone (`Esc` goes to the tab's first field, `↑` stops there). Operate: `e` edits like Enter and no longer runs; run with `Enter` on Execute or `Ctrl+R`; a run / exec / sync / cp on all hosts without dry-run asks first (only `y` runs); dry-run and serial move to `D` / `S`. New `y` copies the focused value or selected row (OSC 52).
 - feat(tui): tab bar and status bar take one row each (3 more body rows at 24 rows; errors replace the hints until Esc); never-checked hosts show `? unknown` / `—` instead of `✗ offline` / `never`; unset Config values show `(none)`; the breadcrumb config path uses `~` and a middle ellipsis (B82 step 4).
 - feat(tui): status-bar hints follow what has the keys — the top popup, an active text field, or the focused tab — instead of always showing the tab's keys (B82 step 3).

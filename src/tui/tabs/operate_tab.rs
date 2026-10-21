@@ -13,6 +13,7 @@ use ratatui::{
 
 use crate::commands::report::HostStatus;
 
+use super::super::components::hitmap::{Hit, HitMap};
 use super::super::components::input_field::InputField;
 use super::super::components::shared;
 use super::super::state::persist::{OperationKind, TargetFilterMode, TargetFilterState};
@@ -169,6 +170,7 @@ pub struct OperateRenderData<'a> {
     pub target_filter: &'a TargetFilterState,
     pub target_count: usize,
     pub overlay_open: bool,
+    pub hits: &'a HitMap,
 }
 
 /// Highlight a focused field. When `active` (the tab itself holds focus) the
@@ -234,47 +236,31 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let active = !data.overlay_open;
     let tf = data.target_filter;
     let mut rows: Vec<RowItem> = Vec::new();
-    // Index of the row holding the focused field; the body scrolls to keep it visible.
-    let mut focus_row = 0usize;
+    // Row index → field it shows (click target; the focused one scrolls into view).
+    let mut owners: Vec<(usize, OpField)> = Vec::new();
 
     // ── Operation radio ──
-    if data.focus == OpField::OpRadio {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::OpRadio));
     rows.push(RowItem::Plain(op_radio_line(data)));
     rows.push(RowItem::Plain(Line::from("")));
 
     // ── Common zone ──
     rows.push(RowItem::Plain(zone_header("── Common ──", theme)));
-    if data.focus == OpField::TargetMode {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::TargetMode));
     rows.push(RowItem::Plain(target_mode_line(data)));
     if tf.mode != TargetFilterMode::All {
-        if data.focus == OpField::TargetMembers {
-            focus_row = rows.len();
-        }
+        owners.push((rows.len(), OpField::TargetMembers));
         rows.push(RowItem::Plain(members_line(data)));
     }
-    if data.focus == OpField::Skip {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::Skip));
     rows.push(RowItem::Plain(skip_line(data)));
-    if data.focus == OpField::Timeout {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::Timeout));
     rows.push(RowItem::Plain(timeout_line(data)));
-    if data.focus == OpField::Serial {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::Serial));
     rows.push(RowItem::Plain(serial_line(data)));
-    if data.focus == OpField::DryRun {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::DryRun));
     rows.push(RowItem::Plain(dry_run_line(data)));
-    if data.focus == OpField::Out {
-        focus_row = rows.len();
-    }
+    owners.push((rows.len(), OpField::Out));
     rows.push(RowItem::Field(
         data.out_input,
         "Output report (.json/.html, optional)",
@@ -290,9 +276,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     )));
     match data.operation {
         OperationKind::Check => {
-            if data.focus == OpField::CheckName {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::CheckName));
             rows.push(RowItem::Plain(name_select_line(
                 "Entries:",
                 &data.check_name_input.value,
@@ -303,17 +287,13 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Run => {
-            if data.focus == OpField::Command {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::Command));
             rows.push(RowItem::Field(
                 data.run_command,
                 "Command",
                 data.focus == OpField::Command,
             ));
-            if data.focus == OpField::Sudo {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::Sudo));
             rows.push(RowItem::Plain(toggle_line(
                 "sudo",
                 data.run_sudo,
@@ -323,17 +303,13 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Exec => {
-            if data.focus == OpField::Script {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::Script));
             rows.push(RowItem::Field(
                 data.exec_script,
                 "Script path",
                 data.focus == OpField::Script,
             ));
-            if data.focus == OpField::Sudo {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::Sudo));
             rows.push(RowItem::Plain(toggle_line(
                 "sudo",
                 data.exec_sudo,
@@ -341,9 +317,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                 active,
                 theme,
             )));
-            if data.focus == OpField::Keep {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::Keep));
             rows.push(RowItem::Plain(toggle_line(
                 "--keep",
                 data.exec_keep,
@@ -355,9 +329,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         OperationKind::Sync => {
             // Config-entry selector and ad-hoc paths coexist; both feed the sync
             // core at once. Source override is anchored last (Req #6).
-            if data.focus == OpField::SyncName {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::SyncName));
             rows.push(RowItem::Plain(name_select_line(
                 "Entries:",
                 &data.sync_name_input.value,
@@ -366,9 +338,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                 active,
                 theme,
             )));
-            if data.focus == OpField::SyncAdhocInput {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::SyncAdhocInput));
             rows.push(RowItem::Field(
                 data.sync_adhoc_input,
                 "Add path",
@@ -384,9 +354,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                     rows.push(RowItem::Plain(Line::from(format!("  · {p}"))));
                 }
             }
-            if data.focus == OpField::SyncSource {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::SyncSource));
             rows.push(RowItem::Plain(name_select_line(
                 "Source: ",
                 &data.sync_source_input.value,
@@ -397,17 +365,13 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Cp => {
-            if data.focus == OpField::CpLocal {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::CpLocal));
             rows.push(RowItem::Field(
                 data.cp_local_input,
                 "Local path (file / dir / 'dir/*.ext')",
                 data.focus == OpField::CpLocal,
             ));
-            if data.focus == OpField::CpRemote {
-                focus_row = rows.len();
-            }
+            owners.push((rows.len(), OpField::CpRemote));
             rows.push(RowItem::Field(
                 data.cp_remote_input,
                 "Remote destination (optional, defaults to ~)",
@@ -419,16 +383,28 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     // ── Layout: rows stacked from the top; when they overflow the body, scroll
     // so the focused row (and the last row once it fits) stays fully visible.
     let heights: Vec<u16> = rows.iter().map(RowItem::height).collect();
+    let focus_row = owners
+        .iter()
+        .find(|(_, f)| *f == data.focus)
+        .map_or(0, |(i, _)| *i);
     let skip = scroll_skip(&heights, focus_row, inner.height);
     let mut y = inner.y;
     let bottom = inner.y.saturating_add(inner.height);
-    for (row, h) in rows.iter().zip(&heights).skip(skip) {
+    data.hits.push(inner, Hit::Inert);
+    for (i, (row, h)) in rows.iter().zip(&heights).enumerate().skip(skip) {
         if y.saturating_add(*h) > bottom {
             break;
         }
         let rect = Rect::new(inner.x, y, inner.width, *h);
+        let owner = owners.iter().find(|(r, _)| *r == i).map(|(_, f)| *f);
+        if let Some(f) = owner {
+            data.hits.push(rect, Hit::Op(f));
+        }
         match row {
             RowItem::Plain(line) => {
+                if let Some(f @ (OpField::OpRadio | OpField::TargetMode)) = owner {
+                    data.hits.radio(line, rect, |n| Hit::OpCycle(f, n));
+                }
                 frame.render_widget(Paragraph::new(line.clone()), rect);
             }
             RowItem::Field(field, label, focused) => {
@@ -628,6 +604,7 @@ fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         .title(" Execute ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
+    data.hits.push(inner, Hit::Op(OpField::Execute));
 
     let exec_label = if data.is_running {
         " [ running… — Esc to cancel ] ".to_string()

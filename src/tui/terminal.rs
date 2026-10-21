@@ -6,6 +6,7 @@
 use std::io;
 
 use anyhow::Result;
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::{execute, terminal};
 
 /// RAII guard that puts the terminal in alternate-screen + raw mode on
@@ -16,14 +17,22 @@ pub struct TerminalGuard;
 impl TerminalGuard {
     pub fn install() -> Result<Self> {
         terminal::enable_raw_mode()?;
-        execute!(io::stdout(), terminal::EnterAlternateScreen)?;
+        execute!(
+            io::stdout(),
+            terminal::EnterAlternateScreen,
+            EnableMouseCapture
+        )?;
         Ok(Self)
     }
 }
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            terminal::LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -34,7 +43,11 @@ impl Drop for TerminalGuard {
 pub fn install_panic_hook() {
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            DisableMouseCapture,
+            terminal::LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
         default_hook(info);
     }));

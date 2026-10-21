@@ -17,6 +17,8 @@ use crate::commands::checkout::{
 };
 use crate::commands::list::ListData;
 use crate::commands::log::LogRow;
+use crate::tui::app_state::ViewFocus;
+use crate::tui::components::hitmap::{Hit, HitMap, List};
 use crate::tui::components::input_field::InputField;
 use crate::tui::components::shared;
 
@@ -66,6 +68,7 @@ pub struct ViewRenderData<'a> {
     pub target_mode_focused: bool,
     pub target_members_focused: bool,
     pub skip_focused: bool,
+    pub hits: &'a HitMap,
 }
 
 /// Entry point: render the entire View tab into `area`.
@@ -117,6 +120,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         .title(" View ");
     let s_inner = s_block.inner(chunks[0]);
     frame.render_widget(s_block, chunks[0]);
+    data.hits.push(s_inner, Hit::Inert);
     let s_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -152,6 +156,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         .title(r_title);
     let r_inner = r_block.inner(chunks[1]);
     frame.render_widget(r_block, chunks[1]);
+    data.hits.push(r_inner, Hit::Area(List::ViewResult));
     render_result_area(data, r_inner, frame);
 }
 
@@ -160,13 +165,17 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
 fn render_view_common(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     let tf = data.target_filter;
     let mut rows: Vec<Line> = vec![view_target_mode_line(data)];
+    let mut owners = vec![ViewFocus::TargetMode];
     if tf.mode != TargetFilterMode::All {
         rows.push(view_members_line(data));
+        owners.push(ViewFocus::TargetMembers);
     }
     rows.push(view_skip_line(data));
+    owners.push(ViewFocus::Skip);
     // Combined toggle — Checkout only.
     if data.view_op == ViewOperationKind::Checkout {
         rows.push(view_combined_toggle_line(data));
+        owners.push(ViewFocus::CombinedToggle);
     }
     let constraints: Vec<Constraint> = rows.iter().map(|_| Constraint::Length(1)).collect();
     let chunks = Layout::default()
@@ -174,6 +183,12 @@ fn render_view_common(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         .constraints(constraints)
         .split(area);
     for (i, line) in rows.into_iter().enumerate() {
+        data.hits.push(chunks[i], Hit::View(owners[i]));
+        if i == 0 {
+            data.hits.radio(&line, chunks[i], |n| {
+                Hit::ViewCycle(ViewFocus::TargetMode, n)
+            });
+        }
         frame.render_widget(Paragraph::new(line), chunks[i]);
     }
 }
@@ -232,7 +247,21 @@ fn render_view_selector(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
 
     let mut spans: Vec<Span> = Vec::new();
     spans.push(Span::raw(" Show: "));
-    for (op, label) in &ops {
+    let row = Rect { height: 1, ..area };
+    data.hits.push(row, Hit::View(ViewFocus::OpSelector));
+    let cur = ops
+        .iter()
+        .position(|(op, _)| *op == data.view_op)
+        .unwrap_or(0);
+    let mut x = area.x + 7;
+    for (i, (op, label)) in ops.iter().enumerate() {
+        let w = label.len() as u16 + 2;
+        let rect = Rect::new(x, area.y, w.min(area.right().saturating_sub(x)), 1);
+        data.hits.push(
+            rect,
+            Hit::ViewCycle(ViewFocus::OpSelector, (i + ops.len() - cur) % ops.len()),
+        );
+        x = x.saturating_add(w + 2);
         let selected = *op == data.view_op;
         let style = if selected && data.op_selector_focused {
             Style::default()
@@ -295,6 +324,7 @@ fn render_log_specific_params(data: &ViewRenderData, area: Rect, frame: &mut Fra
         log_input_line("host", data.log_host_input, f(4), data.theme, area.width),
     ];
     for (i, line) in lines.into_iter().enumerate() {
+        data.hits.push(rows[i], Hit::View(ViewFocus::Specific(i)));
         frame.render_widget(Paragraph::new(line), rows[i]);
     }
 }
@@ -402,6 +432,12 @@ pub fn render_checkout_result(data: &ViewRenderData, area: Rect, frame: &mut Fra
     let start = data.result_scroll.min(snapshots.len().saturating_sub(1));
     let end = (start + visible_height).min(snapshots.len());
 
+    let body = Rect {
+        y: area.y.saturating_add(1).min(area.bottom()),
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    data.hits.rows(List::ViewResult, body, start, end - start);
     let mut rows: Vec<Row> = Vec::new();
     for (i, snap) in snapshots[start..end].iter().enumerate() {
         let selected = start + i == data.checkout_selected;
@@ -609,6 +645,8 @@ pub fn render_list_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) 
     // Apply scroll, and (when the result list holds focus) draw a row cursor
     // on the selected line so it's clear where focus is — mirroring Checkout.
     let skip = data.result_scroll.min(lines.len());
+    data.hits
+        .rows(List::ViewResult, area, skip, lines.len() - skip);
     let cursor_style = Style::default()
         .fg(data.theme.accent_checkout)
         .add_modifier(Modifier::BOLD | Modifier::REVERSED);
@@ -759,6 +797,8 @@ pub fn render_log_result(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     // When the result list holds focus, draw a row cursor on the selected line
     // so focus position is visible — mirroring Checkout/List.
     let skip = data.result_scroll.min(lines.len());
+    data.hits
+        .rows(List::ViewResult, area, skip, lines.len() - skip);
     let cursor_style = Style::default()
         .fg(data.theme.accent_checkout)
         .add_modifier(Modifier::BOLD | Modifier::REVERSED);

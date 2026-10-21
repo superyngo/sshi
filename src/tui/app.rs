@@ -16,7 +16,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
-    event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{
+        Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
+    },
     execute, terminal,
 };
 use futures::StreamExt;
@@ -38,6 +41,7 @@ use crate::tui::state::persist::ViewOperationKind;
 
 use super::app_state::{ExportPopup, OperateState, PopupState, ViewFocus, ViewState};
 use super::async_bridge::{EventSender, RunningOp, TuiEvent};
+use super::components::hitmap::{Hit, HitMap, List};
 use super::components::input_field::{InputField, InputMode};
 use super::components::member_picker::{MemberPicker, PickerResult, PickerTarget};
 use super::components::popup::centered_rect;
@@ -131,6 +135,8 @@ pub(crate) enum Overlay {
 }
 
 pub struct App {
+    /// B83: click / wheel targets recorded by the last frame.
+    hits: HitMap,
     /// K5: text copied by `y`, written as OSC 52 by the run loop.
     pending_clipboard: Option<String>,
     /// One-shot status line ("Copied …"), cleared by the next key.
@@ -235,6 +241,7 @@ impl App {
 
         Self {
             run_confirm: None,
+            hits: HitMap::default(),
             pending_clipboard: None,
             notice: None,
             active_tab,
@@ -1652,7 +1659,143 @@ impl App {
         match ev {
             Event::Resize(_, _) => Ok(true),
             Event::Key(key) if key.kind == KeyEventKind::Press => self.handle_key(key),
+            Event::Mouse(m) => self.handle_mouse(m),
             _ => Ok(false),
+        }
+    }
+
+    /// B83: route a mouse event through the last frame's hit map. Clicks and
+    /// wheel steps become the same state changes / key presses the keyboard
+    /// makes, so both paths share every guard (dirty config, run confirm…).
+    fn handle_mouse(&mut self, m: MouseEvent) -> Result<bool> {
+        let k = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        let hit = self.hits.at(m.column, m.row);
+        let overlay = !self.overlays().is_empty();
+        match m.kind {
+            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
+                let code = if m.kind == MouseEventKind::ScrollUp {
+                    KeyCode::Up
+                } else {
+                    KeyCode::Down
+                };
+                if overlay {
+                    // Wheel scrolls / moves the cursor of the top overlay.
+                    return self.handle_key(k(code));
+                }
+                if self.text_input_active() {
+                    return Ok(false);
+                }
+                match hit {
+                    Some(Hit::Row(list, _) | Hit::Area(list)) => {
+                        self.focus_list(list);
+                        if list == List::ViewResult {
+                            self.result_move(code == KeyCode::Down);
+                            Ok(true)
+                        } else {
+                            self.handle_key(k(code))
+                        }
+                    }
+                    Some(_) => self.handle_key(k(code)),
+                    None => Ok(false),
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                let Some(hit) = hit else {
+                    return Ok(false);
+                };
+                // A click elsewhere commits the field being edited first.
+                if !overlay && self.text_input_active() {
+                    self.handle_key(k(KeyCode::Enter))?;
+                }
+                self.click(hit)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    /// Give keyboard focus to the zone holding `list` (no row change).
+    fn focus_list(&mut self, list: List) {
+        match list {
+            List::ViewResult if self.view.focus != ViewFocus::Result => {
+                self.view.focus = ViewFocus::Result;
+                self.snap_result_selection(true);
+            }
+            List::ConfigSidebar => self.config_tab.zone = ConfigZone::Sidebar,
+            List::ConfigFields => self.config_tab.zone = ConfigZone::FieldTable,
+            _ => {}
+        }
+    }
+
+    fn click(&mut self, hit: Hit) -> Result<bool> {
+        let k = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        match hit {
+            Hit::Inert | Hit::Area(_) => Ok(false),
+            Hit::Key(code) => self.handle_key(k(code)),
+            Hit::Tab(tab) => {
+                let n = TabId::ALL.iter().position(|t| *t == tab).unwrap_or(0);
+                self.handle_key(k(KeyCode::Char((b'1' + n as u8) as char)))
+            }
+            Hit::Op(f) => {
+                self.operate.focus = f;
+                let key = match f {
+                    OpField::OpRadio | OpField::TargetMode | OpField::Timeout => return Ok(true),
+                    OpField::Serial | OpField::DryRun | OpField::Sudo | OpField::Keep => {
+                        KeyCode::Char(' ')
+                    }
+                    _ => KeyCode::Enter,
+                };
+                self.handle_key(k(key))
+            }
+            Hit::OpCycle(f, steps) => {
+                self.operate.focus = f;
+                for _ in 0..steps {
+                    self.handle_key(k(KeyCode::Right))?;
+                }
+                Ok(true)
+            }
+            Hit::View(f) => {
+                self.view.focus = f;
+                let key = match f {
+                    ViewFocus::TargetMembers | ViewFocus::Skip => KeyCode::Enter,
+                    ViewFocus::Specific(0 | 3 | 4) => KeyCode::Enter,
+                    ViewFocus::Specific(_) | ViewFocus::CombinedToggle => KeyCode::Char(' '),
+                    _ => return Ok(true),
+                };
+                self.handle_key(k(key))
+            }
+            Hit::ViewCycle(f, steps) => {
+                self.view.focus = f;
+                for _ in 0..steps {
+                    self.handle_key(k(KeyCode::Right))?;
+                }
+                Ok(true)
+            }
+            Hit::Row(List::ViewResult, i) => {
+                let again =
+                    self.view.focus == ViewFocus::Result && self.checkout_viewport.selected == i;
+                if self
+                    .list_selectable()
+                    .is_some_and(|sel| !sel.get(i).copied().unwrap_or(false))
+                {
+                    return Ok(false);
+                }
+                self.view.focus = ViewFocus::Result;
+                self.checkout_viewport.selected = i;
+                if again {
+                    return self.handle_key(k(KeyCode::Enter));
+                }
+                Ok(true)
+            }
+            Hit::Row(List::MemberPicker, i) => {
+                if let Some(p) = &mut self.popup.member_picker {
+                    p.viewport.selected = i;
+                }
+                self.handle_key(k(KeyCode::Char(' ')))
+            }
+            Hit::Row(list, i) => match self.config_tab.click(list, i, &self.config) {
+                Some(code) => self.handle_key(k(code)),
+                None => Ok(true),
+            },
         }
     }
 
@@ -2721,6 +2864,7 @@ impl App {
     }
 
     fn render(&mut self, area: Rect, frame: &mut ratatui::Frame) {
+        self.hits.clear();
         // Terminal-size guard (§7.8): below threshold, render only the warning.
         if area.width < MIN_COLS || area.height < MIN_ROWS {
             let msg = format!(
@@ -2830,6 +2974,7 @@ impl App {
                     log_errors: self.view.log_errors,
                     log_action: self.view.log_action.as_ref().map_or("all", |a| a.as_str()),
                     specific_focused,
+                    hits: &self.hits,
                 };
                 super::tabs::view_tab::render_view(&data, chunks[1], frame);
             }
@@ -2837,6 +2982,9 @@ impl App {
         self.render_status_bar(chunks[2], frame);
 
         for overlay in self.overlays() {
+            if overlay != Overlay::Config {
+                self.hits.barrier();
+            }
             match overlay {
                 Overlay::Config => {} // drawn by the Config tab over its body
                 Overlay::RunConfirm => self.render_run_confirm(area, frame),
@@ -2848,7 +2996,7 @@ impl App {
                 Overlay::MemberPicker => {
                     let theme = self.theme;
                     if let Some(picker) = &mut self.popup.member_picker {
-                        picker.render(area, &theme, frame);
+                        picker.render(area, &theme, frame, &self.hits);
                     }
                 }
                 Overlay::Export => self.render_export_popup(area, frame),
@@ -2915,6 +3063,9 @@ impl App {
             )),
         ];
         frame.render_widget(Paragraph::new(body).block(block), popup);
+        self.hits.push(popup, Hit::Inert);
+        let row = Rect::new(popup.x + 1, popup.y + 3, popup.width.saturating_sub(2), 1);
+        self.hits.yes_no(row, &format!("  {keys}"));
     }
 
     fn render_tab_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
@@ -2948,6 +3099,13 @@ impl App {
             width: area.width.saturating_sub(name_w + version.len() as u16),
             ..area
         };
+        let mut x = tabs_area.x;
+        for (tab, title) in TabId::ALL.iter().zip(&titles) {
+            let w = unicode_width::UnicodeWidthStr::width(*title) as u16 + 2; // " title "
+            let w = w.min(tabs_area.right().saturating_sub(x));
+            self.hits.push(Rect::new(x, area.y, w, 1), Hit::Tab(*tab));
+            x = x.saturating_add(w + 1); // divider
+        }
         let tabs = Tabs::new(titles)
             .select(selected)
             .style(Style::default().fg(self.theme.inactive))
@@ -2964,6 +3122,7 @@ impl App {
             &self.config,
             self.config_path.as_deref(),
             overlay_open,
+            &self.hits,
         );
     }
 
@@ -3311,7 +3470,11 @@ impl App {
         let editor = crate::commands::config::resolve_editor();
 
         // Stage 1 — PAUSE: leave alternate screen + disable raw mode.
-        let _ = execute!(io::stdout(), terminal::LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            crossterm::event::DisableMouseCapture,
+            terminal::LeaveAlternateScreen
+        );
         let _ = terminal::disable_raw_mode();
         let _ = io::stdout().flush();
 
@@ -3320,7 +3483,11 @@ impl App {
 
         // Stage 3 — RESTORE: re-enter alternate screen.
         let _ = terminal::enable_raw_mode();
-        let _ = execute!(io::stdout(), terminal::EnterAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            terminal::EnterAlternateScreen,
+            crossterm::event::EnableMouseCapture
+        );
         terminal.clear()?;
 
         if let Err(e) = &status {
@@ -3382,6 +3549,7 @@ impl App {
             target_filter: &self.target_filter,
             target_count,
             overlay_open: !self.overlays().is_empty(),
+            hits: &self.hits,
         };
         operate_tab::render_operate(&data, area, frame);
     }
@@ -3782,6 +3950,10 @@ Global keys
   1 / 2 / 3   Switch to Config / Operate / View
   Tab         Next tab; Shift+Tab previous tab
   y           Copy the focused value / selected row (OSC 52)
+  Mouse       Click tabs, options, fields, rows, popup buttons;
+              click a selected row again to open it; wheel
+              scrolls the list or popup under the pointer.
+              Shift/Option-drag selects text in most terminals
   q           Quit (state saved)
   Ctrl+C      Quit immediately (state saved)
   Esc         Close popup / clear error; otherwise go to the
@@ -4839,6 +5011,85 @@ mod navbar_focus_tests {
         app.operate.focus = OpField::Timeout;
         app.handle_key(k(KeyCode::Char('y'))).unwrap();
         assert_eq!(app.notice.as_deref(), Some("Nothing to copy here"));
+    }
+
+    fn draw(app: &mut App) {
+        let mut t = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+        t.draw(|f| app.render(f.area(), f)).unwrap();
+    }
+
+    /// Redraw, then send `kind` at the first cell of the rect recorded for `hit`.
+    fn mouse(app: &mut App, hit: Hit, kind: MouseEventKind) {
+        draw(app);
+        let r = app
+            .hits
+            .rect_of(hit)
+            .unwrap_or_else(|| panic!("{hit:?} not on screen"));
+        app.handle_event(Event::Mouse(MouseEvent {
+            kind,
+            column: r.x,
+            row: r.y,
+            modifiers: KeyModifiers::NONE,
+        }))
+        .unwrap();
+    }
+
+    fn click(app: &mut App, hit: Hit) {
+        mouse(app, hit, MouseEventKind::Down(MouseButton::Left));
+    }
+
+    /// B83: tabs, radios, checkboxes and Execute are clickable; a broad run
+    /// still asks first, and its buttons click; clicks under a popup are dead.
+    #[test]
+    fn mouse_clicks_operate_controls_and_confirm() {
+        let mut app = minimal_app();
+        click(&mut app, Hit::Tab(TabId::Operate));
+        assert_eq!(app.active_tab, TabId::Operate);
+        app.operate.operation = OperationKind::Run;
+        app.target_filter.mode = TargetFilterMode::All;
+        app.operate.dry_run = false;
+        click(&mut app, Hit::OpCycle(OpField::OpRadio, 1)); // run → exec
+        assert_eq!(app.operate.operation, OperationKind::Exec);
+        assert_eq!(app.operate.focus, OpField::OpRadio);
+        click(&mut app, Hit::Op(OpField::DryRun));
+        assert!(app.operate.dry_run);
+        click(&mut app, Hit::Op(OpField::DryRun));
+        assert!(!app.operate.dry_run);
+        click(&mut app, Hit::Op(OpField::Execute));
+        assert_eq!(app.overlays().last(), Some(&Overlay::RunConfirm));
+        draw(&mut app);
+        let tab = app.hits.rect_of(Hit::Tab(TabId::View)).unwrap();
+        assert_eq!(app.hits.at(tab.x, tab.y), None, "popup blocks the base");
+        click(&mut app, Hit::Key(KeyCode::Char('n')));
+        assert!(app.run_confirm.is_none() && app.running_op.is_none());
+        click(&mut app, Hit::Tab(TabId::View));
+        assert_eq!(app.active_tab, TabId::View);
+        click(&mut app, Hit::ViewCycle(ViewFocus::OpSelector, 2));
+        assert_eq!(app.view.op, ViewOperationKind::Log);
+    }
+
+    /// B83: Config sidebar rows select on click and open on a second click;
+    /// the wheel moves the list under the pointer.
+    #[test]
+    fn mouse_selects_config_rows_and_wheel_scrolls() {
+        let mut app = minimal_app();
+        app.active_tab = TabId::Config;
+        app.config_tab.zone = ConfigZone::FieldTable;
+        click(&mut app, Hit::Row(List::ConfigSidebar, 1));
+        assert_eq!(app.config_tab.zone, ConfigZone::Sidebar);
+        assert_eq!(app.config_tab.sidebar_vp.selected, 1);
+        mouse(
+            &mut app,
+            Hit::Row(List::ConfigSidebar, 1),
+            MouseEventKind::ScrollDown,
+        );
+        assert_eq!(app.config_tab.sidebar_vp.selected, 2);
+        mouse(
+            &mut app,
+            Hit::Row(List::ConfigSidebar, 2),
+            MouseEventKind::ScrollUp,
+        );
+        assert_eq!(app.config_tab.sidebar_vp.selected, 1);
     }
 
     /// B47: `e` on a sync row of View → List opens that entry's edit form,

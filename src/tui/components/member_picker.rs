@@ -21,6 +21,7 @@ use ratatui::{
 
 use crate::tui::theme::Theme;
 
+use super::hitmap::{Hit, HitMap, List};
 use super::popup::content_rect;
 use super::viewport::Viewport;
 use unicode_width::UnicodeWidthStr;
@@ -65,7 +66,7 @@ pub struct MemberPicker {
     /// Viewport decouples the selection cursor from the scroll offset so that
     /// navigating backward does not immediately re-anchor to the bottom edge
     /// (fixes the "cursor sticks to bottom row" regression).
-    viewport: Viewport,
+    pub(crate) viewport: Viewport,
     multi: bool,
     /// Optional per-option detail hint shown dimmed after the name (e.g. a
     /// `[[check]]` entry's metrics or a `[[sync]]` entry's paths). Empty = none.
@@ -184,7 +185,7 @@ impl MemberPicker {
             .collect()
     }
 
-    pub fn render(&mut self, area: Rect, theme: &Theme, frame: &mut Frame) {
+    pub fn render(&mut self, area: Rect, theme: &Theme, frame: &mut Frame, hits: &HitMap) {
         let title = match self.target {
             PickerTarget::Groups => " Pick groups · Space=toggle · Enter=apply · Esc=cancel ",
             PickerTarget::Hosts => " Pick hosts · Space=toggle · Enter=apply · Esc=cancel ",
@@ -231,6 +232,8 @@ impl MemberPicker {
         let vis = (rows.height as usize).max(1);
         self.viewport.set_dims(self.options.len(), vis);
         let (start, end) = self.viewport.visible_range();
+        hits.push(popup, Hit::Inert);
+        hits.rows(List::MemberPicker, rows, start, end - start);
 
         let lines: Vec<Line> = if self.options.is_empty() {
             vec![Line::from(Span::styled(

@@ -136,6 +136,10 @@ _Avoid_: ItemSelector, CheckboxModal, SelectList, OptionPicker.
 The status symbol mapping struct supplying Unicode icons (`✓`, `✗`, `⊘`, `⚠`) and ASCII fallback characters (`+`, `x`, `o`, `!`) for Linux virtual consoles (`TERM=linux`), mapped to **HostStatus** variants (`src/tui/theme.rs`).
 _Avoid_: IconSet, SymbolTable, StatusIcons.
 
+**HitMap**:
+The per-frame list of mouse targets (`Rect` → `Hit`) recorded by the renderers in paint order; an overlay's barrier hides everything beneath it (`src/tui/components/hitmap.rs`, B83).
+_Avoid_: ClickMap, MouseRegions, layout cache.
+
 **Overlay**:
 A popup layer above the tab body (`Overlay` in `src/tui/app.rs`). `App::overlays()` lists the open
 ones bottom → top; the topmost gets every key and is drawn last. (Replaces the retired

@@ -21,6 +21,7 @@ use crate::config::schema::{
     generate_entry_id, AppConfig, CheckEntry, HostEntry, ShellType, SyncEntry,
 };
 
+use super::super::components::hitmap::{Hit, HitMap, List};
 use super::super::components::input_field::{InputField, InputMode};
 use super::super::components::popup::{content_rect, fixed_centered_rect};
 use super::super::components::shared;
@@ -1618,6 +1619,7 @@ impl ConfigTabState {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         area: Rect,
@@ -1626,6 +1628,7 @@ impl ConfigTabState {
         config: &AppConfig,
         config_path: Option<&std::path::Path>,
         overlay_open: bool,
+        hits: &HitMap,
     ) {
         // The base screen is always drawn; popups overlay it bottom → top
         // (entry form, direct editors, then confirm), matching key routing.
@@ -1644,8 +1647,8 @@ impl ConfigTabState {
             .constraints([Constraint::Length(22), Constraint::Min(0)])
             .split(vert[0]);
 
-        self.render_sidebar(horiz[0], frame, theme, config, base_focus);
-        self.render_field_table(horiz[1], frame, theme, config, base_focus);
+        self.render_sidebar(horiz[0], frame, theme, config, base_focus, hits);
+        self.render_field_table(horiz[1], frame, theme, config, base_focus, hits);
 
         let crumb = self.breadcrumb(config);
         let dirty_star = if self.config_dirty { " *" } else { "" };
@@ -1671,15 +1674,72 @@ impl ConfigTabState {
         frame.render_widget(Paragraph::new(crumb_line), vert[1]);
 
         if let Some(ref form) = self.entry_form {
-            self.render_entry_form(area, frame, theme, form);
+            hits.barrier();
+            self.render_entry_form(area, frame, theme, form, hits);
         }
         if let Some(ref dve) = self.direct_vec_editor {
-            self.render_direct_vec_editor(area, frame, theme, dve);
+            hits.barrier();
+            self.render_direct_vec_editor(area, frame, theme, dve, hits);
         } else if let Some(ref dgp) = self.direct_group_picker {
-            self.render_direct_group_picker(area, frame, theme, dgp);
+            hits.barrier();
+            self.render_direct_group_picker(area, frame, theme, dgp, hits);
         }
         if let Some(ref confirm) = self.confirm {
-            self.render_confirm(area, frame, theme, confirm);
+            hits.barrier();
+            self.render_confirm(area, frame, theme, confirm, hits);
+        }
+    }
+
+    /// B83: a click on row `idx` of `list`. Selects the row; returns the key
+    /// to press next — Enter when the row was already selected (open / edit),
+    /// Space for picker rows (toggle).
+    pub fn click(&mut self, list: List, idx: usize, config: &AppConfig) -> Option<KeyCode> {
+        fn pick(vp: &mut Viewport, idx: usize) -> bool {
+            let again = vp.selected == idx;
+            vp.selected = idx;
+            again
+        }
+        let enter_if = |again: bool| again.then_some(KeyCode::Enter);
+        match list {
+            List::ConfigSidebar => {
+                let again = self.zone == ConfigZone::Sidebar && self.sidebar_vp.selected == idx;
+                self.zone = ConfigZone::Sidebar;
+                if !again {
+                    self.sidebar_vp.selected = idx;
+                    self.reset_field_vp(config);
+                }
+                enter_if(again)
+            }
+            List::ConfigFields => {
+                let again = self.zone == ConfigZone::FieldTable && self.field_vp.selected == idx;
+                self.zone = ConfigZone::FieldTable;
+                self.field_vp.selected = idx;
+                enter_if(again)
+            }
+            List::FormFields => {
+                let form = self.entry_form.as_mut()?;
+                enter_if(pick(&mut form.field_vp, idx))
+            }
+            List::FormPicker => {
+                pick(
+                    &mut self.entry_form.as_mut()?.group_picker.as_mut()?.vp,
+                    idx,
+                );
+                Some(KeyCode::Char(' '))
+            }
+            List::FormVec => {
+                pick(&mut self.entry_form.as_mut()?.vec_editor.as_mut()?.vp, idx);
+                None
+            }
+            List::DirectVec => {
+                pick(&mut self.direct_vec_editor.as_mut()?.vp, idx);
+                None
+            }
+            List::DirectPicker => {
+                pick(&mut self.direct_group_picker.as_mut()?.vp, idx);
+                Some(KeyCode::Char(' '))
+            }
+            List::ViewResult | List::MemberPicker => None,
         }
     }
 
@@ -1695,6 +1755,7 @@ impl ConfigTabState {
         frame: &mut Frame,
         theme: &Theme,
         form: &EntryFormState,
+        hits: &HitMap,
     ) {
         // Plain field list: size to the fields + blank + hint row; a nested
         // picker / list editor keeps the larger fixed share.
@@ -1716,6 +1777,7 @@ impl ConfigTabState {
             .title(title);
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
+        hits.push(popup_area, Hit::Inert);
 
         let visible_h = inner.height as usize;
         // The field list shares the popup with a blank + hint row at the
@@ -1749,6 +1811,13 @@ impl ConfigTabState {
             self.editor_list_height.set(gp_visible_h);
             let mut gp_vp = gp.vp.clone();
             gp_vp.set_dims(gp.available.len(), gp_visible_h);
+            let (s0, s1) = gp_vp.visible_range();
+            hits.rows(
+                List::FormPicker,
+                list_rect(inner, 2, gp_visible_h),
+                s0,
+                s1 - s0,
+            );
             if gp.available.is_empty() {
                 lines.push(Line::from(Span::styled(
                     "  (no known groups — define groups on hosts first)",
@@ -1806,6 +1875,13 @@ impl ConfigTabState {
             let mut ve_vp = ve.vp.clone();
             ve_vp.set_dims(ve.items.len(), ve_visible_h);
             let scroll_y = ve_vp.scroll_y;
+            let (s0, s1) = ve_vp.visible_range();
+            hits.rows(
+                List::FormVec,
+                list_rect(inner, 2, ve_visible_h),
+                s0,
+                s1 - s0,
+            );
             for (rel, item) in ve_vp.visible_slice(&ve.items).iter().enumerate() {
                 let abs = scroll_y + rel;
                 let is_sel = abs == ve_vp.selected;
@@ -1840,6 +1916,12 @@ impl ConfigTabState {
                 ));
             }
         } else {
+            hits.rows(
+                List::FormFields,
+                list_rect(inner, 0, list_h),
+                start,
+                end - start,
+            );
             for rel in 0..(end - start) {
                 let abs = start + rel;
                 if abs >= form.fields.len() {
@@ -1895,7 +1977,14 @@ impl ConfigTabState {
         frame.render_widget(Paragraph::new(lines), inner);
     }
 
-    fn render_confirm(&self, area: Rect, frame: &mut Frame, theme: &Theme, confirm: &ConfirmState) {
+    fn render_confirm(
+        &self,
+        area: Rect,
+        frame: &mut Frame,
+        theme: &Theme,
+        confirm: &ConfirmState,
+        hits: &HitMap,
+    ) {
         // Sized to content (B79): border + blank + prompt + blank + hints.
         let text_w = confirm.prompt.width().max(confirm.hints.width()) as u16 + 6;
         let popup_area = fixed_centered_rect(text_w.max(30), 6, area);
@@ -1907,6 +1996,9 @@ impl ConfigTabState {
             .title(" Confirm ");
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
+        hits.push(popup_area, Hit::Inert);
+        let hint_row = list_rect(inner, 3, 1);
+        hits.yes_no(hint_row, &format!("  {}", confirm.hints));
 
         let lines = vec![
             Line::from(""),
@@ -1972,6 +2064,7 @@ impl ConfigTabState {
         theme: &Theme,
         config: &AppConfig,
         overlay_open: bool,
+        hits: &HitMap,
     ) {
         let focused = !overlay_open && self.zone == ConfigZone::Sidebar;
         let border_style = Style::default().fg(if focused {
@@ -1991,6 +2084,7 @@ impl ConfigTabState {
 
         let max_w = inner.width.saturating_sub(1) as usize;
         let (start, end) = self.sidebar_vp.visible_range();
+        hits.rows(List::ConfigSidebar, inner, start, end - start);
 
         let lines: Vec<Line> = self.items[start..end]
             .iter()
@@ -2041,6 +2135,7 @@ impl ConfigTabState {
         theme: &Theme,
         config: &AppConfig,
         overlay_open: bool,
+        hits: &HitMap,
     ) {
         let focused = !overlay_open && self.zone == ConfigZone::FieldTable;
         let border_style = Style::default().fg(if focused {
@@ -2055,6 +2150,7 @@ impl ConfigTabState {
         frame.render_widget(block, area);
 
         let fields = self.current_descriptors(config);
+        hits.push(inner, Hit::Area(List::ConfigFields));
         let visible_h = inner.height as usize;
         self.field_vp.set_dims(fields.len(), visible_h);
 
@@ -2089,6 +2185,7 @@ impl ConfigTabState {
             .min(30) as u16;
 
         let (start, end) = self.field_vp.visible_range();
+        hits.rows(List::ConfigFields, inner, start, end - start);
         let rows: Vec<Row> = fields[start..end]
             .iter()
             .enumerate()
@@ -2215,6 +2312,7 @@ impl ConfigTabState {
         frame: &mut Frame,
         theme: &Theme,
         dve: &DirectVecEditorState,
+        hits: &HitMap,
     ) {
         let widest = dve.items.iter().map(|i| i.width() + 2).max().unwrap_or(0);
         let popup_area = content_rect(widest.max(48), dve.items.len().max(1) + 4, area);
@@ -2232,6 +2330,9 @@ impl ConfigTabState {
         self.editor_list_height.set(list_h);
         let mut vp = dve.vp.clone();
         vp.set_dims(dve.items.len(), list_h);
+        hits.push(popup_area, Hit::Inert);
+        let (s0, s1) = vp.visible_range();
+        hits.rows(List::DirectVec, list_rect(inner, 2, list_h), s0, s1 - s0);
         let mut lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 "  (a:add  d:del  s:save  Esc:cancel)",
@@ -2279,6 +2380,7 @@ impl ConfigTabState {
         frame: &mut Frame,
         theme: &Theme,
         dgp: &DirectGroupPickerState,
+        hits: &HitMap,
     ) {
         let widest = (0..dgp.available.len())
             .map(|i| {
@@ -2302,6 +2404,9 @@ impl ConfigTabState {
         let list_h = visible_h.saturating_sub(extra + 2);
         self.editor_list_height.set(list_h);
         vp.set_dims(dgp.available.len(), list_h);
+        hits.push(popup_area, Hit::Inert);
+        let (s0, s1) = vp.visible_range();
+        hits.rows(List::DirectPicker, list_rect(inner, 2, list_h), s0, s1 - s0);
         let hints = if dgp.allow_add {
             "  (Space:toggle  a:add  Enter/s:apply  Esc:cancel)"
         } else {
@@ -2353,6 +2458,13 @@ impl ConfigTabState {
 }
 
 // ── Sidebar construction ─────────────────────────────────────────────────────
+
+/// `h` rows of `inner` starting `dy` rows down (clamped to `inner`).
+fn list_rect(inner: Rect, dy: u16, h: usize) -> Rect {
+    let y = inner.y.saturating_add(dy).min(inner.bottom());
+    let h = (h as u16).min(inner.bottom() - y);
+    Rect::new(inner.x, y, inner.width, h)
+}
 
 fn build_sidebar_items(config: &AppConfig, collapsed: &CollapsedSections) -> Vec<SidebarItem> {
     let mut items = vec![SidebarItem::SectionSettings, SidebarItem::SectionHosts];
@@ -2786,7 +2898,17 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let theme = Theme::default_palette();
         terminal
-            .draw(|f| state.render(Rect::new(0, 0, 80, 24), f, &theme, config, None, false))
+            .draw(|f| {
+                state.render(
+                    Rect::new(0, 0, 80, 24),
+                    f,
+                    &theme,
+                    config,
+                    None,
+                    false,
+                    &HitMap::default(),
+                )
+            })
             .unwrap();
     }
 
@@ -3913,8 +4035,18 @@ mod tests {
         // A terminal so short the form's list gets fewer rows than fields.
         let mut term = Terminal::new(TestBackend::new(80, 9)).unwrap();
         let theme = Theme::default_palette();
-        term.draw(|f| state.render(Rect::new(0, 0, 80, 9), f, &theme, &config, None, false))
-            .unwrap();
+        term.draw(|f| {
+            state.render(
+                Rect::new(0, 0, 80, 9),
+                f,
+                &theme,
+                &config,
+                None,
+                false,
+                &HitMap::default(),
+            )
+        })
+        .unwrap();
         let rows = state.form_list_height.get();
         assert!(rows > 0 && rows < fields, "rows={rows} fields={fields}");
         for _ in 0..fields {

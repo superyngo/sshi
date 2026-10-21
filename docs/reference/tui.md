@@ -56,6 +56,25 @@ There is no separate tab-bar focus: `↑` on a tab's first field stays put, and 
 
 ---
 
+## Mouse
+
+Mouse capture is always on (B83; no switch). `TerminalGuard` enables it with the alternate screen and disables it on exit, in the panic hook, and around the `E` editor round-trip. Native text selection needs Shift-drag (Option-drag in macOS Terminal / iTerm2); `y` copies the focused value instead.
+
+Click targets come from the frame itself: every renderer records the rects it draws in a per-frame `HitMap` (`src/tui/components/hitmap.rs`), in paint order. Each overlay sets a barrier before drawing, so only the top overlay's targets are live and a click outside it does nothing. A click becomes the same state change or key press the keyboard makes, so guards (dirty config on tab switch, the broad-run confirm) still apply.
+
+| Where | Left click | Wheel |
+|---|---|---|
+| Tab bar | Switch tab | — |
+| Operate | Radio option: select it. Checkbox: toggle. Text field / picker row: focus and open. Timeout: focus. Execute: run (same confirm as `Enter`) | Move field focus (`↑`/`↓`) |
+| View | `Show` / `Target` option: select. Members / Skip / log text fields: open. errors / action / Combined: toggle. Result row: select; again: `Enter` | Result rows: move the row cursor; settings: `↑`/`↓` |
+| Config | Sidebar / field row: select (and focus that zone); again: `Enter` (open entry, collapse section, edit field) | Move the cursor of the list under the pointer |
+| Pickers (member picker, group pickers) | Row: move cursor there and toggle | Move cursor |
+| Entry form, list editors | Row: select; form field again: edit | Move cursor |
+| Confirm popups | `[y] …` / `[n/Esc] …` buttons | — |
+| Help, Info, Log, report, progress | — | Scroll (`↑`/`↓`) |
+
+A click while a text field is being edited first commits it (`Enter`), then acts.
+
 ## Popups & overlays
 
 Open overlays form one stack (`App::overlays`), bottom → top: Config popups (entry form, list editors, confirm), running-operation progress, run confirm, completed report, Log, Info, Help, Member Picker, Export, Auth. The topmost overlay receives every key and is drawn last; the tab body stays drawn underneath. Small popups (member picker, entry form, list editors, auth) size to their content plus border, clamped to the screen; long-content popups (Help, Info, Log, report) keep a screen share.

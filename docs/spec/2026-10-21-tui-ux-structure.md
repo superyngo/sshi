@@ -1,7 +1,7 @@
 # TUI UX structure (B82) — overlay stack, shared geometry, key map
 
 - Date: 2026-10-21
-- Status: Shipped (2026-10-21); K1–K5 accepted. §3 per-tab `layout()` deferred to B83
+- Status: Shipped (2026-10-21); K1–K5 accepted. §3 superseded in B83: instead of per-tab `layout()` functions, renderers record the rects they draw into a per-frame `HitMap`, which gives the same no-drift guarantee without moving rect math out of the renderers
 - Backlog: B82 (prerequisite for B83 mouse)
 - Source: [audit 2026-10-21](../audit/2026-10-21-tui-mouse-ux-assessment.md) U1–U8, plus items deferred
   from B79 (confirm replaces body) and B80 (context-aware hints).
