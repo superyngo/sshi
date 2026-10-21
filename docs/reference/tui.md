@@ -64,7 +64,7 @@ When the top navigation bar is focused (`navbar_focused == true`):
 
 ## Popups & overlays
 
-Open overlays form one stack (`App::overlays`), bottom → top: Config popups (entry form, list editors, confirm), running-operation progress, completed report, Log, Info, Help, Member Picker, Export, Auth. The topmost overlay receives every key and is drawn last; the tab body stays drawn underneath.
+Open overlays form one stack (`App::overlays`), bottom → top: Config popups (entry form, list editors, confirm), running-operation progress, completed report, Log, Info, Help, Member Picker, Export, Auth. The topmost overlay receives every key and is drawn last; the tab body stays drawn underneath. Small popups (member picker, entry form, list editors, auth) size to their content plus border, clamped to the screen; long-content popups (Help, Info, Log, report) keep a screen share.
 
 ### Help Popup (`?`)
 - **Activation**: Press `?` from any non-input context.

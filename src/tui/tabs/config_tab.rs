@@ -22,7 +22,7 @@ use crate::config::schema::{
 };
 
 use super::super::components::input_field::{InputField, InputMode};
-use super::super::components::popup::fixed_centered_rect;
+use super::super::components::popup::{content_rect, fixed_centered_rect};
 use super::super::components::shared;
 use super::super::components::viewport::Viewport;
 use super::super::theme::Theme;
@@ -1690,7 +1690,13 @@ impl ConfigTabState {
         theme: &Theme,
         form: &EntryFormState,
     ) {
-        let popup_area = centered_rect(70, 70, area);
+        // Plain field list: size to the fields + blank + hint row; a nested
+        // picker / list editor keeps the larger fixed share.
+        let popup_area = if form.group_picker.is_none() && form.vec_editor.is_none() {
+            content_rect(66, form.fields.len() + 2, area)
+        } else {
+            content_rect(66, area.height as usize * 7 / 10, area)
+        };
         frame.render_widget(Clear, popup_area);
 
         let title = match form.kind {
@@ -2196,8 +2202,8 @@ impl ConfigTabState {
         theme: &Theme,
         dve: &DirectVecEditorState,
     ) {
-        use super::super::components::popup::centered_rect;
-        let popup_area = centered_rect(60, 60, area);
+        let widest = dve.items.iter().map(|i| i.width() + 2).max().unwrap_or(0);
+        let popup_area = content_rect(widest.max(48), dve.items.len().max(1) + 4, area);
         frame.render_widget(Clear, popup_area);
         let title = format!(" Edit: {} ", dve.field_key);
         let block = Block::default()
@@ -2260,8 +2266,14 @@ impl ConfigTabState {
         theme: &Theme,
         dgp: &DirectGroupPickerState,
     ) {
-        use super::super::components::popup::centered_rect;
-        let popup_area = centered_rect(60, 70, area);
+        let widest = (0..dgp.available.len())
+            .map(|i| {
+                dgp.available[i].width() + 4 + dgp.descriptions.get(i).map_or(0, |d| d.width() + 2)
+            })
+            .max()
+            .unwrap_or(0);
+        let extra = if dgp.add_input_active { 4 } else { 2 };
+        let popup_area = content_rect(widest.max(54), dgp.available.len().max(1) + extra + 2, area);
         frame.render_widget(Clear, popup_area);
         let title = format!(" Pick: {} ", dgp.field_key);
         let block = Block::default()
@@ -2273,7 +2285,6 @@ impl ConfigTabState {
 
         let visible_h = inner.height as usize;
         let mut vp = dgp.vp.clone();
-        let extra = if dgp.add_input_active { 4 } else { 2 };
         let list_h = visible_h.saturating_sub(extra + 2);
         self.editor_list_height.set(list_h);
         vp.set_dims(dgp.available.len(), list_h);
@@ -2705,8 +2716,6 @@ fn input_cursor_line<'a>(
     spans.extend(input.cursor_spans(avail, style));
     Line::from(spans)
 }
-
-use super::super::components::popup::centered_rect;
 
 #[cfg(test)]
 mod tests {
@@ -3854,9 +3863,9 @@ mod tests {
         ));
         let fields = state.entry_form.as_ref().unwrap().fields.len();
         // A terminal so short the form's list gets fewer rows than fields.
-        let mut term = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let mut term = Terminal::new(TestBackend::new(80, 9)).unwrap();
         let theme = Theme::default_palette();
-        term.draw(|f| state.render(Rect::new(0, 0, 80, 12), f, &theme, &config, None, false))
+        term.draw(|f| state.render(Rect::new(0, 0, 80, 9), f, &theme, &config, None, false))
             .unwrap();
         let rows = state.form_list_height.get();
         assert!(rows > 0 && rows < fields, "rows={rows} fields={fields}");

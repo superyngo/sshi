@@ -3532,7 +3532,7 @@ impl App {
 
     fn render_auth_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
         use ratatui::style::Color;
-        let popup_area = centered_rect(60, 30, area);
+        let popup_area = super::components::popup::content_rect(58, 6, area);
         frame.render_widget(Clear, popup_area);
 
         let popup = match &self.popup.auth {

@@ -21,8 +21,9 @@ use ratatui::{
 
 use crate::tui::theme::Theme;
 
-use super::popup::centered_rect;
+use super::popup::content_rect;
 use super::viewport::Viewport;
+use unicode_width::UnicodeWidthStr;
 
 /// Which target-filter field the picker edits when applied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,7 +200,18 @@ impl MemberPicker {
                 " Pick source host · Space=select · Enter=apply · Esc=cancel "
             }
         };
-        let popup = centered_rect(60, 60, area);
+        let widest = self
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, o)| o.width() + 5 + self.descriptions.get(i).map_or(0, |d| d.width() + 2))
+            .max()
+            .unwrap_or(46);
+        let popup = content_rect(
+            widest.max(title.width()).max(30),
+            self.options.len().max(1),
+            area,
+        );
         frame.render_widget(Clear, popup);
         let block = Block::default()
             .borders(Borders::ALL)
