@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-10-21
+- feat(tui): status-bar hints follow what has the keys — the top popup, an active text field, or the focused tab — instead of always showing the tab's keys (B82 step 3).
 - refactor(tui): member picker, entry form, list editors and the auth popup are sized to their content (`popup::content_rect`) instead of a screen percentage; the picker title is no longer cut off (B82 step 2).
 - refactor(tui): one overlay stack orders drawing and key routing; Config confirm and entry form draw over the body instead of blanking it (B82 step 1).
 - fix: the `?` help described keys that no longer behave that way (`Tab` "cycles tabs" — it cycles fields within a group; old Operate zone names) and lost the indent on wrapped lines; the text is rewritten from the key handlers, shared with the Info popup, and wrapped lines continue under the description column (B81).

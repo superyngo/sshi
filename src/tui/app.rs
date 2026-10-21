@@ -4220,7 +4220,72 @@ Log overlay
             frame.render_widget(p, chunks[0]);
         }
 
+        let (items, tail) = self.status_hints();
+        let hints = fit_hints(items, tail, chunks[1].width as usize);
+        let p = Paragraph::new(Line::from(vec![Span::styled(
+            hints.as_str(),
+            Style::default().fg(self.theme.inactive),
+        )]));
+        frame.render_widget(p, chunks[1]);
+    }
+
+    /// Status-bar hints for what currently has the keys: the top overlay, an
+    /// active text input, else the tab. Returns (droppable items, kept tail).
+    fn status_hints(&self) -> (&'static [&'static str], &'static [&'static str]) {
+        const MAIN_TAIL: &[&str] = &["?:Help", "q:Quit"];
+        if let Some(top) = self.overlays().last() {
+            let items: &[&str] = match top {
+                Overlay::Auth => &["Enter:Submit", "Esc:Cancel"],
+                Overlay::Export => &["Enter:Save", "Esc:Cancel"],
+                Overlay::MemberPicker => &["↑↓:Move", "Space:Toggle", "Enter:Apply", "Esc:Cancel"],
+                Overlay::Help => &["↑↓/PgUp/PgDn:Scroll", "Tab:Help/About", "Esc/?:Close"],
+                Overlay::Info => &["↑↓/PgUp/PgDn:Scroll", "Tab:Section", "Esc/i:Close"],
+                Overlay::Log => &["↑↓/PgUp/PgDn:Scroll", "Esc/L:Close"],
+                Overlay::Results => &["↑↓/PgUp/PgDn:Scroll", "Enter/Esc:Close"],
+                Overlay::RunningOp => &["Esc:Cancel run", "Tab:Switch tab"],
+                Overlay::Config => {
+                    let ct = &self.config_tab;
+                    match &ct.confirm {
+                        Some(c)
+                            if matches!(
+                                c.action,
+                                super::tabs::config_tab::ConfirmAction::DeleteEntry { .. }
+                            ) =>
+                        {
+                            &["y:Delete", "n/Esc:Cancel"]
+                        }
+                        Some(_) => &["y/Enter:Yes", "n/Esc:Cancel"],
+                        None if ct.direct_vec_editor.is_some() => {
+                            &["↑↓:Move", "a:Add", "d:Del", "s:Save", "Esc:Cancel"]
+                        }
+                        None if ct.direct_group_picker.is_some() => {
+                            &["↑↓:Move", "Space:Toggle", "Enter/s:Apply", "Esc:Cancel"]
+                        }
+                        None if ct.entry_form.is_some() => &[
+                            "↑↓:Fields",
+                            "Enter/e:Edit",
+                            "Space:Cycle",
+                            "s:Save",
+                            "Esc:Cancel",
+                        ],
+                        None => &["Enter:Apply", "Esc:Revert"],
+                    }
+                }
+            };
+            return (items, &[]);
+        }
+        if self.text_input_active() {
+            return (&["Enter:Apply", "Esc:Revert"], &[]);
+        }
         let items: &[&str] = match self.active_tab {
+            TabId::Operate if self.operate.focus == OpField::Execute => &[
+                "Enter:Run",
+                "↑↓:Fields",
+                "s:Serial",
+                "d:Dry",
+                "L:Log",
+                "i:Info",
+            ],
             TabId::Config => &[
                 "↑↓:Rows",
                 "←→:Zones",
@@ -4252,12 +4317,29 @@ Log overlay
                 "i:Info",
             ],
         };
-        let hints = fit_hints(items, &["?:Help", "q:Quit"], chunks[1].width as usize);
-        let p = Paragraph::new(Line::from(vec![Span::styled(
-            hints.as_str(),
-            Style::default().fg(self.theme.inactive),
-        )]));
-        frame.render_widget(p, chunks[1]);
+        (items, MAIN_TAIL)
+    }
+
+    /// True while an Operate / View text field is being typed into.
+    fn text_input_active(&self) -> bool {
+        let o = &self.operate;
+        let v = &self.view;
+        let fields: &[&InputField] = match self.active_tab {
+            TabId::Operate => &[
+                &o.run_command,
+                &o.exec_script,
+                &o.sync_adhoc_input,
+                &o.sync_source_input,
+                &o.cp_local,
+                &o.cp_remote,
+                &o.check_name,
+                &o.sync_name,
+                &o.out_input,
+            ],
+            TabId::View => &[&v.log_last_input, &v.log_since_input, &v.log_host_input],
+            TabId::Config => &[],
+        };
+        fields.iter().any(|f| f.mode == InputMode::Active)
     }
 
     fn render_help_popup(&mut self, area: Rect, frame: &mut ratatui::Frame) {
@@ -4929,6 +5011,20 @@ mod navbar_focus_tests {
         app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
             .unwrap();
         assert_eq!(app.overlays(), [Overlay::Log]);
+    }
+
+    /// B82: hints follow whatever has the keys — top overlay, else the tab.
+    #[test]
+    fn status_hints_follow_top_overlay() {
+        let mut app = minimal_app();
+        app.active_tab = TabId::Operate;
+        assert_eq!(app.status_hints().1, ["?:Help", "q:Quit"]);
+        app.help_open = true;
+        assert!(app.status_hints().0.contains(&"Esc/?:Close"));
+        app.log_overlay_open = true; // below Help: Help still on top
+        assert!(app.status_hints().0.contains(&"Esc/?:Close"));
+        app.help_open = false;
+        assert!(app.status_hints().0.contains(&"Esc/L:Close"));
     }
 
     /// B47: `e` on a sync row of View → List opens that entry's edit form,
