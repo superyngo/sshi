@@ -36,35 +36,29 @@ Global keybindings are evaluated first and remain active across all tabs, unless
 | `3` | Global | Switch directly to the **View** tab (`TabId::View`). |
 | `q` | Global | Quit the application cleanly; automatically flushes pending config and state changes to disk. |
 | `Ctrl+C` | Global | Immediate emergency abort; cancels any active background operation, flushes pending state, and exits. The same clean exit (terminal restored) runs on SIGHUP/SIGTERM/SIGINT on Unix, and on Ctrl+Break or closing the console window on Windows (`spawn_signal_listener`). |
-| `Esc` | Global | Context-dependent escape action (see [Escape Level Cycling](#escape-level-cycling)). |
+| `Tab` / `Shift+Tab` | Global | Next / previous tab (blocked, like `1`–`3`, while a Config save error is pending). |
+| `y` | Global | Copy the focused value or selected result row to the system clipboard via OSC 52 (`App::yank_text`); the status bar shows `Copied: …` until the next key. Config: field value or entry name; Operate: focused text field; View results: host / entry name / log command. Works over SSH in terminals that honour OSC 52. |
+| `Esc` | Global | See [Esc](#esc). |
 | `?` | Global | Toggle the modal **Keybindings & Help** popup. |
 | `i` | Global | Toggle the contextual **Info** popup. |
 | `L` | Global | Toggle the slide-over **Log buffer overlay** (`LogBufferHandle`). |
 
-### Escape Level Cycling
+### Esc
 
-`Esc` behavior is context-sensitive depending on active popups, errors, and the current tab (`EscLevel` in `src/tui/app_state.rs`):
+`Esc` acts on the first thing that applies:
 
-1. **Error / Notification Active**: Dismisses `app.error` immediately without changing focus.
-2. **Modal Popup / Overlay Open**: Closes the active popup (Help, Info, Log Overlay, Completed Report, Member Picker) or cancels the running operation.
-3. **Config Tab**: Toggles focus between the top navigation bar (`NavBar`) and content zones.
-4. **Operate & View Tabs**: Cycles focus through a 3-way hierarchy:
-   $$\text{NavBar} \longrightarrow \text{TopField} \longrightarrow \text{Content} \longrightarrow \text{NavBar}$$
-   - **Operate**: `NavBar` $\rightarrow$ `OpRadio` (Top Field) $\rightarrow$ first parameter field after OpRadio $\rightarrow$ `NavBar`.
-   - **View**: `NavBar` $\rightarrow$ `OpSelector` (Top Field) $\rightarrow$ first settings field or Result area $\rightarrow$ `NavBar`.
+1. **Popup / overlay open**: closes the top overlay (or cancels the running operation).
+2. **Text field being edited**: reverts the edit.
+3. **Error shown**: dismisses `app.error`.
+4. Otherwise moves focus to the tab's first field — Config: the Sidebar; Operate: `OpRadio`; View: `OpSelector`. Pressing it again stays there.
 
-### NavBar Focus
-
-When the top navigation bar is focused (`navbar_focused == true`):
-- `←` / `→` / `h` / `l` / `Tab` / `BackTab`: Cycle active tab selection.
-- `↓` / `j` / `Enter`: Descend focus into the active tab content.
-- `1` / `2` / `3`: Switch to tab and immediately descend focus.
+There is no separate tab-bar focus: `↑` on a tab's first field stays put, and tabs are switched with `1`–`3` or `Tab` / `Shift+Tab`.
 
 ---
 
 ## Popups & overlays
 
-Open overlays form one stack (`App::overlays`), bottom → top: Config popups (entry form, list editors, confirm), running-operation progress, completed report, Log, Info, Help, Member Picker, Export, Auth. The topmost overlay receives every key and is drawn last; the tab body stays drawn underneath. Small popups (member picker, entry form, list editors, auth) size to their content plus border, clamped to the screen; long-content popups (Help, Info, Log, report) keep a screen share.
+Open overlays form one stack (`App::overlays`), bottom → top: Config popups (entry form, list editors, confirm), running-operation progress, run confirm, completed report, Log, Info, Help, Member Picker, Export, Auth. The topmost overlay receives every key and is drawn last; the tab body stays drawn underneath. Small popups (member picker, entry form, list editors, auth) size to their content plus border, clamped to the screen; long-content popups (Help, Info, Log, report) keep a screen share.
 
 ### Help Popup (`?`)
 - **Activation**: Press `?` from any non-input context.
@@ -131,10 +125,10 @@ Unset optional values render as dim `(none)`. The breadcrumb row below the panes
   - Sections: `Settings`, `Hosts` (`[[host]]`), `Checks` (`[[check]]`), `Syncs` (`[[sync]]`).
   - `Space` / `Enter` on section headers: Toggles section collapse (`CollapsedSections`).
   - `↑` / `↓` / `j` / `k`: Navigate sidebar items.
-  - `→` / `Tab` / `Enter` on an entry: Shifts focus to the **FieldTable** zone.
+  - `→` / `Enter` on an entry: Shifts focus to the **FieldTable** zone.
 - **FieldTable (Right Zone)**: Unified table displaying field keys, kinds, and current values.
   - `↑` / `↓` / `j` / `k`: Move row selection across field descriptors.
-  - `←` / `BackTab`: Returns focus to the **Sidebar**.
+  - `←`: Returns focus to the **Sidebar**.
 
 #### Editing & Value Mutation
 - **Inline Scalar Edit**: Press `e` or `Enter` on a scalar field (`String`, `OptionalString`, `U64`) to activate inline `InputField`. Press `Enter` to commit or `Esc` to cancel.
@@ -169,8 +163,8 @@ The Operate tab (`src/tui/tabs/operate_tab.rs`) is the operational command cente
 │ Target:  ◉ All   ○ Groups   ○ Hosts   ○ Shell   (3 hosts)                  │
 │ Skip:    (none)                                                            │
 │ Timeout: 30s                                                               │
-│ [ ] Serial (s)                                                             │
-│ [ ] dry-run (d)                                                            │
+│ [ ] Serial (S)                                                             │
+│ [ ] dry-run (D)                                                            │
 │ ┌─ Output report (.json/.html, optional) ────────────────────────────────┐ │
 │ │                                                                        │ │
 │ └────────────────────────────────────────────────────────────────────────┘ │
@@ -179,7 +173,7 @@ The Operate tab (`src/tui/tabs/operate_tab.rs`) is the operational command cente
 │ Entries: (default)  (Enter: choose)                                        │
 └────────────────────────────────────────────────────────────────────────────┘
 ┌─ Execute ──────────────────────────────────────────────────────────────────┐
-│ [ Execute check (Enter) ] (e)                                              │
+│ [ Execute check (Enter) ] (Ctrl+R)                                         │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -192,8 +186,8 @@ Focus moves linearly through focusable elements using `↑` / `↓` / `j` / `k`:
 3. `TargetMembers`: Visible when mode is not `All`. `Enter` opens member picker (`Space` cycles shell when mode is `Shell`).
 4. `Skip`: Excluded hosts. `Enter` opens host picker; `Delete` clears.
 5. `Timeout`: Per-host execution timeout in seconds. `←` / `→` adjusts by $\pm 5\text{s}$ (minimum 1s).
-6. `Serial`: Toggle parallel vs serial ($1$ host at a time) execution. `Space` or `s` toggles.
-7. `DryRun`: Toggle dry-run preview mode. `Space` or `d` toggles.
+6. `Serial`: Toggle parallel vs serial ($1$ host at a time) execution. `Space` or `S` toggles.
+7. `DryRun`: Toggle dry-run preview mode. `Space` or `D` toggles.
 8. `Out`: Path to write report output (`-o/--out`). `Enter` activates input; `Delete` clears.
 9. **Command-Specific Fields**:
    - `Check`: `CheckName` (multi-select picker or comma-separated names).
@@ -203,12 +197,13 @@ Focus moves linearly through focusable elements using `↑` / `↓` / `j` / `k`:
    - `Cp`: `CpLocal` (local file/dir/glob), `CpRemote` (remote destination path).
 10. `Execute`: Action button. Press `Enter` to run.
 
+`Enter` and `e` (edit) open the focused text field or picker; only `Enter` on `Execute` (or `Ctrl+R`) runs.
+
 #### Global Operate Shortcuts
-- `e`: Trigger execution immediately from any focused field on the tab.
-- `d`: Quick-toggle dry-run state.
-- `s`: Quick-toggle serial execution state.
+- `Ctrl+R`: Run the operation from any focused field on the tab. When a mutating operation (run / exec / sync / cp) targets **All** hosts with dry-run off, `Enter` on Execute and `Ctrl+R` first open a confirm overlay (`Run exec on all N hosts (not a dry run)?`); only `y` runs, `n` / `Esc` cancel.
+- `D`: Quick-toggle dry-run state.
+- `S`: Quick-toggle serial execution state.
 - `Delete`: Quick-clear focused optional field or pop the last ad-hoc sync path.
-- `Tab` / `BackTab`: Cycle focus between logical field layers (`OpLayer`: `Op`, `Common`, `CommandSpecific`, `Execute`).
 
 ---
 

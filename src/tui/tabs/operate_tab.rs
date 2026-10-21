@@ -168,12 +168,12 @@ pub struct OperateRenderData<'a> {
     pub is_running: bool,
     pub target_filter: &'a TargetFilterState,
     pub target_count: usize,
-    pub navbar_focused: bool,
+    pub overlay_open: bool,
 }
 
 /// Highlight a focused field. When `active` (the tab itself holds focus) the
-/// field is reverse-highlighted; when focus has moved up to the NavBar it is
-/// shown bold/accent only, so the panel visibly relinquishes focus.
+/// field is reverse-highlighted; while an overlay holds the keys it is shown
+/// bold/accent only, so the panel visibly relinquishes focus.
 fn focus_style(focused: bool, active: bool, theme: &Theme) -> Style {
     if focused && active {
         Style::default()
@@ -217,7 +217,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let body_area = outer[0];
     let exec_area = outer[1];
 
-    let body_focused = !data.navbar_focused && data.focus != OpField::Execute;
+    let body_focused = !data.overlay_open && data.focus != OpField::Execute;
     let border_col = if body_focused {
         data.theme.accent_operate // Operate identity colour (cyan)
     } else {
@@ -231,7 +231,7 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     frame.render_widget(block, body_area);
 
     let theme = data.theme;
-    let active = !data.navbar_focused;
+    let active = !data.overlay_open;
     let tf = data.target_filter;
     let mut rows: Vec<RowItem> = Vec::new();
     // Index of the row holding the focused field; the body scrolls to keep it visible.
@@ -462,7 +462,7 @@ fn zone_header<'a>(text: &str, theme: &Theme) -> Line<'a> {
     ))
 }
 
-fn op_name(op: OperationKind) -> &'static str {
+pub(crate) fn op_name(op: OperationKind) -> &'static str {
     match op {
         OperationKind::Check => "check",
         OperationKind::Run => "run",
@@ -472,8 +472,8 @@ fn op_name(op: OperationKind) -> &'static str {
     }
 }
 
-/// Style for a selected radio/option, dimming to bold-only when focus has
-/// moved to the NavBar (`active == false`).
+/// Style for a selected radio/option, dimming to bold-only while an overlay
+/// holds the keys (`active == false`).
 fn radio_style(selected: bool, focused: bool, active: bool, theme: &Theme) -> Style {
     if selected && focused && active {
         Style::default()
@@ -490,7 +490,7 @@ fn radio_style(selected: bool, focused: bool, active: bool, theme: &Theme) -> St
 
 fn op_radio_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::OpRadio;
-    let active = !data.navbar_focused;
+    let active = !data.overlay_open;
     let ops = [
         (OperationKind::Run, "run"),
         (OperationKind::Exec, "exec"),
@@ -512,7 +512,7 @@ fn op_radio_line<'a>(data: &OperateRenderData) -> Line<'a> {
 }
 
 fn target_mode_line<'a>(data: &OperateRenderData) -> Line<'a> {
-    let focused = data.focus == OpField::TargetMode && !data.navbar_focused;
+    let focused = data.focus == OpField::TargetMode && !data.overlay_open;
     shared::target_mode_line(
         data.target_filter,
         data.target_count,
@@ -526,7 +526,7 @@ fn members_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::TargetMembers;
     shared::target_members_line(
         data.target_filter,
-        focus_style(focused, !data.navbar_focused, data.theme),
+        focus_style(focused, !data.overlay_open, data.theme),
     )
 }
 
@@ -534,17 +534,17 @@ fn skip_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::Skip;
     shared::target_skip_line(
         data.target_filter,
-        focus_style(focused, !data.navbar_focused, data.theme),
+        focus_style(focused, !data.overlay_open, data.theme),
     )
 }
 
 fn serial_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::Serial;
-    let active = !data.navbar_focused;
+    let active = !data.overlay_open;
     let glyph = if data.target_filter.serial {
-        format!("[{}] Serial (s)", data.theme.glyphs.ok)
+        format!("[{}] Serial (S)", data.theme.glyphs.ok)
     } else {
-        "[ ] Serial (s)".to_string()
+        "[ ] Serial (S)".to_string()
     };
     Line::from(vec![
         Span::raw(" "),
@@ -554,11 +554,11 @@ fn serial_line<'a>(data: &OperateRenderData) -> Line<'a> {
 
 fn dry_run_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::DryRun;
-    let active = !data.navbar_focused;
+    let active = !data.overlay_open;
     let glyph = if data.dry_run {
-        format!("[{}] dry-run (d)", data.theme.glyphs.ok)
+        format!("[{}] dry-run (D)", data.theme.glyphs.ok)
     } else {
-        "[ ] dry-run (d)".to_string()
+        "[ ] dry-run (D)".to_string()
     };
     Line::from(vec![
         Span::raw(" "),
@@ -568,7 +568,7 @@ fn dry_run_line<'a>(data: &OperateRenderData) -> Line<'a> {
 
 fn timeout_line<'a>(data: &OperateRenderData) -> Line<'a> {
     let focused = data.focus == OpField::Timeout;
-    let active = !data.navbar_focused;
+    let active = !data.overlay_open;
     Line::from(vec![
         Span::raw(" Timeout: "),
         Span::styled(
@@ -613,7 +613,7 @@ fn name_select_line<'a>(
 }
 
 fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
-    let active = !data.navbar_focused;
+    let active = !data.overlay_open;
     let exec_focused = data.focus == OpField::Execute;
     // Execute lives in its own bordered block; border lights up with the
     // Operate accent when focused (matches the Config per-zone convention).
@@ -632,7 +632,7 @@ fn render_execute_bar(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let exec_label = if data.is_running {
         " [ running… — Esc to cancel ] ".to_string()
     } else {
-        format!(" [ Execute {} (Enter) ] (e)", op_name(data.operation))
+        format!(" [ Execute {} (Enter) ] (Ctrl+R)", op_name(data.operation))
     };
     let exec_style = if exec_focused && active && !data.is_running {
         Style::default()

@@ -1625,11 +1625,11 @@ impl ConfigTabState {
         theme: &Theme,
         config: &AppConfig,
         config_path: Option<&std::path::Path>,
-        navbar_focused: bool,
+        overlay_open: bool,
     ) {
         // The base screen is always drawn; popups overlay it bottom → top
         // (entry form, direct editors, then confirm), matching key routing.
-        let base_focus = navbar_focused
+        let base_focus = overlay_open
             || self.entry_form.is_some()
             || self.confirm.is_some()
             || self.direct_vec_editor.is_some()
@@ -1971,9 +1971,9 @@ impl ConfigTabState {
         frame: &mut Frame,
         theme: &Theme,
         config: &AppConfig,
-        navbar_focused: bool,
+        overlay_open: bool,
     ) {
-        let focused = !navbar_focused && self.zone == ConfigZone::Sidebar;
+        let focused = !overlay_open && self.zone == ConfigZone::Sidebar;
         let border_style = Style::default().fg(if focused {
             theme.accent_config
         } else {
@@ -2040,9 +2040,9 @@ impl ConfigTabState {
         frame: &mut Frame,
         theme: &Theme,
         config: &AppConfig,
-        navbar_focused: bool,
+        overlay_open: bool,
     ) {
-        let focused = !navbar_focused && self.zone == ConfigZone::FieldTable;
+        let focused = !overlay_open && self.zone == ConfigZone::FieldTable;
         let border_style = Style::default().fg(if focused {
             theme.accent_config
         } else {

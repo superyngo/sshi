@@ -136,10 +136,11 @@ _Avoid_: ItemSelector, CheckboxModal, SelectList, OptionPicker.
 The status symbol mapping struct supplying Unicode icons (`✓`, `✗`, `⊘`, `⚠`) and ASCII fallback characters (`+`, `x`, `o`, `!`) for Linux virtual consoles (`TERM=linux`), mapped to **HostStatus** variants (`src/tui/theme.rs`).
 _Avoid_: IconSet, SymbolTable, StatusIcons.
 
-**EscLevel**:
-The three-way TUI focus-cycling state (`NavBar` → `TopField` → `Content`) advanced by pressing
-Escape (`src/tui/app_state.rs`).
-_Avoid_: FocusDepth, NavigationLayer, EscapeState.
+**Overlay**:
+A popup layer above the tab body (`Overlay` in `src/tui/app.rs`). `App::overlays()` lists the open
+ones bottom → top; the topmost gets every key and is drawn last. (Replaces the retired
+`EscLevel` focus cycle, removed with the tab-bar focus layer in B82.)
+_Avoid_: Modal stack, PopupLayer, EscLevel.
 
 **OperationKind**:
 The enum representing operations selectable on the TUI Operate tab (`Check`, `Run`, `Exec`, `Sync`, `Cp`), persisted in UI state (`src/tui/state/persist.rs`).

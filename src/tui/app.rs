@@ -36,7 +36,7 @@ use crate::commands::{Context, TargetMode};
 use crate::config::schema::AppConfig;
 use crate::tui::state::persist::ViewOperationKind;
 
-use super::app_state::{EscLevel, ExportPopup, OperateState, PopupState, ViewFocus, ViewState};
+use super::app_state::{ExportPopup, OperateState, PopupState, ViewFocus, ViewState};
 use super::async_bridge::{EventSender, RunningOp, TuiEvent};
 use super::components::input_field::{InputField, InputMode};
 use super::components::member_picker::{MemberPicker, PickerResult, PickerTarget};
@@ -120,6 +120,7 @@ impl HelpSection {
 pub(crate) enum Overlay {
     Config,
     RunningOp,
+    RunConfirm,
     Results,
     Log,
     Info,
@@ -130,8 +131,13 @@ pub(crate) enum Overlay {
 }
 
 pub struct App {
+    /// K5: text copied by `y`, written as OSC 52 by the run loop.
+    pending_clipboard: Option<String>,
+    /// One-shot status line ("Copied …"), cleared by the next key.
+    notice: Option<String>,
+    /// K4: host count of a pending "run on all hosts?" confirm.
+    run_confirm: Option<usize>,
     pub active_tab: TabId,
-    navbar_focused: bool,
     pub theme: Theme,
     pub error: Option<String>,
     pub help_open: bool,
@@ -228,8 +234,10 @@ impl App {
         persisted.target_filter.timeout = timeout;
 
         Self {
+            run_confirm: None,
+            pending_clipboard: None,
+            notice: None,
             active_tab,
-            navbar_focused: false,
             theme: Theme::from_env(),
             error: None,
             help_open: false,
@@ -273,58 +281,8 @@ impl App {
         operate_tab::operate_fields(self.operate.operation, self.target_filter.mode)
     }
 
-    /// Descend from NavBar into the content area, respecting ESC levels.
-    ///
-    /// - Config: focus stays on sidebar (no ESC-level tracking).
-    /// - Operate: go to TopField (OpRadio) or first content field.
-    /// - View: go to TopField (OpSelector) or first content stop.
-    fn navbar_descend(&mut self) {
-        self.navbar_focused = false;
-        match self.active_tab {
-            TabId::Config => {}
-            TabId::Operate => {
-                self.operate.focus = match self.operate.esc_level {
-                    EscLevel::NavBar | EscLevel::TopField => {
-                        self.operate.esc_level = EscLevel::TopField;
-                        OpField::OpRadio
-                    }
-                    EscLevel::Content => {
-                        let list = self.operate_field_list();
-                        // Skip OpRadio, land on the first content field.
-                        if list.len() > 1 {
-                            list[1]
-                        } else {
-                            OpField::OpRadio
-                        }
-                    }
-                };
-            }
-            TabId::View => {
-                self.view.focus = match self.view.esc_level {
-                    EscLevel::NavBar | EscLevel::TopField => {
-                        self.view.esc_level = EscLevel::TopField;
-                        ViewFocus::OpSelector
-                    }
-                    EscLevel::Content => {
-                        let stops = ViewFocus::stops(self.view.op, self.target_filter.mode);
-                        if stops.len() > 1 {
-                            let f = stops[1];
-                            if f == ViewFocus::Result {
-                                self.snap_result_selection(true);
-                            }
-                            f
-                        } else {
-                            ViewFocus::OpSelector
-                        }
-                    }
-                };
-            }
-        }
-    }
-
-    /// Move Operate focus by `delta` steps through the field list. Moving up
-    /// past the first field escapes to the NavBar; moving down past the last
-    /// stays put.
+    /// Move Operate focus by `delta` steps through the field list; stops at
+    /// both ends.
     fn operate_move_focus(&mut self, delta: i32) {
         let list = self.operate_field_list();
         let pos = list
@@ -332,16 +290,8 @@ impl App {
             .position(|f| *f == self.operate.focus)
             .unwrap_or(0) as i32;
         let next = pos + delta;
-        if next < 0 {
-            self.navbar_focused = true;
-            self.operate.esc_level = EscLevel::NavBar;
-        } else if (next as usize) < list.len() {
+        if next >= 0 && (next as usize) < list.len() {
             self.operate.focus = list[next as usize];
-            self.operate.esc_level = if self.operate.focus == OpField::OpRadio {
-                EscLevel::TopField
-            } else {
-                EscLevel::Content
-            };
         }
     }
 
@@ -370,6 +320,19 @@ impl App {
 
     /// Run the currently-selected operation. Shared by Enter-on-Execute and the
     /// `e` hotkey. Returns whether the frame should redraw.
+    /// Run, but ask first when a mutating operation would hit every host for
+    /// real (target All, dry-run off) — K4.
+    fn request_execute(&mut self) -> bool {
+        let broad = self.target_filter.mode == TargetFilterMode::All
+            && !self.operate.dry_run
+            && !matches!(self.operate.operation, OperationKind::Check);
+        if broad {
+            self.run_confirm = Some(self.target_count());
+            return true;
+        }
+        self.trigger_execute()
+    }
+
     fn trigger_execute(&mut self) -> bool {
         // Feed the shared dry-run toggle into the sync path.
         self.operate.sync_dry_run = self.operate.dry_run;
@@ -387,45 +350,6 @@ impl App {
             OperationKind::Sync => self.execute_sync(),
             OperationKind::Cp => self.execute_cp(),
         }
-    }
-
-    /// Tab/BackTab: cycle the focus among peers in the *current layer* only,
-    /// wrapping at the layer's ends. Arrow keys (operate_move_focus) cross
-    /// layer boundaries; Tab never leaves the layer (mirrors Config zones).
-    fn operate_tab_cycle(&mut self, forward: bool) {
-        // Radios cycle their value on Tab (matching ←→): the operation radio is
-        // alone in its layer, and the target row cycles its mode in place while
-        // ↑↓ still steps to the other Common fields.
-        match self.operate.focus {
-            OpField::OpRadio => {
-                self.operate_cycle_operation(forward);
-                return;
-            }
-            OpField::TargetMode | OpField::TargetMembers => {
-                self.operate_cycle_target_mode(forward);
-                return;
-            }
-            _ => {}
-        }
-        let layer = operate_tab::layer_of(self.operate.focus);
-        let peers: Vec<OpField> = self
-            .operate_field_list()
-            .into_iter()
-            .filter(|f| operate_tab::layer_of(*f) == layer)
-            .collect();
-        if peers.len() < 2 {
-            return;
-        }
-        let pos = peers
-            .iter()
-            .position(|f| *f == self.operate.focus)
-            .unwrap_or(0);
-        let next = if forward {
-            (pos + 1) % peers.len()
-        } else {
-            (pos + peers.len() - 1) % peers.len()
-        };
-        self.operate.focus = peers[next];
     }
 
     /// All group names referenced anywhere in the config (hosts, check and
@@ -665,7 +589,6 @@ impl App {
         };
         self.popup.reopen_name_picker = Some(target);
         self.active_tab = TabId::Config;
-        self.navbar_focused = false;
         self.config_tab.start_add_entry(kind);
     }
 
@@ -698,7 +621,6 @@ impl App {
 
         self.popup.reopen_view_edit = Some(selected);
         self.active_tab = TabId::Config;
-        self.navbar_focused = false;
         self.config_tab.start_edit_entry(&self.config);
     }
 
@@ -880,6 +802,13 @@ impl App {
                 self.config_tab.pending_open_editor = false;
                 self.needs_editor_open = true;
                 dirty = true;
+            }
+
+            if let Some(text) = self.pending_clipboard.take() {
+                use std::io::Write;
+                let mut out = std::io::stdout();
+                let _ = out.write_all(osc52(&text).as_bytes());
+                let _ = out.flush();
             }
 
             // Open external editor if requested (§7.4 4-stage flow).
@@ -1553,80 +1482,6 @@ impl App {
         }
     }
 
-    /// Cycle the result cursor one step with wrap-around (Tab/BackTab),
-    /// skipping decorative List rows. No-op when the result is empty.
-    fn result_cursor_cycle(&mut self, forward: bool) {
-        let count = self.checkout_viewport.item_count;
-        if count == 0 {
-            return;
-        }
-        match self.list_selectable() {
-            Some(sel) if sel.iter().any(|&b| b) => {
-                let n = sel.len();
-                let cur = self.checkout_viewport.selected.min(n - 1);
-                let next = if forward {
-                    (cur + 1..n).chain(0..=cur).find(|&i| sel[i])
-                } else {
-                    (0..cur).rev().chain((cur..n).rev()).find(|&i| sel[i])
-                };
-                if let Some(i) = next {
-                    self.checkout_viewport.selected = i;
-                }
-            }
-            _ => {
-                let sel = self.checkout_viewport.selected;
-                if forward {
-                    if sel + 1 >= count {
-                        self.checkout_viewport.home();
-                    } else {
-                        self.checkout_viewport.move_down();
-                    }
-                } else if sel == 0 {
-                    self.checkout_viewport.end();
-                } else {
-                    self.checkout_viewport.move_up();
-                }
-            }
-        }
-    }
-
-    /// Tab/BackTab on the View tab: cycle peers within the *current layer*.
-    /// Layers are OpSelector (cycles the op value, like ←→), Settings (the stops
-    /// between OpSelector and Result), and Result (cycles data rows). Arrow keys
-    /// cross layers via view_focus_up/down; Tab never leaves the layer.
-    fn view_tab_cycle(&mut self, forward: bool) {
-        match self.view.focus {
-            ViewFocus::Result => self.result_cursor_cycle(forward),
-            ViewFocus::OpSelector => self.cycle_view_op(forward),
-            // The target row cycles its mode in place (matching ←→); ↑↓ still
-            // steps to the other Settings fields (members / skip).
-            ViewFocus::TargetMode | ViewFocus::TargetMembers => {
-                self.view_cycle_target_mode(forward)
-            }
-            _ => {
-                // Settings layer: cycle the stops excluding OpSelector/Result.
-                let settings: Vec<ViewFocus> =
-                    ViewFocus::stops(self.view.op, self.target_filter.mode)
-                        .into_iter()
-                        .filter(|s| !matches!(s, ViewFocus::OpSelector | ViewFocus::Result))
-                        .collect();
-                if settings.len() < 2 {
-                    return;
-                }
-                let pos = settings
-                    .iter()
-                    .position(|s| *s == self.view.focus)
-                    .unwrap_or(0);
-                let next = if forward {
-                    (pos + 1) % settings.len()
-                } else {
-                    (pos + settings.len() - 1) % settings.len()
-                };
-                self.view.focus = settings[next];
-            }
-        }
-    }
-
     /// True when no selectable row lies above the current List cursor (or, for
     /// Checkout/Log, when the cursor is at row 0).
     fn result_at_top(&self) -> bool {
@@ -1665,18 +1520,7 @@ impl App {
                 .unwrap_or(0);
             if idx > 0 {
                 self.view.focus = stops[idx - 1];
-            } else {
-                // At first stop (OpSelector) — escape to navbar.
-                self.navbar_focused = true;
-                self.view.esc_level = EscLevel::NavBar;
             }
-        }
-        if !self.navbar_focused {
-            self.view.esc_level = if self.view.focus == ViewFocus::OpSelector {
-                EscLevel::TopField
-            } else {
-                EscLevel::Content
-            };
         }
     }
 
@@ -1697,11 +1541,6 @@ impl App {
                 }
             }
         }
-        self.view.esc_level = if self.view.focus == ViewFocus::OpSelector {
-            EscLevel::TopField
-        } else {
-            EscLevel::Content
-        };
     }
 
     /// Refresh the View tab result data for the active `view_op`.
@@ -1817,19 +1656,14 @@ impl App {
         }
     }
 
-    /// Open the Help popup with scroll/section state reset. Shared by the
-    /// global `?` handler and the navbar-focused `?` handler — the navbar
-    /// dispatcher traps all keys (its `_` arm returns early), so global
-    /// shortcuts must be mirrored there to remain reachable.
+    /// Open the Help popup with scroll/section state reset.
     fn open_help_popup(&mut self) {
         self.help_open = true;
         self.help_vp = Viewport::new();
         self.help_section = HelpSection::default();
     }
 
-    /// Toggle or cycle the Info popup. Shared by the global `i` handler
-    /// and the navbar-focused `i` handler — same trap-mirroring reason as
-    /// `open_help_popup`. If the popup is closed, open it on the TabInfo
+    /// Toggle or cycle the Info popup. If the popup is closed, open it on the TabInfo
     /// section; if open, advance to the next section (`TabInfo` → `About`
     /// → `Help` → `TabInfo`).
     fn cycle_info_popup(&mut self) {
@@ -1842,9 +1676,7 @@ impl App {
         self.info_vp = Viewport::new();
     }
 
-    /// Toggle the Log overlay open/closed. Shared by the global `L` handler
-    /// and the navbar-focused `L` handler — same trap-mirroring reason as
-    /// `open_help_popup`. On open, the viewport is reset and seeded with
+    /// Toggle the Log overlay open/closed. On open, the viewport is reset and seeded with
     /// the current log-buffer length so scroll dims are correct.
     fn toggle_log_overlay(&mut self) {
         self.log_overlay_open = !self.log_overlay_open;
@@ -1865,10 +1697,8 @@ impl App {
             return Ok(true);
         }
 
+        self.notice = None;
         if let Some(handled) = self.handle_popup_key(key)? {
-            return Ok(handled);
-        }
-        if let Some(handled) = self.handle_navbar_key(key)? {
             return Ok(handled);
         }
         if let Some(handled) = self.handle_global_key(key)? {
@@ -1960,6 +1790,19 @@ impl App {
         // Completed report popup: Esc / Enter dismisses; ↑↓/PgUp/PgDn scroll.
         if let Some(handled) = self.handle_results_key(key)? {
             return Ok(Some(handled));
+        }
+
+        // Broad-run confirm: only `y` runs; everything else is swallowed.
+        if self.run_confirm.is_some() {
+            match key.code {
+                KeyCode::Char('y') => {
+                    self.run_confirm = None;
+                    return Ok(Some(self.trigger_execute()));
+                }
+                KeyCode::Char('n') | KeyCode::Esc => self.run_confirm = None,
+                _ => {}
+            }
+            return Ok(Some(true));
         }
 
         // Running operation: Esc cancels (cooperatively).
@@ -2310,12 +2153,10 @@ impl App {
                 Ok(Some(true))
             }
             KeyCode::Tab => {
-                self.navbar_focused = false;
                 self.goto_tab(self.active_tab.next());
                 Ok(Some(true))
             }
             KeyCode::BackTab => {
-                self.navbar_focused = false;
                 self.goto_tab(self.active_tab.prev());
                 Ok(Some(true))
             }
@@ -2384,86 +2225,6 @@ impl App {
         }
     }
 
-    /// Keys while the tab bar has focus (`None` when it does not).
-    fn handle_navbar_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
-        if !self.navbar_focused {
-            return Ok(None);
-        }
-        match key.code {
-            KeyCode::Left | KeyCode::Char('h') => {
-                self.active_tab = self.active_tab.prev();
-                Ok(Some(true))
-            }
-            KeyCode::Right | KeyCode::Char('l') => {
-                self.active_tab = self.active_tab.next();
-                Ok(Some(true))
-            }
-            KeyCode::Tab => {
-                self.active_tab = self.active_tab.next();
-                Ok(Some(true))
-            }
-            KeyCode::BackTab => {
-                self.active_tab = self.active_tab.prev();
-                Ok(Some(true))
-            }
-            KeyCode::Down | KeyCode::Char('j') | KeyCode::Enter => {
-                self.navbar_descend();
-                Ok(Some(true))
-            }
-            KeyCode::Esc => {
-                // In NavBar: Config stays, Operate/View cycle to TopField.
-                match self.active_tab {
-                    TabId::Config => {
-                        self.navbar_focused = false;
-                    }
-                    TabId::Operate => {
-                        self.navbar_focused = false;
-                        self.operate.focus = OpField::OpRadio;
-                        self.operate.esc_level = EscLevel::TopField;
-                    }
-                    TabId::View => {
-                        self.navbar_focused = false;
-                        self.view.focus = ViewFocus::OpSelector;
-                        self.view.esc_level = EscLevel::TopField;
-                    }
-                }
-                Ok(Some(true))
-            }
-            KeyCode::Char('1') => {
-                self.goto_tab(TabId::Config);
-                self.navbar_descend();
-                Ok(Some(true))
-            }
-            KeyCode::Char('2') => {
-                self.goto_tab(TabId::Operate);
-                self.navbar_descend();
-                Ok(Some(true))
-            }
-            KeyCode::Char('3') => {
-                self.goto_tab(TabId::View);
-                self.navbar_descend();
-                Ok(Some(true))
-            }
-            KeyCode::Char('q') => {
-                self.should_quit = true;
-                Ok(Some(true))
-            }
-            KeyCode::Char('?') => {
-                self.open_help_popup();
-                Ok(Some(true))
-            }
-            KeyCode::Char('i') => {
-                self.cycle_info_popup();
-                Ok(Some(true))
-            }
-            KeyCode::Char('L') => {
-                self.toggle_log_overlay();
-                Ok(Some(true))
-            }
-            _ => Ok(Some(false)),
-        }
-    }
-
     /// Keys that work from every tab (`q`, `?`, `i`, `L`, Esc, `1`–`3`, Tab);
     /// `None` for anything else.
     fn handle_global_key(&mut self, key: KeyEvent) -> Result<Option<bool>> {
@@ -2485,93 +2246,30 @@ impl App {
                 self.toggle_log_overlay();
                 Ok(true)
             }
+            // K5: copy the focused value / selected row to the clipboard.
+            KeyCode::Char('y') => {
+                self.notice = Some(match self.yank_text() {
+                    Some(t) if !t.is_empty() => {
+                        let shown: String = t.chars().take(40).collect();
+                        self.pending_clipboard = Some(t);
+                        format!("Copied: {shown}")
+                    }
+                    _ => "Nothing to copy here".to_string(),
+                });
+                Ok(true)
+            }
             KeyCode::Esc => {
                 if self.error.is_some() {
                     self.error = None;
                     return Ok(Some(true));
                 }
+                // Otherwise move focus out to the tab's first field (no wrap).
                 match self.active_tab {
-                    // Config tab: unchanged 2-way toggle (NavBar ↔ content).
-                    TabId::Config => {
-                        if !self.navbar_focused {
-                            self.navbar_focused = true;
-                            return Ok(Some(true));
-                        }
-                    }
-                    // Operate tab: 3-way cycle NavBar → OpRadio → content → NavBar.
-                    TabId::Operate => {
-                        if self.navbar_focused {
-                            // NavBar → OpRadio (top field).
-                            self.navbar_focused = false;
-                            self.operate.focus = OpField::OpRadio;
-                            self.operate.esc_level = EscLevel::TopField;
-                        } else {
-                            let next = self.operate.esc_level.next();
-                            match next {
-                                EscLevel::NavBar => {
-                                    self.navbar_focused = true;
-                                    self.operate.esc_level = EscLevel::NavBar;
-                                }
-                                EscLevel::TopField => {
-                                    self.operate.focus = OpField::OpRadio;
-                                    self.operate.esc_level = EscLevel::TopField;
-                                }
-                                EscLevel::Content => {
-                                    // Jump to the first content field after OpRadio.
-                                    let list = self.operate_field_list();
-                                    if let Some(pos) =
-                                        list.iter().position(|f| *f == OpField::OpRadio)
-                                    {
-                                        if pos + 1 < list.len() {
-                                            self.operate.focus = list[pos + 1];
-                                        }
-                                    }
-                                    self.operate.esc_level = EscLevel::Content;
-                                }
-                            }
-                        }
-                        return Ok(Some(true));
-                    }
-                    // View tab: 3-way cycle NavBar → OpSelector → content → NavBar.
-                    TabId::View => {
-                        if self.navbar_focused {
-                            // NavBar → OpSelector (top field).
-                            self.navbar_focused = false;
-                            self.view.focus = ViewFocus::OpSelector;
-                            self.view.esc_level = EscLevel::TopField;
-                        } else {
-                            let next = self.view.esc_level.next();
-                            match next {
-                                EscLevel::NavBar => {
-                                    self.navbar_focused = true;
-                                    self.view.esc_level = EscLevel::NavBar;
-                                }
-                                EscLevel::TopField => {
-                                    self.view.focus = ViewFocus::OpSelector;
-                                    self.view.esc_level = EscLevel::TopField;
-                                }
-                                EscLevel::Content => {
-                                    // Jump to the first content stop after OpSelector.
-                                    let stops =
-                                        ViewFocus::stops(self.view.op, self.target_filter.mode);
-                                    if let Some(pos) =
-                                        stops.iter().position(|s| *s == ViewFocus::OpSelector)
-                                    {
-                                        if pos + 1 < stops.len() {
-                                            self.view.focus = stops[pos + 1];
-                                            if self.view.focus == ViewFocus::Result {
-                                                self.snap_result_selection(true);
-                                            }
-                                        }
-                                    }
-                                    self.view.esc_level = EscLevel::Content;
-                                }
-                            }
-                        }
-                        return Ok(Some(true));
-                    }
+                    TabId::Config => self.config_tab.zone = ConfigZone::Sidebar,
+                    TabId::Operate => self.operate.focus = OpField::OpRadio,
+                    TabId::View => self.view.focus = ViewFocus::OpSelector,
                 }
-                Ok(false)
+                Ok(true)
             }
             KeyCode::Char('1') => {
                 if self.active_tab == TabId::Config && self.config_tab.config_dirty {
@@ -2603,77 +2301,19 @@ impl App {
                 self.goto_tab(TabId::View);
                 Ok(true)
             }
-            // Tab/BackTab: context-aware cycling within the focused layer.
+            // Tab / Shift+Tab: next / previous tab.
             KeyCode::Tab | KeyCode::BackTab => {
-                let forward = key.code == KeyCode::Tab;
-                if self.navbar_focused {
-                    self.goto_tab(if forward {
-                        self.active_tab.next()
-                    } else {
-                        self.active_tab.prev()
-                    });
-                } else {
-                    match self.active_tab {
-                        TabId::Config => match self.config_tab.zone {
-                            ConfigZone::Sidebar => {
-                                let count = self.config_tab.items.len();
-                                if count > 0 {
-                                    if forward {
-                                        let sel = self.config_tab.sidebar_vp.selected;
-                                        if sel + 1 >= count {
-                                            self.config_tab.sidebar_vp.home();
-                                        } else {
-                                            self.config_tab.sidebar_vp.move_down();
-                                        }
-                                    } else {
-                                        let sel = self.config_tab.sidebar_vp.selected;
-                                        if sel == 0 {
-                                            self.config_tab.sidebar_vp.end();
-                                        } else {
-                                            self.config_tab.sidebar_vp.move_up();
-                                        }
-                                    }
-                                    self.config_tab.reset_field_vp(&self.config);
-                                }
-                            }
-                            ConfigZone::FieldTable => {
-                                let count = self.config_tab.current_descriptors(&self.config).len();
-                                if count > 0 {
-                                    if forward {
-                                        let sel = self.config_tab.field_vp.selected;
-                                        if sel + 1 >= count {
-                                            self.config_tab.field_vp.home();
-                                        } else {
-                                            self.config_tab.field_vp.move_down();
-                                        }
-                                    } else {
-                                        let sel = self.config_tab.field_vp.selected;
-                                        if sel == 0 {
-                                            self.config_tab.field_vp.set_dims(
-                                                count,
-                                                self.config_tab.field_vp.visible_height,
-                                            );
-                                            self.config_tab.field_vp.end();
-                                        } else {
-                                            self.config_tab.field_vp.move_up();
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        TabId::Operate => {
-                            // Tab/BackTab cycle peers within the current layer;
-                            // arrows cross layer boundaries.
-                            self.operate_tab_cycle(forward);
-                        }
-                        TabId::View => {
-                            // Tab/BackTab cycle peers within the current layer
-                            // (OpSelector / Settings / Result); arrows cross
-                            // layers via view_focus_up/down.
-                            self.view_tab_cycle(forward);
-                        }
-                    }
+                if self.active_tab == TabId::Config && self.config_tab.config_dirty {
+                    self.error = Some(
+                        "Config save failed — fix the error before switching tabs.".to_string(),
+                    );
+                    return Ok(Some(true));
                 }
+                self.goto_tab(if key.code == KeyCode::Tab {
+                    self.active_tab.next()
+                } else {
+                    self.active_tab.prev()
+                });
                 Ok(true)
             }
 
@@ -2723,24 +2363,6 @@ impl App {
                     && self.config_tab.confirm.is_none() =>
             {
                 self.config_tab.request_delete(&self.config);
-                Ok(true)
-            }
-            // Up at top of Config Sidebar escapes to NavBar.
-            KeyCode::Up | KeyCode::Char('k')
-                if self.active_tab == TabId::Config
-                    && self.config_tab.zone == ConfigZone::Sidebar
-                    && self.config_tab.sidebar_vp.selected == 0 =>
-            {
-                self.navbar_focused = true;
-                Ok(true)
-            }
-            // Up at top of Config FieldTable also escapes to NavBar.
-            KeyCode::Up | KeyCode::Char('k')
-                if self.active_tab == TabId::Config
-                    && self.config_tab.zone == ConfigZone::FieldTable
-                    && self.config_tab.field_vp_at_top() =>
-            {
-                self.navbar_focused = true;
                 Ok(true)
             }
             // All other Config tab keys routed to ConfigTabState (including 'e'/Enter for inline edit).
@@ -2794,8 +2416,9 @@ impl App {
                 }
                 Ok(true)
             }
-            // Enter activates / opens the focused field.
-            KeyCode::Enter if self.active_tab == TabId::Operate => {
+            // Enter (or 'e', edit) activates / opens the focused field; only
+            // Enter runs from the Execute button.
+            KeyCode::Enter | KeyCode::Char('e') if self.active_tab == TabId::Operate => {
                 match self.operate.focus {
                     // Enter on the mode row or the value row opens the picker.
                     OpField::TargetMode | OpField::TargetMembers => self.open_member_picker(),
@@ -2818,7 +2441,9 @@ impl App {
                     OpField::CheckName => self.open_name_picker(PickerTarget::CheckNames),
                     OpField::SyncName => self.open_name_picker(PickerTarget::SyncNames),
                     OpField::Out => self.operate.out_input.activate(),
-                    OpField::Execute => return Ok(self.trigger_execute()),
+                    OpField::Execute if key.code == KeyCode::Enter => {
+                        return Ok(self.request_execute())
+                    }
                     _ => {}
                 }
                 Ok(true)
@@ -2865,16 +2490,20 @@ impl App {
                 }
                 Ok(true)
             }
-            // 'e' executes the current operation from anywhere in the Operate
-            // tab (shortcut for focusing Execute + Enter).
-            KeyCode::Char('e') if self.active_tab == TabId::Operate => Ok(self.trigger_execute()),
-            // 'd' toggles the shared dry-run flag (shown by the Execute button).
-            KeyCode::Char('d') if self.active_tab == TabId::Operate => {
+            // Ctrl+R runs the current operation from any Operate field.
+            KeyCode::Char('r')
+                if self.active_tab == TabId::Operate
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                Ok(self.request_execute())
+            }
+            // 'D' toggles the shared dry-run flag (shown by the Execute button).
+            KeyCode::Char('D') if self.active_tab == TabId::Operate => {
                 self.operate.dry_run = !self.operate.dry_run;
                 Ok(true)
             }
-            // 's' toggles serial execution from anywhere in the Operate tab.
-            KeyCode::Char('s') if self.active_tab == TabId::Operate => {
+            // 'S' toggles serial execution from anywhere in the Operate tab.
+            KeyCode::Char('S') if self.active_tab == TabId::Operate => {
                 self.target_filter.serial = !self.target_filter.serial;
                 self.save_state();
                 Ok(true)
@@ -3169,19 +2798,17 @@ impl App {
                     ViewFocus::Specific(i) if self.view.op == ViewOperationKind::Log => Some(i),
                     _ => None,
                 };
-                let active = !self.navbar_focused;
-                let op_selector_focused = active && self.view.focus == ViewFocus::OpSelector;
-                let result_focused = active && self.view.focus == ViewFocus::Result;
-                let target_mode_focused = active && self.view.focus == ViewFocus::TargetMode;
-                let target_members_focused = active && self.view.focus == ViewFocus::TargetMembers;
-                let skip_focused = active && self.view.focus == ViewFocus::Skip;
-                let combined_toggle_focused =
-                    active && self.view.focus == ViewFocus::CombinedToggle;
+                let op_selector_focused = self.view.focus == ViewFocus::OpSelector;
+                let result_focused = self.view.focus == ViewFocus::Result;
+                let target_mode_focused = self.view.focus == ViewFocus::TargetMode;
+                let target_members_focused = self.view.focus == ViewFocus::TargetMembers;
+                let skip_focused = self.view.focus == ViewFocus::Skip;
+                let combined_toggle_focused = self.view.focus == ViewFocus::CombinedToggle;
                 let view_target_count = self.target_count();
                 let data = super::tabs::view_tab::ViewRenderData {
                     view_op: self.view.op,
                     theme: &self.theme,
-                    navbar_focused: self.navbar_focused,
+                    overlay_open: !self.overlays().is_empty(),
                     op_selector_focused,
                     result_focused,
                     target_filter: &self.target_filter,
@@ -3212,6 +2839,7 @@ impl App {
         for overlay in self.overlays() {
             match overlay {
                 Overlay::Config => {} // drawn by the Config tab over its body
+                Overlay::RunConfirm => self.render_run_confirm(area, frame),
                 Overlay::RunningOp => self.render_progress_popup(area, frame),
                 Overlay::Results => self.render_results_popup(area, frame),
                 Overlay::Log => self.render_log_overlay(area, frame),
@@ -3239,6 +2867,9 @@ impl App {
         if self.running_op.is_some() {
             v.push(Overlay::RunningOp);
         }
+        if self.run_confirm.is_some() {
+            v.push(Overlay::RunConfirm);
+        }
         if self.completed_view.is_some() {
             v.push(Overlay::Results);
         }
@@ -3263,6 +2894,29 @@ impl App {
         v
     }
 
+    /// K4 confirm: "Run <op> on all N hosts?" — only `y` runs.
+    fn render_run_confirm(&mut self, area: Rect, frame: &mut ratatui::Frame) {
+        let n = self.run_confirm.unwrap_or(0);
+        let op = operate_tab::op_name(self.operate.operation);
+        let text = format!("Run {op} on all {n} hosts (not a dry run)?");
+        let keys = "[y] Run   [n/Esc] Cancel";
+        let popup = super::components::popup::content_rect(text.chars().count() + 4, 3, area);
+        frame.render_widget(Clear, popup);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(self.theme.warning))
+            .title(" Confirm ");
+        let body = vec![
+            Line::from(format!("  {text}")),
+            Line::from(""),
+            Line::from(Span::styled(
+                format!("  {keys}"),
+                Style::default().fg(self.theme.inactive),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(body).block(block), popup);
+    }
+
     fn render_tab_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
         let titles: Vec<&str> = TabId::ALL.iter().map(|t| t.label()).collect();
         let selected = TabId::ALL
@@ -3274,15 +2928,7 @@ impl App {
             TabId::Operate => self.theme.accent_operate,
             TabId::View => self.theme.accent_checkout,
         };
-        // Focus principle: reverse-video only while the NavBar holds focus;
-        // once focus moves into a panel the active tab is bold/accent only.
-        let highlight = if self.navbar_focused {
-            Style::default()
-                .fg(accent)
-                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
-        } else {
-            Style::default().fg(accent).add_modifier(Modifier::BOLD)
-        };
+        let highlight = Style::default().fg(accent).add_modifier(Modifier::BOLD);
         // One row: " sshi " · tabs · version right-aligned.
         let version = format!("v{} ", env!("CARGO_PKG_VERSION"));
         frame.render_widget(
@@ -3310,13 +2956,14 @@ impl App {
     }
 
     fn render_config(&mut self, area: Rect, frame: &mut ratatui::Frame) {
+        let overlay_open = !self.overlays().is_empty();
         self.config_tab.render(
             area,
             frame,
             &self.theme,
             &self.config,
             self.config_path.as_deref(),
-            self.navbar_focused,
+            overlay_open,
         );
     }
 
@@ -3734,7 +3381,7 @@ impl App {
             is_running: self.running_op.is_some(),
             target_filter: &self.target_filter,
             target_count,
-            navbar_focused: self.navbar_focused,
+            overlay_open: !self.overlays().is_empty(),
         };
         operate_tab::render_operate(&data, area, frame);
     }
@@ -4133,29 +3780,26 @@ impl App {
         "\
 Global keys
   1 / 2 / 3   Switch to Config / Operate / View
+  Tab         Next tab; Shift+Tab previous tab
+  y           Copy the focused value / selected row (OSC 52)
   q           Quit (state saved)
   Ctrl+C      Quit immediately (state saved)
-  Esc         Close popup / clear error; otherwise move focus
-              out a level (fields → top row → tab bar)
+  Esc         Close popup / clear error; otherwise go to the
+              tab's first field
   ?           Toggle this help (Tab: Help / About)
   L           Toggle log overlay
   i           Toggle contextual info popup
 
-Tab bar (focused)
-  ← → / Tab   Select tab
-  ↓ / Enter   Enter the tab
-
 Operate tab
   ↑↓ / j k    Move field: Operation → Target → Members → Skip →
               Timeout → Serial → dry-run → Output → params → Execute
-  ← → / Tab   (Operation / Target) cycle option; (Timeout) ±5s
-  Tab         (other fields) next field in the same group, wrapping;
-              Shift+Tab back
-  Enter       (text field) edit; (Members / Skip / Entries) open
-              picker; (Execute) run operation
-  e           Run the current operation (from any field)
-  d           Toggle dry-run
-  s           Toggle serial execution
+  ← →         (Operation / Target) cycle option; (Timeout) ±5s
+  Enter / e   (text field) edit; (Members / Skip / Entries) open
+              picker; Enter on Execute runs the operation
+  Ctrl+R      Run the current operation (from any field); asks
+              first when it would hit all hosts without dry-run
+  D           Toggle dry-run
+  S           Toggle serial execution
   Space       (checkbox) toggle; (Shell members / Source) cycle
   Del         Clear the focused optional field; on Add path,
               remove the last path
@@ -4169,8 +3813,8 @@ Sync parameters
   Del on Add path            Remove last path from the list
 
 View tab
-  ← → / Tab   (Show row) cycle checkout / list / log; (Target row)
-              cycle mode; (results) move row, wrapping
+  ← →         (Show row) cycle checkout / list / log; (Target row)
+              cycle mode
   ↑↓ / j k    Move row selection / fields
   Enter       (Members/Skip) open picker
   Space       (Log row) toggle error filter / cycle shell
@@ -4189,7 +3833,6 @@ Member picker popup (Members / Skip)
 Config tab
   ↑↓ / j k    Move sidebar / field rows
   ← / →       Switch zone (sidebar ↔ fields)
-  Tab         Next row in the zone, wrapping; Shift+Tab back
   PgUp/PgDn   Page navigation
   Home/End    Jump to top / bottom
   e / Enter   Edit text field inline; cycle option fields (bool/shell/enum)
@@ -4217,6 +3860,11 @@ Log overlay
                     .fg(self.theme.warning)
                     .add_modifier(Modifier::BOLD),
             );
+            frame.render_widget(p, area);
+            return;
+        }
+        if let Some(n) = &self.notice {
+            let p = Paragraph::new(format!("  {n}")).style(Style::default().fg(self.theme.warning));
             frame.render_widget(p, area);
             return;
         }
@@ -4248,6 +3896,7 @@ Log overlay
                 Overlay::Info => &["↑↓/PgUp/PgDn:Scroll", "Tab:Section", "Esc/i:Close"],
                 Overlay::Log => &["↑↓/PgUp/PgDn:Scroll", "Esc/L:Close"],
                 Overlay::Results => &["↑↓/PgUp/PgDn:Scroll", "Enter/Esc:Close"],
+                Overlay::RunConfirm => &["y:Run", "n/Esc:Cancel"],
                 Overlay::RunningOp => &["Esc:Cancel run", "Tab:Switch tab"],
                 Overlay::Config => {
                     let ct = &self.config_tab;
@@ -4287,8 +3936,8 @@ Log overlay
             TabId::Operate if self.operate.focus == OpField::Execute => &[
                 "Enter:Run",
                 "↑↓:Fields",
-                "s:Serial",
-                "d:Dry",
+                "S:Serial",
+                "D:Dry",
                 "L:Log",
                 "i:Info",
             ],
@@ -4299,31 +3948,105 @@ Log overlay
                 "a:Add",
                 "d:DelEntry",
                 "Del:Clear",
+                "y:Copy",
                 "E:Editor",
                 "L:Log",
                 "i:Info",
             ],
             TabId::Operate => &[
                 "↑↓:Fields",
-                "←→/Tab:Value",
+                "←→:Value",
                 "Enter:Pick",
-                "e:Exec",
+                "^R:Run",
                 "Space:Toggle",
                 "Del:Clear",
-                "s:Serial",
-                "d:Dry",
+                "S:Serial",
+                "D:Dry",
             ],
             TabId::View => &[
                 "↑↓:Fields",
-                "←→/Tab:Show/Mode",
+                "←→:Show/Mode",
                 "Enter:Pick",
                 "PgUp/PgDn",
                 "o:Export",
+                "y:Copy",
                 "L:Log",
                 "i:Info",
             ],
         };
         (items, MAIN_TAIL)
+    }
+
+    /// K5: the text `y` copies — the focused value or selected result row.
+    fn yank_text(&self) -> Option<String> {
+        use super::tabs::config_tab::SidebarItem;
+        use super::tabs::view_tab::ListEditTarget;
+        match self.active_tab {
+            TabId::Config => match self.config_tab.zone {
+                ConfigZone::FieldTable => self
+                    .config_tab
+                    .current_descriptors(&self.config)
+                    .get(self.config_tab.field_vp.selected)
+                    .map(|f| f.display_value.clone()),
+                ConfigZone::Sidebar => {
+                    match self
+                        .config_tab
+                        .items
+                        .get(self.config_tab.sidebar_vp.selected)?
+                    {
+                        SidebarItem::Host(i) => self.config.host.get(*i).map(|h| h.name.clone()),
+                        SidebarItem::Check(i) => {
+                            self.config.check.get(*i).and_then(|c| c.name.clone())
+                        }
+                        SidebarItem::Sync(i) => self
+                            .config
+                            .sync
+                            .get(*i)
+                            .map(|s| s.name.clone().unwrap_or_else(|| s.id.clone())),
+                        _ => None,
+                    }
+                }
+            },
+            TabId::Operate => {
+                let o = &self.operate;
+                let f = match o.focus {
+                    OpField::Command => &o.run_command,
+                    OpField::Script => &o.exec_script,
+                    OpField::SyncAdhocInput => &o.sync_adhoc_input,
+                    OpField::SyncSource => &o.sync_source_input,
+                    OpField::CpLocal => &o.cp_local,
+                    OpField::CpRemote => &o.cp_remote,
+                    OpField::CheckName => &o.check_name,
+                    OpField::SyncName => &o.sync_name,
+                    OpField::Out => &o.out_input,
+                    _ => return None,
+                };
+                Some(f.value.clone())
+            }
+            TabId::View if self.view.focus == ViewFocus::Result => {
+                let i = self.checkout_viewport.selected;
+                match self.view.op {
+                    ViewOperationKind::Checkout => {
+                        self.checkout_snapshots.get(i).map(|s| s.host.clone())
+                    }
+                    ViewOperationKind::Log => self.view.log.get(i).map(|r| r.command.clone()),
+                    ViewOperationKind::List => {
+                        let list = self.view.list.as_ref()?;
+                        match super::tabs::view_tab::list_entry_at_line(list, i)? {
+                            ListEditTarget::Host(h) => list.hosts.get(h).map(|h| h.name.clone()),
+                            ListEditTarget::Check(c) => {
+                                list.checks.get(c).and_then(|c| c.name.clone())
+                            }
+                            ListEditTarget::Sync(s) => list
+                                .syncs
+                                .get(s)
+                                .map(|s| s.name.clone().unwrap_or_else(|| s.id.clone())),
+                        }
+                    }
+                }
+            }
+            TabId::View => None,
+        }
     }
 
     /// True while an Operate / View text field is being typed into.
@@ -4395,6 +4118,25 @@ fn comma_names(raw: &str) -> Vec<String> {
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect()
+}
+
+/// OSC 52 "set clipboard" sequence: the terminal copies `text` (base64).
+fn osc52(text: &str) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut b64 = String::new();
+    for c in text.as_bytes().chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for k in 0..4 {
+            if k <= c.len() {
+                b64.push(T[(n >> (18 - 6 * k) & 63) as usize] as char);
+            } else {
+                b64.push('=');
+            }
+        }
+    }
+    format!("\x1b]52;c;{b64}\x07")
 }
 
 /// Join `items` then `tail` with spaces, dropping trailing `items` until the line fits
@@ -5033,6 +4775,72 @@ mod navbar_focus_tests {
         assert!(app.status_hints().0.contains(&"Esc/L:Close"));
     }
 
+    fn k(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    /// B82 K1: Tab switches tabs; Esc and ↑ stop at the tab's first field
+    /// (no tab-bar focus layer, no wrap).
+    #[test]
+    fn tab_switches_tabs_esc_goes_to_first_field() {
+        let mut app = minimal_app();
+        app.active_tab = TabId::Operate;
+        app.operate.focus = OpField::Timeout;
+        app.handle_key(k(KeyCode::Esc)).unwrap();
+        assert_eq!(app.operate.focus, OpField::OpRadio);
+        app.handle_key(k(KeyCode::Esc)).unwrap();
+        app.handle_key(k(KeyCode::Up)).unwrap();
+        assert_eq!(app.operate.focus, OpField::OpRadio);
+        assert_eq!(app.active_tab, TabId::Operate);
+        app.handle_key(k(KeyCode::Tab)).unwrap();
+        assert_eq!(app.active_tab, TabId::View);
+        app.handle_key(k(KeyCode::BackTab)).unwrap();
+        assert_eq!(app.active_tab, TabId::Operate);
+    }
+
+    /// B82 K2–K4: `e` never runs; Ctrl+R on all hosts without dry-run asks
+    /// first and only `y` would run; `D` / `S` toggle dry-run / serial.
+    #[test]
+    fn operate_run_keys_and_broad_confirm() {
+        let mut app = minimal_app();
+        app.active_tab = TabId::Operate;
+        app.operate.operation = OperationKind::Exec;
+        app.target_filter.mode = TargetFilterMode::All;
+        app.operate.dry_run = false;
+        app.operate.focus = OpField::Execute;
+        app.handle_key(k(KeyCode::Char('e'))).unwrap();
+        assert!(app.run_confirm.is_none() && app.running_op.is_none());
+        app.handle_key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL))
+            .unwrap();
+        assert_eq!(app.overlays().last(), Some(&Overlay::RunConfirm));
+        app.handle_key(k(KeyCode::Enter)).unwrap(); // Enter does not confirm
+        assert!(app.run_confirm.is_some());
+        app.handle_key(k(KeyCode::Char('n'))).unwrap();
+        assert!(app.run_confirm.is_none() && app.running_op.is_none());
+        let serial = app.target_filter.serial;
+        app.handle_key(k(KeyCode::Char('D'))).unwrap();
+        app.handle_key(k(KeyCode::Char('S'))).unwrap();
+        assert!(app.operate.dry_run);
+        assert_eq!(app.target_filter.serial, !serial);
+    }
+
+    /// B82 K5: `y` queues the focused value as an OSC 52 clipboard write.
+    #[test]
+    fn y_copies_focused_value() {
+        assert_eq!(super::osc52("hi"), "\x1b]52;c;aGk=\x07");
+        assert_eq!(super::osc52("abc"), "\x1b]52;c;YWJj\x07");
+        let mut app = minimal_app();
+        app.active_tab = TabId::Operate;
+        app.operate.focus = OpField::Command;
+        app.operate.run_command.value = "uptime".into();
+        app.handle_key(k(KeyCode::Char('y'))).unwrap();
+        assert_eq!(app.pending_clipboard.as_deref(), Some("uptime"));
+        assert_eq!(app.notice.as_deref(), Some("Copied: uptime"));
+        app.operate.focus = OpField::Timeout;
+        app.handle_key(k(KeyCode::Char('y'))).unwrap();
+        assert_eq!(app.notice.as_deref(), Some("Nothing to copy here"));
+    }
+
     /// B47: `e` on a sync row of View → List opens that entry's edit form,
     /// also when the config has no `[[check]]` entries.
     #[test]
@@ -5146,37 +4954,22 @@ mod navbar_focus_tests {
         KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
     }
 
-    /// Regression: the navbar_focused dispatcher traps all keys via its `_`
-    /// arm; `?` must be mirrored there to reach the Help popup.
-    #[test]
-    fn question_mark_opens_help_from_navbar_focus() {
-        let mut app = minimal_app();
-        app.navbar_focused = true;
-        assert!(!app.help_open);
-        app.handle_key(question_mark_key()).unwrap();
-        assert!(app.help_open, "`?` should open Help from navbar focus");
-    }
-
-    /// Sanity: `?` still opens Help from the default (non-navbar) focus state.
+    /// `?` opens Help from the default focus state.
     #[test]
     fn question_mark_opens_help_from_default_focus() {
         let mut app = minimal_app();
-        assert!(!app.navbar_focused);
         assert!(!app.help_open);
         app.handle_key(question_mark_key()).unwrap();
         assert!(app.help_open, "`?` should open Help from default focus");
     }
 
-    /// Regression: same navbar-dispatcher trap also drops `i` (Info popup)
-    /// and `L` (Log overlay). Both must be mirrored there.
     #[test]
-    fn i_opens_info_popup_from_navbar_focus() {
+    fn i_opens_info_popup() {
         let mut app = minimal_app();
-        app.navbar_focused = true;
         assert!(!app.info_open);
         app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
             .unwrap();
-        assert!(app.info_open, "`i` should open Info from navbar focus");
+        assert!(app.info_open, "`i` should open Info");
         assert_eq!(
             app.info_section,
             super::InfoSection::TabInfo,
@@ -5185,9 +4978,8 @@ mod navbar_focus_tests {
     }
 
     #[test]
-    fn i_cycles_info_section_when_already_open_from_navbar_focus() {
+    fn i_cycles_info_section_when_already_open() {
         let mut app = minimal_app();
-        app.navbar_focused = true;
         app.info_open = true;
         app.info_section = super::InfoSection::TabInfo;
         app.handle_key(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE))
@@ -5201,16 +4993,12 @@ mod navbar_focus_tests {
     }
 
     #[test]
-    fn capital_l_toggles_log_overlay_from_navbar_focus() {
+    fn capital_l_toggles_log_overlay() {
         let mut app = minimal_app();
-        app.navbar_focused = true;
         assert!(!app.log_overlay_open);
         app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT))
             .unwrap();
-        assert!(
-            app.log_overlay_open,
-            "`L` should open Log overlay from navbar focus"
-        );
+        assert!(app.log_overlay_open, "`L` should open Log overlay");
         app.handle_key(KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT))
             .unwrap();
         assert!(

@@ -27,7 +27,7 @@ use super::super::theme::Theme;
 pub struct ViewRenderData<'a> {
     pub view_op: ViewOperationKind,
     pub theme: &'a Theme,
-    pub navbar_focused: bool,
+    pub overlay_open: bool,
     pub loading: bool,
     /// Checkout result payload (host snapshots + display columns).
     pub checkout: Option<(&'a [HostSnapshot], &'a DisplayColumns)>,
@@ -99,7 +99,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
         .split(area);
 
     // ── " View " settings block (op selector + target/common) ──
-    let settings_focused = !data.navbar_focused
+    let settings_focused = !data.overlay_open
         && (data.op_selector_focused
             || data.target_mode_focused
             || data.target_members_focused
@@ -134,7 +134,7 @@ pub fn render_view(data: &ViewRenderData, area: Rect, frame: &mut Frame) {
     }
 
     // ── Results block ──
-    let results_focused = !data.navbar_focused && data.result_focused;
+    let results_focused = !data.overlay_open && data.result_focused;
     let r_border = if results_focused {
         data.theme.accent_checkout
     } else {

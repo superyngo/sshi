@@ -4,7 +4,7 @@ Status: In progress
 Assessment run; no code changed. Evidence: real binary (`target/debug/sshi`, v1.7.0) driven in a pty
 by `docs/tmp/claude-scratch/2026-10-21-ux-probe/probe.py` (scratch, gitignored) at 100×30 and 80×24,
 plus source reading. Line numbers below are as of commit `4552405`. Findings are tracked in
-[`../plan/BACKLOG.md`](../plan/BACKLOG.md) as B78–B83. Phase A (B78–B81) landed 2026-10-21.
+[`../plan/BACKLOG.md`](../plan/BACKLOG.md) as B78–B83. Phase A (B78–B81) and B (B82) landed 2026-10-21.
 
 ## 1. Mouse support
 

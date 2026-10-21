@@ -9,27 +9,6 @@ use super::state::persist::{OperationKind, TargetFilterMode};
 use super::tabs::operate_tab::OpField;
 use crate::host::auth::SshAuthRequest;
 
-/// ESC-toggle level for Operate and View tabs (3-way cycling).
-///
-/// Config tab is excluded — it keeps the original 2-way NavBar toggle.
-/// The cycle is: NavBar → TopField → Content → NavBar → …
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EscLevel {
-    NavBar,
-    TopField,
-    Content,
-}
-
-impl EscLevel {
-    pub fn next(self) -> EscLevel {
-        match self {
-            EscLevel::NavBar => EscLevel::TopField,
-            EscLevel::TopField => EscLevel::Content,
-            EscLevel::Content => EscLevel::NavBar,
-        }
-    }
-}
-
 /// Focus zone within the View tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewFocus {
@@ -153,7 +132,6 @@ pub struct OperateState {
     pub sync_adhoc_input: InputField,
     pub sync_source_input: InputField,
     pub out_input: InputField,
-    pub esc_level: EscLevel,
 }
 
 impl OperateState {
@@ -176,7 +154,6 @@ impl OperateState {
             sync_adhoc_input: InputField::new(""),
             sync_source_input: InputField::new(""),
             out_input: InputField::new(""),
-            esc_level: EscLevel::NavBar,
         }
     }
 }
@@ -196,7 +173,6 @@ pub struct ViewState {
     pub log_since_input: InputField,
     pub log_host_input: InputField,
     pub focus: ViewFocus,
-    pub esc_level: EscLevel,
 }
 
 impl ViewState {
@@ -220,7 +196,6 @@ impl ViewState {
             log_since_input: InputField::new(""),
             log_host_input: InputField::new(""),
             focus: ViewFocus::OpSelector,
-            esc_level: EscLevel::NavBar,
         }
     }
 }

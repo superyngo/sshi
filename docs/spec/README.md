@@ -6,9 +6,7 @@ once approved, dated by when it was written, never rewritten. Current behavior l
 
 ## In progress
 
-| Date | Document | Status |
-|---|---|---|
-| 2026-10-21 | [2026-10-21-tui-ux-structure.md](2026-10-21-tui-ux-structure.md) | Approved — in progress (B82) |
+None.
 
 ## Landed
 
@@ -28,3 +26,4 @@ once approved, dated by when it was written, never rewritten. Current behavior l
 | 2026-05-21 | [2026-05-21-config-tab-fixes-and-tui-audit.md](2026-05-21-config-tab-fixes-and-tui-audit.md) | Shipped (2026-06-03) |
 | 2026-05-26 | [2026-05-26-cli-interface-unification.md](2026-05-26-cli-interface-unification.md) | Shipped (2026-06-03) |
 | 2026-05-26 | [2026-05-26-tui-operate-refactor.md](2026-05-26-tui-operate-refactor.md) | Shipped (2026-06-03) |
+| 2026-10-21 | [2026-10-21-tui-ux-structure.md](2026-10-21-tui-ux-structure.md) | Shipped (2026-10-21) |
