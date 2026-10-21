@@ -1627,44 +1627,13 @@ impl ConfigTabState {
         config_path: Option<&std::path::Path>,
         navbar_focused: bool,
     ) {
-        // If direct sub-popups are open, render base screen + direct popup (Step 11)
-        if self.direct_vec_editor.is_some() || self.direct_group_picker.is_some() {
-            let vert = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(1)])
-                .split(area);
-            let horiz = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Length(22), Constraint::Min(0)])
-                .split(vert[0]);
-            self.render_sidebar(horiz[0], frame, theme, config, false);
-            self.render_field_table(horiz[1], frame, theme, config, false);
-            let crumb = self.breadcrumb(config);
-            frame.render_widget(
-                Paragraph::new(Span::styled(crumb, Style::default().fg(theme.inactive))),
-                vert[1],
-            );
-            if let Some(ref dve) = self.direct_vec_editor {
-                self.render_direct_vec_editor(area, frame, theme, dve);
-            } else if let Some(ref dgp) = self.direct_group_picker {
-                self.render_direct_group_picker(area, frame, theme, dgp);
-            }
-            return;
-        }
-
-        if let Some(ref form) = self.entry_form {
-            self.render_entry_form(area, frame, theme, form);
-            // Confirm dialog overlays the form (e.g. discard prompt on ESC).
-            if let Some(ref confirm) = self.confirm {
-                self.render_confirm(area, frame, theme, confirm);
-            }
-            return;
-        }
-        if let Some(ref confirm) = self.confirm {
-            self.render_confirm(area, frame, theme, confirm);
-            return;
-        }
-
+        // The base screen is always drawn; popups overlay it bottom → top
+        // (entry form, direct editors, then confirm), matching key routing.
+        let base_focus = navbar_focused
+            || self.entry_form.is_some()
+            || self.confirm.is_some()
+            || self.direct_vec_editor.is_some()
+            || self.direct_group_picker.is_some();
         let vert = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -1675,8 +1644,8 @@ impl ConfigTabState {
             .constraints([Constraint::Length(22), Constraint::Min(0)])
             .split(vert[0]);
 
-        self.render_sidebar(horiz[0], frame, theme, config, navbar_focused);
-        self.render_field_table(horiz[1], frame, theme, config, navbar_focused);
+        self.render_sidebar(horiz[0], frame, theme, config, base_focus);
+        self.render_field_table(horiz[1], frame, theme, config, base_focus);
 
         let crumb = self.breadcrumb(config);
         let dirty_star = if self.config_dirty { " *" } else { "" };
@@ -1694,6 +1663,18 @@ impl ConfigTabState {
             Span::styled(path_hint, Style::default().fg(theme.border_inactive)),
         ]);
         frame.render_widget(Paragraph::new(crumb_line), vert[1]);
+
+        if let Some(ref form) = self.entry_form {
+            self.render_entry_form(area, frame, theme, form);
+        }
+        if let Some(ref dve) = self.direct_vec_editor {
+            self.render_direct_vec_editor(area, frame, theme, dve);
+        } else if let Some(ref dgp) = self.direct_group_picker {
+            self.render_direct_group_picker(area, frame, theme, dgp);
+        }
+        if let Some(ref confirm) = self.confirm {
+            self.render_confirm(area, frame, theme, confirm);
+        }
     }
 
     pub fn banner_active(&self) -> bool {

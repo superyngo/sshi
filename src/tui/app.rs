@@ -115,6 +115,20 @@ impl HelpSection {
     }
 }
 
+/// A popup layer above the tab body; see [`App::overlays`] for the order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Overlay {
+    Config,
+    RunningOp,
+    Results,
+    Log,
+    Info,
+    Help,
+    MemberPicker,
+    Export,
+    Auth,
+}
+
 pub struct App {
     pub active_tab: TabId,
     navbar_focused: bool,
@@ -3195,31 +3209,58 @@ impl App {
         }
         self.render_status_bar(chunks[2], frame);
 
-        if self.help_open {
-            self.render_help_popup(area, frame);
+        for overlay in self.overlays() {
+            match overlay {
+                Overlay::Config => {} // drawn by the Config tab over its body
+                Overlay::RunningOp => self.render_progress_popup(area, frame),
+                Overlay::Results => self.render_results_popup(area, frame),
+                Overlay::Log => self.render_log_overlay(area, frame),
+                Overlay::Info => self.render_info_popup(area, frame),
+                Overlay::Help => self.render_help_popup(area, frame),
+                Overlay::MemberPicker => {
+                    let theme = self.theme;
+                    if let Some(picker) = &mut self.popup.member_picker {
+                        picker.render(area, &theme, frame);
+                    }
+                }
+                Overlay::Export => self.render_export_popup(area, frame),
+                Overlay::Auth => self.render_auth_popup(area, frame),
+            }
         }
-        if self.info_open {
-            self.render_info_popup(area, frame);
-        }
-        if let Some(picker) = &mut self.popup.member_picker {
-            let theme = self.theme;
-            picker.render(area, &theme, frame);
+    }
+
+    /// Open overlays, bottom → top. The topmost one receives every key
+    /// (`handle_popup_key` checks them in reverse of this order) and is drawn last.
+    pub(crate) fn overlays(&self) -> Vec<Overlay> {
+        let mut v = Vec::new();
+        if self.active_tab == TabId::Config && self.config_tab.is_any_popup_open() {
+            v.push(Overlay::Config);
         }
         if self.running_op.is_some() {
-            self.render_progress_popup(area, frame);
+            v.push(Overlay::RunningOp);
         }
         if self.completed_view.is_some() {
-            self.render_results_popup(area, frame);
+            v.push(Overlay::Results);
         }
         if self.log_overlay_open {
-            self.render_log_overlay(area, frame);
+            v.push(Overlay::Log);
         }
-        if self.popup.auth.is_some() {
-            self.render_auth_popup(area, frame);
+        if self.info_open {
+            v.push(Overlay::Info);
+        }
+        if self.help_open {
+            v.push(Overlay::Help);
+        }
+        if self.popup.member_picker.is_some() {
+            v.push(Overlay::MemberPicker);
         }
         if self.popup.export.is_some() {
-            self.render_export_popup(area, frame);
+            v.push(Overlay::Export);
         }
+        if self.popup.auth.is_some() {
+            v.push(Overlay::Auth);
+        }
+        v
     }
 
     fn render_tab_bar(&self, area: Rect, frame: &mut ratatui::Frame) {
@@ -4875,6 +4916,19 @@ mod navbar_focus_tests {
             auth_sender: None,
         };
         App::from_context_with_state_path(&ctx, None, state_file_path)
+    }
+
+    /// B82: the overlay stack drives both drawing and keys — the topmost
+    /// overlay takes the key and the ones below stay open.
+    #[test]
+    fn top_overlay_takes_keys() {
+        let mut app = minimal_app();
+        app.log_overlay_open = true;
+        app.help_open = true;
+        assert_eq!(app.overlays(), [Overlay::Log, Overlay::Help]);
+        app.handle_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))
+            .unwrap();
+        assert_eq!(app.overlays(), [Overlay::Log]);
     }
 
     /// B47: `e` on a sync row of View → List opens that entry's edit form,
