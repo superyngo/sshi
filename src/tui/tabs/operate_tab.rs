@@ -234,21 +234,47 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     let active = !data.navbar_focused;
     let tf = data.target_filter;
     let mut rows: Vec<RowItem> = Vec::new();
+    // Index of the row holding the focused field; the body scrolls to keep it visible.
+    let mut focus_row = 0usize;
 
     // ── Operation radio ──
+    if data.focus == OpField::OpRadio {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Plain(op_radio_line(data)));
     rows.push(RowItem::Plain(Line::from("")));
 
     // ── Common zone ──
     rows.push(RowItem::Plain(zone_header("── Common ──", theme)));
+    if data.focus == OpField::TargetMode {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Plain(target_mode_line(data)));
     if tf.mode != TargetFilterMode::All {
+        if data.focus == OpField::TargetMembers {
+            focus_row = rows.len();
+        }
         rows.push(RowItem::Plain(members_line(data)));
     }
+    if data.focus == OpField::Skip {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Plain(skip_line(data)));
+    if data.focus == OpField::Timeout {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Plain(timeout_line(data)));
+    if data.focus == OpField::Serial {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Plain(serial_line(data)));
+    if data.focus == OpField::DryRun {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Plain(dry_run_line(data)));
+    if data.focus == OpField::Out {
+        focus_row = rows.len();
+    }
     rows.push(RowItem::Field(
         data.out_input,
         "Output report (.json/.html, optional)",
@@ -264,6 +290,9 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
     )));
     match data.operation {
         OperationKind::Check => {
+            if data.focus == OpField::CheckName {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Plain(name_select_line(
                 "Entries:",
                 &data.check_name_input.value,
@@ -274,11 +303,17 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Run => {
+            if data.focus == OpField::Command {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Field(
                 data.run_command,
                 "Command",
                 data.focus == OpField::Command,
             ));
+            if data.focus == OpField::Sudo {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Plain(toggle_line(
                 "sudo",
                 data.run_sudo,
@@ -288,11 +323,17 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Exec => {
+            if data.focus == OpField::Script {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Field(
                 data.exec_script,
                 "Script path",
                 data.focus == OpField::Script,
             ));
+            if data.focus == OpField::Sudo {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Plain(toggle_line(
                 "sudo",
                 data.exec_sudo,
@@ -300,6 +341,9 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                 active,
                 theme,
             )));
+            if data.focus == OpField::Keep {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Plain(toggle_line(
                 "--keep",
                 data.exec_keep,
@@ -311,6 +355,9 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         OperationKind::Sync => {
             // Config-entry selector and ad-hoc paths coexist; both feed the sync
             // core at once. Source override is anchored last (Req #6).
+            if data.focus == OpField::SyncName {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Plain(name_select_line(
                 "Entries:",
                 &data.sync_name_input.value,
@@ -319,6 +366,9 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                 active,
                 theme,
             )));
+            if data.focus == OpField::SyncAdhocInput {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Field(
                 data.sync_adhoc_input,
                 "Add path",
@@ -334,6 +384,9 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
                     rows.push(RowItem::Plain(Line::from(format!("  · {p}"))));
                 }
             }
+            if data.focus == OpField::SyncSource {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Plain(name_select_line(
                 "Source: ",
                 &data.sync_source_input.value,
@@ -344,11 +397,17 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
             )));
         }
         OperationKind::Cp => {
+            if data.focus == OpField::CpLocal {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Field(
                 data.cp_local_input,
                 "Local path (file / dir / 'dir/*.ext')",
                 data.focus == OpField::CpLocal,
             ));
+            if data.focus == OpField::CpRemote {
+                focus_row = rows.len();
+            }
             rows.push(RowItem::Field(
                 data.cp_remote_input,
                 "Remote destination (optional, defaults to ~)",
@@ -357,28 +416,41 @@ pub fn render_operate(data: &OperateRenderData, area: Rect, frame: &mut Frame) {
         }
     }
 
-    // ── Layout: fixed rows + trailing spacer (absorbs leftover height) ──
-    let mut constraints: Vec<Constraint> = rows
-        .iter()
-        .map(|r| Constraint::Length(r.height()))
-        .collect();
-    constraints.push(Constraint::Min(0)); // spacer
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(constraints)
-        .split(inner);
-
-    for (i, row) in rows.iter().enumerate() {
+    // ── Layout: rows stacked from the top; when they overflow the body, scroll
+    // so the focused row (and the last row once it fits) stays fully visible.
+    let heights: Vec<u16> = rows.iter().map(RowItem::height).collect();
+    let skip = scroll_skip(&heights, focus_row, inner.height);
+    let mut y = inner.y;
+    let bottom = inner.y.saturating_add(inner.height);
+    for (row, h) in rows.iter().zip(&heights).skip(skip) {
+        if y.saturating_add(*h) > bottom {
+            break;
+        }
+        let rect = Rect::new(inner.x, y, inner.width, *h);
         match row {
             RowItem::Plain(line) => {
-                frame.render_widget(Paragraph::new(line.clone()), chunks[i]);
+                frame.render_widget(Paragraph::new(line.clone()), rect);
             }
             RowItem::Field(field, label, focused) => {
-                field.render(frame, chunks[i], label, *focused);
+                field.render(frame, rect, label, *focused);
             }
         }
+        y += h;
     }
     render_execute_bar(data, exec_area, frame);
+}
+
+/// Number of leading rows to skip so `focus` ends inside a viewport of `height`.
+/// Never skips more than needed for the focused row to fit, so short content is unscrolled.
+fn scroll_skip(heights: &[u16], focus: usize, height: u16) -> usize {
+    let focus = focus.min(heights.len().saturating_sub(1));
+    let mut used: u16 = heights.iter().take(focus + 1).sum();
+    let mut skip = 0;
+    while used > height && skip < focus {
+        used -= heights[skip];
+        skip += 1;
+    }
+    skip
 }
 
 fn zone_header<'a>(text: &str, theme: &Theme) -> Line<'a> {
@@ -648,6 +720,19 @@ pub fn render_progress_popup(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rows fit → no scroll; focus below the fold → skip just enough rows for
+    /// the focused 3-row field to be whole (B78: 80×24 body is 14 rows).
+    #[test]
+    fn scroll_skip_keeps_focus_whole() {
+        let h = [1, 1, 1, 1, 1, 1, 1, 1, 3, 1, 1, 3, 3];
+        assert_eq!(scroll_skip(&h, 12, 30), 0);
+        assert_eq!(scroll_skip(&h, 2, 14), 0);
+        assert_eq!(scroll_skip(&h, 8, 14), 0); // rows 0..=8 = 11
+        assert_eq!(scroll_skip(&h, 12, 14), 5); // 19 rows → drop 5 one-row rows
+        assert_eq!(scroll_skip(&h, 12, 2), 12); // tiny body: focus row first
+        assert_eq!(scroll_skip(&[], 0, 5), 0);
+    }
 
     /// Every OpField maps to a layer (exhaustive — a new variant without a
     /// mapping is a compile error in `layer_of`, this guards the values).

@@ -179,6 +179,8 @@ The Operate tab (`src/tui/tabs/operate_tab.rs`) is the operational command cente
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
+When the rows are taller than the body (e.g. 80×24), the body scrolls by whole rows so the focused row — including a 3-row input box — is always fully visible; rows above it are dropped from the top only as far as needed (`scroll_skip`).
+
 #### Linear Field Walk (`operate_fields`)
 Focus moves linearly through focusable elements using `↑` / `↓` / `j` / `k`:
 1. `OpRadio`: Operation selector (`Run`, `Exec`, `Sync`, `Cp`, `Check`). `←` / `→` cycles operations in this order.

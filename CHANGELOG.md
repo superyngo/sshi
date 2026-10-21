@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### 2026-10-21
+- fix: on small terminals (e.g. 80×24) the Operate tab squeezed its input boxes (Output, Local path, Remote, Script) to a bare border, so typed text was invisible; the body now scrolls to keep the focused field whole (B78).
 - docs: TUI mouse + UX assessment (`docs/audit/2026-10-21-tui-mouse-ux-assessment.md`), run against the real binary at 100×30 and 80×24; backlog opens B78–B83 (Operate fields collapse at 80×24, Confirm popup clips its keys, status hints overflow 80 columns, stale help text, structural UX redesign, always-on mouse support).
 ### 2026-09-29
 - docs: the `AGENTS.md` import example separates std / third-party / `crate::` groups with blank lines; written as one block, `cargo fmt` reordered it and put `crate::` first.
