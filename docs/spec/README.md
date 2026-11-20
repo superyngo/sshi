@@ -27,3 +27,7 @@ None.
 | 2026-05-26 | [2026-05-26-cli-interface-unification.md](2026-05-26-cli-interface-unification.md) | Shipped (2026-06-03) |
 | 2026-05-26 | [2026-05-26-tui-operate-refactor.md](2026-05-26-tui-operate-refactor.md) | Shipped (2026-06-03) |
 | 2026-10-21 | [2026-10-21-tui-ux-structure.md](2026-10-21-tui-ux-structure.md) | Shipped (2026-10-21) |
+
+Note: 2026-10-21-tui-ux-structure — K1–K5 accepted; §3 superseded in B83: instead of per-tab `layout()`
+functions, renderers record the rects they draw into a per-frame `HitMap`, which gives the same
+no-drift guarantee without moving rect math out of the renderers.

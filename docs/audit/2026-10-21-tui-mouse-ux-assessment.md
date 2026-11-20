@@ -1,5 +1,5 @@
 # TUI mouse support + UX assessment (2026-10-21)
-Status: In progress
+Status: Resolved (2026-10-21)
 
 Assessment run; no code changed. Evidence: real binary (`target/debug/sshi`, v1.7.0) driven in a pty
 by `docs/tmp/claude-scratch/2026-10-21-ux-probe/probe.py` (scratch, gitignored) at 100×30 and 80×24,

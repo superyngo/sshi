@@ -6,10 +6,7 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 
 ## In progress
 
-| Date | Document | Status |
-|---|---|---|
-| 2026-09-25 | [2026-09-25-code-audit.md](2026-09-25-code-audit.md) | In progress |
-| 2026-10-21 | [2026-10-21-tui-mouse-ux-assessment.md](2026-10-21-tui-mouse-ux-assessment.md) | In progress |
+None.
 
 ## Landed
 
@@ -24,3 +21,5 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 | 2026-05-26 | [2026-05-26-project-outline.md](2026-05-26-project-outline.md) | Superseded by [../reference/README.md](../reference/README.md) |
 | 2026-07-18 | [2026-07-18-codebase-audit.md](2026-07-18-codebase-audit.md) | Resolved (2026-07-20) |
 | 2026-09-25 | [2026-09-25-documentation-audit.md](2026-09-25-documentation-audit.md) | Resolved (2026-09-25) |
+| 2026-09-25 | [2026-09-25-code-audit.md](2026-09-25-code-audit.md) | Resolved (2026-09-26) |
+| 2026-10-21 | [2026-10-21-tui-mouse-ux-assessment.md](2026-10-21-tui-mouse-ux-assessment.md) | Resolved (2026-10-21) |

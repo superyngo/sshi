@@ -1,5 +1,5 @@
 # Backlog
-Status: In progress
+Status: Resolved (2026-10-21)
 
 The one living record of open work. Rows move to Done with the commit that closed them and are
 never deleted. Evidence is file + symbol, never a line number. `Verified` is the date the row was

@@ -1,5 +1,5 @@
 # Code audit
-Status: In progress
+Status: Resolved (2026-09-26)
 
 Whole-crate audit of `src/` (80 files, ~30 k lines) for bugs, optimization, simplicity, clarity,
 and integration. Eight read-only reviewers each took one module group; the controller ran the

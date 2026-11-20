@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### 2026-11-20
+- docs: align with the repo-docs rules — `Profile: dev` in `CONTEXT.md`; the 2026-10-21 TUI UX structure spec carries its `Status:` on line 2 (the §3 note moves to `spec/README.md`); the 2026-09-25 code audit (`Resolved (2026-09-26)`), the 2026-10-21 TUI mouse/UX assessment and `BACKLOG.md` (`Resolved (2026-10-21)`, Open is empty) are marked resolved, and `audit/README.md` lists both audits under Landed.
 ### 2026-10-21
 - feat(tui): mouse support (B83), always on. Click tabs, radio options, checkboxes, fields, Execute, result / sidebar / field rows (a second click opens), picker and form rows, and Confirm `[y]` / `[n]` buttons; the wheel scrolls the list or popup under the pointer. Targets come from a per-frame hit map filled by the renderers, so they match the screen; clicks outside the top popup are ignored. Capture is released on exit, panic and around the `$EDITOR` round-trip.
 - feat(tui)!: new key map (B82 step 5). `Tab` / `Shift+Tab` switch tabs; the tab-bar focus layer is gone (`Esc` goes to the tab's first field, `↑` stops there). Operate: `e` edits like Enter and no longer runs; run with `Enter` on Execute or `Ctrl+R`; a run / exec / sync / cp on all hosts without dry-run asks first (only `y` runs); dry-run and serial move to `D` / `S`. New `y` copies the focused value or selected row (OSC 52).
