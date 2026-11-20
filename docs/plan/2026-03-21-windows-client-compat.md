@@ -9,7 +9,7 @@ Status: Shipped (2026-03-21)
 
 **Tech Stack:** Rust, tokio, tempfile, crossterm (optional TUI feature)
 
-**Spec:** `docs/superpowers/specs/2026-03-21-windows-client-compat-design.md`
+**Spec:** `docs/spec/2026-03-21-windows-client-compat.md`
 
 ---
 

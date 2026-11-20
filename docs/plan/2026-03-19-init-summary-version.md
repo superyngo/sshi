@@ -9,7 +9,7 @@ Status: Shipped (2026-03-19)
 
 **Tech Stack:** Rust (tokio, clap, anyhow), GitHub Actions YAML
 
-**Spec:** `docs/superpowers/specs/2026-03-19-init-summary-version-design.md`
+**Spec:** `docs/spec/2026-03-19-init-summary-version.md`
 
 ---
 

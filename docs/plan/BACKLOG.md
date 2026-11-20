@@ -1,5 +1,5 @@
 # Backlog
-Status: Resolved (2026-10-21)
+Status: In progress
 
 The one living record of open work. Rows move to Done with the commit that closed them and are
 never deleted. Evidence is file + symbol, never a line number. `Verified` is the date the row was
@@ -16,6 +16,7 @@ this file existed are recorded in those source documents, not here.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
+| B84 | 2026-11-20 | 2026-11-20 | P3 | Keyboard-interactive auth (ADR 0001 §a) is not in the auth chain. Promoted from Watching: its trigger "russh API confirmed" has fired — the pinned `russh` 0.63.3 client has `Handle::authenticate_keyboard_interactive_start` / `authenticate_keyboard_interactive_respond` | `src/host/auth.rs` `authenticate` (agent → key files → passphrase → password only); `russh` `client::Handle::authenticate_keyboard_interactive_start` | M | Against a server with password auth off and `keyboard-interactive` on, `sshi check` authenticates through the CLI prompt and through the TUI `AuthPopup`, showing each server prompt and hiding input when the server asks for no echo |
 
 ## Pending verification
 
@@ -26,6 +27,7 @@ Landed, but the check needs a platform or environment not available locally.
 | Closing the Windows console window quits the TUI cleanly and restores the terminal (B12) | `67d823b` | Run `sshi` in Windows Terminal / conhost and click the window's close button; the next shell prompt is usable. The branch type-checks for `x86_64-pc-windows-msvc` (scratch crate); the full crate cannot be cross-checked here (C build scripts) | Register `SetConsoleCtrlHandler` directly via `windows-sys` |
 | 30 s SSH keepalive prevents idle drops | `e4a3ebe` | Run against a server with `ClientAliveInterval 10`, `ClientAliveCountMax 0` | Lower the interval |
 | WAL + `busy_timeout=5000` removes lock contention | `268cbc6` | CLI commands run while the TUI writes operation logs | Single-writer DB actor |
+| Windows path checks report real sizes (B40): cmd `dir /s /-c` totals parsed, PowerShell empty dir reads 0 not `MISSING` | `144de58` | `sshi check` with `[[check.path]]` entries against a real Windows host as `cmd` and as `powershell`: an existing dir shows its size, an empty dir 0, a missing path missing. Only fixtures have run so far | Capture the real output into the `parse_path_size` fixtures and fix the parser |
 
 ## Awaiting external
 
@@ -39,14 +41,13 @@ Blocked on a person or third party. **Not counted as open.**
 
 | Item | Why not now | Trigger | Re-read |
 |---|---|---|---|
-| Keyboard-interactive auth (ADR 0001 §a) | Password and key auth cover all reported hosts; russh client API support unverified | A user host requires keyboard-interactive, or russh API confirmed | 2026-09-25 |
-| Shift+arrow selection in `InputField` | Deferred in audit-fixes E4; needs selection ranges and rendering | User request | 2026-09-25 |
-| Collapse TUI `ShellMode` into `ShellType` | Persisted TUI state uses `ShellMode`; collapsing breaks saved state | A state migration layer exists, or 2.0.0 | 2026-09-25 |
-| `thiserror` typed errors | `anyhow` is consistent and sufficient for a binary crate | A library crate is extracted | 2026-09-25 |
-| ASCII fallback for `⏱ ▶ ◉ ○` in `GlyphSet` | Status glyphs already fall back; these rarely break | Garbled-glyph report on `TERM=linux` | 2026-09-25 |
-| Streaming sync relay instead of local temp file | Disk relay is reliable at current sizes | Benchmarks show local I/O is the bottleneck | 2026-09-25 |
-| UI localization | No i18n decision made; ~150 hard-coded strings | Decision to support a second language | 2026-09-25 |
-| Drop the legacy `sync_state` table (B19 follow-up): writes stopped, the table and old placeholder rows remain in existing DBs | User decided 2026-09-26 to keep it: the rows are unused and harmless, and a `DROP TABLE` migration deletes them irreversibly and locks out older binaries (B58) | Another schema migration is needed anyway, or 2.0.0 — then add `DROP TABLE IF EXISTS sync_state` to it | 2026-09-26 |
+| Shift+arrow selection in `InputField` | Deferred in audit-fixes E4; needs selection ranges and rendering | User request | 2026-11-20 |
+| Collapse TUI `ShellMode` into `ShellType` | Persisted TUI state uses `ShellMode`; collapsing breaks saved state | A state migration layer exists, or 2.0.0 | 2026-11-20 |
+| `thiserror` typed errors | `anyhow` is consistent and sufficient for a binary crate | A library crate is extracted | 2026-11-20 |
+| ASCII fallback for `⏱ ▶ ◉ ○` in `GlyphSet` | Status glyphs already fall back; these rarely break | Garbled-glyph report on `TERM=linux` | 2026-11-20 |
+| Streaming sync relay instead of local temp file | Disk relay is reliable at current sizes | Benchmarks show local I/O is the bottleneck | 2026-11-20 |
+| UI localization | No i18n decision made; ~150 hard-coded strings | Decision to support a second language | 2026-11-20 |
+| Drop the legacy `sync_state` table (B19 follow-up): writes stopped, the table and old placeholder rows remain in existing DBs | User decided 2026-09-26 to keep it: the rows are unused and harmless, and a `DROP TABLE` migration deletes them irreversibly and locks out older binaries (B58) | Another schema migration is needed anyway, or 2.0.0 — then add `DROP TABLE IF EXISTS sync_state` to it | 2026-11-20 |
 
 ## Done
 
@@ -86,7 +87,7 @@ Blocked on a person or third party. **Not counted as open.**
 | B34 | Recursive sync ran one exec per host per file and used legacy `distribute`, bypassing per-host limits | `4920bba` — `sync_path_across` takes all expanded paths → `batch_collect_all_metadata` with `chunk_paths`/`batch_cmd_budget` and per-chunk timeout; `distribute_pooled`; legacy `distribute` and per-file `collect_file_metadata` removed; tests: exec count O(hosts), 5000-path chunking under budget for sh/PowerShell/cmd; real binary (timeout 1 s): 500 files synced both with and without `source` |
 | B37 | Per-host outcome policy diverged: log-write failure aborted `exec`/`run` but warned in `cp`/`check`; `Partial` meant skip/success/failure by command; `cp` log rows omitted errors; `check` unreachable writes outside its transaction | `40efecd` — `report::{record_operation_log, record_operation_log_tx, host_status_to_printer_kind, host_status_to_log_status, update_summary, default_printer_sink}` used by all four; tests `mapping_and_summary_follows_adr_0004`, `record_operation_log_writes_and_does_not_abort_on_db_error`; real binary with `operation_log` dropped: `run -a` warns and exits 0 (was exit 1 after hosts ran) |
 | B42 | `ssh_config` parser: `Match` overwrote the prior `Host`; duplicate blocks didn't merge; case-sensitive; `Include` ignored | `146dfc8` — `ParsedSshConfig::query` first-wins over matching `Block`s (`block_matches_host`, negation, case-insensitive); `Match` skipped unless `all`; `Include` followed with continuation block; tests incl. the audit probe (`web1` → `alice`/22); real binary: host defined via `Include conf.d/*` + case-different `Host` connects (old binary: DNS failure) |
-| B40 | Windows path probes: cmd `dir` output unparsed (0, success); PowerShell empty dir `MISSING` | `144de58` — `---SIZE:` marker in `powershell::batch_path_command`; `parse_path_size` parses cmd `dir /s /-c` totals; cmd/PowerShell fixtures incl. empty dir and missing path (not run on a real Windows host) |
+| B40 | Windows path probes: cmd `dir` output unparsed (0, success); PowerShell empty dir `MISSING` | `144de58` — `---SIZE:` marker in `powershell::batch_path_command`; `parse_path_size` parses cmd `dir /s /-c` totals; cmd/PowerShell fixtures incl. empty dir and missing path; real-Windows check under Pending verification |
 | B39 | sh probes misread macOS/BSD output: load shifted, paths `MISSING`, disk ×1024, memory/battery empty | `c4cb461` — `sh::command_for` memory fallback (`sysctl hw.memsize` + `vm_stat`), `batch_path_command` `du -sk` fallback; BSD-aware parsers; fixtures `tests/fixtures/probes/{linux,macos}_*`; real binary: `checkout -a` load/memory/disk/path sane on macOS rig |
 | B52 | Help documented an `f` filter popup with no handler; `components/target_filter.rs` never compiled | `df702a9` — help/tab-info audited against `handle_key`; orphan file removed; test `help_and_tab_info_do_not_document_unhandled_f_filter_key` |
 | B49 | One unknown enum value reset all persisted TUI state | `de3859f` — `persist::deserialize_enum_or_default` on the six enum fields; test `unknown_enum_value_falls_back_per_field_while_other_fields_survive` |

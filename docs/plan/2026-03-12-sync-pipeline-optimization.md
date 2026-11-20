@@ -9,7 +9,7 @@ Status: Shipped (2026-03-13)
 
 **Tech Stack:** Rust, tokio (async), SSH ControlMaster (connection pooling), indicatif (progress bars), rusqlite (state persistence)
 
-**Spec:** `docs/superpowers/specs/2026-03-12-sync-pipeline-optimization-design.md`
+**Spec:** `docs/spec/2026-03-12-sync-pipeline-optimization.md`
 
 **Deferred:** `max_per_host_concurrency = "auto"` (auto-tuning) — the config field is `usize` for now. Auto-tuning can be added later as a string-or-int enum if needed.
 

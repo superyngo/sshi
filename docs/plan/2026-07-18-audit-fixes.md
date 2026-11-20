@@ -2,10 +2,10 @@
 Status: Shipped (2026-07-20)
 
 **Date:** 2026-07-18
-**Source:** `docs/ai-reports/AUDIT_2026-07-18.md` — 116 findings (23 HIGH, 51 MED, 42 LOW)
+**Source:** `docs/audit/2026-07-18-codebase-audit.md` — 116 findings (23 HIGH, 51 MED, 42 LOW)
 **Status:** Implementation-ready, awaiting execution
 
-> **For the next session:** Read `docs/ai-reports/AUDIT_2026-07-18.md` for full evidence per finding. Each task below links back to its source audit section. Work phases top-to-bottom; each phase is independently shippable. Run the verification block at the end of every task before declaring it complete.
+> **For the next session:** Read `docs/audit/2026-07-18-codebase-audit.md` for full evidence per finding. Each task below links back to its source audit section. Work phases top-to-bottom; each phase is independently shippable. Run the verification block at the end of every task before declaring it complete.
 
 ---
 
@@ -120,7 +120,7 @@ if let Err(e) = ctx.db.execute(...) {
 
 ### A11. Write `docs/adr/0002-russh-migration.md`
 **File:** new `docs/adr/0002-russh-migration.md`
-**Content:** Standard ADR format — Context, Decision, Status (Accepted), Consequences. Reference the existing implementation plan at `docs/superpowers/plans/2026-04-27-russh-migration.md` and the evaluation at `docs/russh-migration-evaluation.md`. Note: `ssh-keyscan`/`ssh-keygen`/`ssh-copy-id` remain subprocesses (out of russh scope). Consequences: enables Windows multiplexing, consistent ProxyJump, SFTP-based transfers; loses `~/.ssh/config` automatic compatibility (now parsed via `ssh2-config`).
+**Content:** Standard ADR format — Context, Decision, Status (Accepted), Consequences. Reference the existing implementation plan at `docs/plan/2026-04-27-russh-migration.md` and the evaluation at `docs/spec/2026-04-14-russh-migration-evaluation.md`. Note: `ssh-keyscan`/`ssh-keygen`/`ssh-copy-id` remain subprocesses (out of russh scope). Consequences: enables Windows multiplexing, consistent ProxyJump, SFTP-based transfers; loses `~/.ssh/config` automatic compatibility (now parsed via `ssh2-config`).
 **Source:** audit §2.9 HIGH
 **Verify:** File exists; referenced from AGENTS.md.
 
@@ -525,7 +525,7 @@ spec + two deferred ADR items recorded here:
 
 ### Deferred ADR items (security follow-up)
 
-Two items from `docs/adr/ssh-auth-tui-popup.md` were **not** implemented
+Two items from `docs/adr/0001-ssh-auth-tui-popup.md` were **not** implemented
 by C3 and remain open:
 
 - **§(c) AUTH_POPUP_TIMEOUT = 120s.** The ADR specifies a `tokio::select!`

@@ -3,7 +3,7 @@ Status: Shipped (2026-04-27)
 
 > Date: 2026-04-27
 > Status: Approved
-> Replaces: docs/russh-migration-evaluation.md (evaluation phase)
+> Replaces: docs/spec/2026-04-14-russh-migration-evaluation.md (evaluation phase)
 
 ## Problem Statement
 

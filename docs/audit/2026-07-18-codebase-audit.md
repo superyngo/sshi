@@ -6,7 +6,7 @@ Status: Resolved (2026-07-20)
 **Methodology:** Three parallel sub-agents audited (1) TUI vs UI Design Principles, (2) code quality & architecture, (3) performance & concurrency. Every finding carries file:line evidence. `cargo clippy --all-targets` and `cargo clippy --all-targets --features tui` both pass clean.
 **Totals:** 116 findings — 23 HIGH, 51 MED, 42 LOW.
 
-The companion implementation plan is `docs/plans/2026-07-18-audit-fixes.md`.
+The companion implementation plan is `docs/plan/2026-07-18-audit-fixes.md`.
 
 ---
 
@@ -236,7 +236,7 @@ sshi is a well-structured mid-stage Rust codebase. The headless-core separation 
 
 ### 7. Security
 
-- **[HIGH]** `host/auth.rs:74-82` passphrase flow: `let pp = rpassword::prompt_password(...)?;` — intermediate plaintext `String` lives on the stack and is dropped without zeroize. ADR `docs/adr/ssh-auth-tui-popup.md:88` requires it. Fix: wrap `pp` in `SecretString` before clone.
+- **[HIGH]** `host/auth.rs:74-82` passphrase flow: `let pp = rpassword::prompt_password(...)?;` — intermediate plaintext `String` lives on the stack and is dropped without zeroize. ADR `docs/adr/0001-ssh-auth-tui-popup.md:88` requires it. Fix: wrap `pp` in `SecretString` before clone.
 - **[HIGH]** `host/auth.rs:91` password prompt uses literal `<host>` not resolved hostname — users see `alice@<host> password:` confusingly.
 - **[MED]** `commands/sync/collect.rs:118-159` PowerShell command interpolation uses double-quotes — PowerShell double-quoted strings evaluate `$(...)` subexpressions. Config entry `path = "$(rm -rf $HOME)"` would execute on the remote Windows host. Use single-quotes. Same at `build_batch_metadata_cmd` line 317.
 - **[MED]** `commands/init.rs:97-103` `ssh-keyscan` spawned with argv form (no shell parsing) — safe from injection.

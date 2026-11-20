@@ -23,3 +23,8 @@ None.
 | 2026-09-25 | [2026-09-25-documentation-audit.md](2026-09-25-documentation-audit.md) | Resolved (2026-09-25) |
 | 2026-09-25 | [2026-09-25-code-audit.md](2026-09-25-code-audit.md) | Resolved (2026-09-26) |
 | 2026-10-21 | [2026-10-21-tui-mouse-ux-assessment.md](2026-10-21-tui-mouse-ux-assessment.md) | Resolved (2026-10-21) |
+
+The mouse/UX assessment's pty driver was promoted from gitignored scratch on 2026-11-20 to
+[`2026-10-21-tui-mouse-ux-assessment/probe.py`](2026-10-21-tui-mouse-ux-assessment/probe.py)
+(self-contained; run instructions in its header). The record's "(scratch, gitignored)" note
+predates the move.

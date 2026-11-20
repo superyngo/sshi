@@ -9,7 +9,7 @@ Status: Shipped (2026-06-03)
 
 **Tech Stack:** Rust, `clap` (derive), `tokio`, `rusqlite`, `anyhow`.
 
-**Spec:** `docs/superpowers/specs/2026-05-26-cli-interface-unification-design.md`
+**Spec:** `docs/spec/2026-05-26-cli-interface-unification.md`
 
 **Baseline:** `cargo test` is green at 152 tests before starting.
 

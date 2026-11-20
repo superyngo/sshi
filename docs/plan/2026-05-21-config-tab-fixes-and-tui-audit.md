@@ -9,7 +9,7 @@ Status: Shipped (2026-06-03)
 
 **Tech Stack:** Rust, ratatui 0.29 (`tui` feature, default on), tokio, crossterm. Tests via `cargo test --features tui` (default). Smoke render tests use `ratatui::backend::TestBackend`.
 
-**Spec reference:** `docs/superpowers/specs/2026-05-21-config-tab-fixes-and-tui-audit-design.md`.
+**Spec reference:** `docs/spec/2026-05-21-config-tab-fixes-and-tui-audit.md`.
 
 **Branch model:** Single feature branch off `main`. Commit per task. Final commit appends `CHANGELOG.md` Unreleased entry per project rules.
 
@@ -22,7 +22,7 @@ Status: Shipped (2026-06-03)
 | `src/tui/components/viewport.rs` | Modify | Add `visible_slice` helper + tests |
 | `src/tui/tabs/config_tab.rs` | Modify | Scrub `len().max(1)` sites, switch render sites to `visible_slice`, add `ConfigSelectionSnapshot` + capture/restore methods, remove `pending_field_restore` field, change `commit_entry_form` return type, add panic-reproduction smoke tests |
 | `src/tui/app.rs` | Modify | Add `flush_dirty_config_to_disk()` helper + call it on quit; rewrite `E` key handler to autosave instead of confirm popup; bracket `save_config()` reload with snapshot capture/restore; delete `pending_field_restore` restore blocks |
-| `docs/superpowers/audits/2026-05-21-tui-audit.md` | Create | Audit findings doc |
+| `docs/audit/2026-05-21-tui-audit.md` | Create | Audit findings doc |
 | `CHANGELOG.md` | Modify | Single Unreleased entry summarizing this work |
 
 `ConfirmAction::OpenEditorDirty` (in `config_tab.rs:324`) is removed; no other file references it (verified by grep in Task 6).
@@ -1077,7 +1077,7 @@ positions."
 ## Task 9: TUI audit — produce findings doc
 
 **Files:**
-- Create: `docs/superpowers/audits/2026-05-21-tui-audit.md`.
+- Create: `docs/audit/2026-05-21-tui-audit.md`.
 
 This task is an investigation, not a fix. Each finding is written into the audit doc with severity and disposition. Blocker findings get their own follow-up task (Task 10).
 
@@ -1120,12 +1120,12 @@ Read each of these files and note any patterns the greps could miss:
 
 - [ ] **Step 9.3: Write findings into the audit doc**
 
-Create `docs/superpowers/audits/2026-05-21-tui-audit.md` with this exact structure:
+Create `docs/audit/2026-05-21-tui-audit.md` with this exact structure:
 
 ```markdown
 # TUI Audit — 2026-05-21
 
-**Spec:** `docs/superpowers/specs/2026-05-21-config-tab-fixes-and-tui-audit-design.md`
+**Spec:** `docs/spec/2026-05-21-config-tab-fixes-and-tui-audit.md`
 **Audit scope:** `src/tui/`.
 
 ## Methodology
@@ -1167,7 +1167,7 @@ When in doubt, downgrade. When unsure whether something is a real issue at all (
 - [ ] **Step 9.4: Commit the audit doc**
 
 ```bash
-git add docs/superpowers/audits/2026-05-21-tui-audit.md
+git add docs/audit/2026-05-21-tui-audit.md
 git commit -m "docs(audit): TUI audit 2026-05-21 findings
 
 Scripted greps + targeted reads per spec §8. <N> findings total:
@@ -1211,7 +1211,7 @@ Change the finding's `Disposition` from `fixed-in-this-spec` (planned) to `fixed
 git add <files>
 git commit -m "fix(tui): <blocker-finding-title>
 
-Folds audit finding from docs/superpowers/audits/2026-05-21-tui-audit.md.
+Folds audit finding from docs/audit/2026-05-21-tui-audit.md.
 <one-line description>"
 ```
 
@@ -1242,7 +1242,7 @@ Insert under the existing Unreleased section (or create one immediately after th
   external editor (E). Closes a persistence gap for Hosts/Checks/Syncs.
 - refactor(tui): preserve cursor position across save+reload via
   ConfigSelectionSnapshot (subsumes pending_field_restore).
-- docs(audit): TUI audit results at docs/superpowers/audits/2026-05-21-tui-audit.md.
+- docs(audit): TUI audit results at docs/audit/2026-05-21-tui-audit.md.
 ```
 
 - [ ] **Step 11.3: Final test sweep**

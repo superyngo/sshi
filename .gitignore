@@ -16,5 +16,5 @@ Thumbs.db
 
 # Build
 dist/
-docs/tmp/
+docs/tmp/*-scratch/
 .claude/

@@ -9,7 +9,7 @@ Status: Shipped (2026-03-19)
 
 **Tech Stack:** Rust, tokio (async/process), ssh-keyscan (system command), ssh -G (config resolution)
 
-**Spec:** `docs/superpowers/specs/2026-03-19-init-host-key-acceptance-design.md`
+**Spec:** `docs/spec/2026-03-19-init-host-key-acceptance.md`
 
 ---
 

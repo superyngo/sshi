@@ -9,7 +9,7 @@ Status: Superseded by 2026-04-27-russh-migration.md
 
 **Tech Stack:** Rust, `async_trait`, `tokio`, `anyhow`, existing `ConnectionManager` and `executor` modules.
 
-**Spec:** `docs/superpowers/specs/2026-04-14-ssh-transport-trait-design.md`
+**Spec:** `docs/spec/2026-04-14-ssh-transport-trait.md`
 
 ---
 

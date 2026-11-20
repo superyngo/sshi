@@ -7,7 +7,7 @@ Status: Shipped (2026-06-03)
 
 **Architecture:** Single-column "Approach B" layout per tab (op selector → target summary → specific fields → trigger/result). Targets stay mutually exclusive via the existing `FilterPopup` (plus a new `skip` modifier). View commands gain structured `*_core` data functions; `checkout` reuses its existing `pub(crate)` helpers. `init` is intentionally excluded (CLI-only) — its `stdin` prompts cannot run in the raw-mode TUI.
 
-**Tech Stack:** Rust, ratatui, tokio, rusqlite, serde/toml. Spec: `docs/superpowers/specs/2026-05-26-tui-operate-refactor-design.md`.
+**Tech Stack:** Rust, ratatui, tokio, rusqlite, serde/toml. Spec: `docs/spec/2026-05-26-tui-operate-refactor.md`.
 
 **Conventions:**
 - Build/test with the `tui` feature: `cargo test --features tui` and `cargo build --features tui`.
@@ -30,7 +30,7 @@ Status: Shipped (2026-06-03)
 | `src/tui/tabs/view_tab.rs` | View render + result renderers (checkout/list/log) | **Create** |
 | `src/tui/app.rs` | state fields, key dispatch, render dispatch, live-refresh, removal of stale `run_yes`/Checkout-inline | Modify |
 | `CHANGELOG.md` | Unreleased entry | Modify |
-| `docs/tui_reconstruct_plan.md` | reconciliation note (Checkout→View) | Modify |
+| `docs/spec/2026-05-06-tui-reconstruct.md` | reconciliation note (Checkout→View) | Modify |
 
 ---
 
@@ -1000,7 +1000,7 @@ git commit -m "feat(tui): persist View tab + skip state"
 
 **Files:**
 - Modify: `CHANGELOG.md`
-- Modify: `docs/tui_reconstruct_plan.md`
+- Modify: `docs/spec/2026-05-06-tui-reconstruct.md`
 
 - [ ] **Step 1: CHANGELOG entry**
 
@@ -1008,12 +1008,12 @@ Append an `Unreleased` entry (timestamp `2026-05-26`) summarizing: Operate tab n
 
 - [ ] **Step 2: Reconciliation note in the plan doc**
 
-Add a short note at the top of `docs/tui_reconstruct_plan.md` §12.4: "The Checkout tab is superseded by the View tab (`checkout/list/log`); see `docs/superpowers/specs/2026-05-26-tui-operate-refactor-design.md`."
+Add a short note at the top of `docs/spec/2026-05-06-tui-reconstruct.md` §12.4: "The Checkout tab is superseded by the View tab (`checkout/list/log`); see `docs/spec/2026-05-26-tui-operate-refactor.md`."
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add CHANGELOG.md docs/tui_reconstruct_plan.md
+git add CHANGELOG.md docs/spec/2026-05-06-tui-reconstruct.md
 git commit -m "docs: changelog + plan reconciliation for Operate/View refactor"
 ```
 

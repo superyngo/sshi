@@ -394,6 +394,17 @@ On load, `validate_filter()` sanitizes persisted state against the active `AppCo
 1. **Group/Host Pruning**: Target groups or hosts not defined in the loaded `config.toml` are silently dropped.
 2. **Explicit Zero-Target Preservation**: If a `Groups` or `Hosts` filter resolves to an empty list after pruning, the mode is preserved rather than widened to `All`, preventing accidental operations against all hosts.
 
----
+## Invariants
 
-See [AGENTS.md](../../AGENTS.md) for TUI contributor rules and merge gates.
+- **No terminal printing while the TUI runs.** Nothing in `src/tui/`, and no code path reachable
+  while the TUI is running, uses `println!`, `eprintln!`, `print!`, or `eprint!`; diagnostics go
+  through `tracing` (`error!`, `warn!`, `debug!`). Printing would corrupt the alternate screen.
+- **Command cores never print.** The `commands::*_core` functions (`check_core`, `run_core`,
+  `exec_core`, `cp_core`, `sync_core`, `init_core`, `list_core`, `log_core`) never call
+  `output::printer`. They return data — a typed report (`RunReport`, `ExecReport`, `CpReport`,
+  `CheckReport`, …, each with `From<…> for CommandReport`) — and the per-host ones emit progress
+  through a `ProgressSink` (`commands::report`). The CLI wrapper prints through `PrinterSink`
+  (`default_printer_sink`); the TUI passes `EventSender` (`tui::async_bridge`), a channel sender,
+  so both surfaces share one core.
+
+Contributor conduct (build, test, and merge gates) is in [AGENTS.md](../../AGENTS.md).

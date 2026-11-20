@@ -30,13 +30,9 @@ cargo fmt --check
 
 ## TUI contributor rules
 
-- No `eprintln!` / `println!` / `print!` / `eprint!` anywhere in `src/tui/`
-  or in any code path reachable while the TUI is running. Use `tracing`
-  macros (`error!`, `warn!`, `debug!`) instead.
-- `commands::*_core` functions must never call `output::printer`. They
-  receive a `ProgressSink` impl and return data — a typed report
-  (`RunReport`, `ExecReport`, `CpReport`, `CheckReport`, … each with
-  `From<…> for CommandReport`); printing is the CLI wrapper's responsibility.
+- Keep the architecture invariants in
+  [docs/reference/tui.md §Invariants](docs/reference/tui.md#invariants): no terminal printing
+  while the TUI runs, and `commands::*_core` never calls `output::printer`.
 - Every change merges into `main` only after `cargo test`,
   `cargo test --no-default-features`, `cargo clippy --all-targets`,
   `cargo clippy --all-targets --no-default-features`, and `cargo fmt --check`

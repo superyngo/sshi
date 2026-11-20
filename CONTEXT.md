@@ -15,7 +15,7 @@ Profile: dev
 | [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md) | The one living tracker of open work, pending verification, external blockers, and watched items | No — live state | Never frozen while anything is open |
 | [`docs/debug/`](docs/debug/README.md) | Handoff notes from investigations, with repro scripts | No — historical | Frozen once resolved; only `Status:` changes |
 | [`docs/audit/`](docs/audit/README.md) | Point-in-time sweeps for bugs, dead code, inconsistency, plus assessment / verification runs | No — historical | Frozen once findings are addressed; only `Status:` changes |
-| `docs/tmp/` | Scratch (gitignored; agent probes in `<agent>-scratch/`) | No | Archived to `tmp/archive/YYYY-MM.tar.gz` when stale |
+| `docs/tmp/` | Scratch; agent probes in gitignored `<agent>-scratch/YYYY-MM-DD-<slug>/` task directories | No | Swept at each release: tracked stale files into `tmp/archive/YYYY-MM.tar.gz`, untracked ones to the OS trash |
 
 ## Reading order
 

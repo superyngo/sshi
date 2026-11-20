@@ -9,7 +9,7 @@ Status: Shipped (2026-04-29)
 
 **Tech Stack:** Rust / clap 4 (derive), serde_json, chrono, anyhow — all already in `Cargo.toml`.
 
-**Spec:** `docs/superpowers/specs/2026-04-29-cli-filter-output-refactor-design.md`
+**Spec:** `docs/spec/2026-04-29-cli-filter-output-refactor.md`
 
 ---
 

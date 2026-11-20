@@ -247,7 +247,7 @@ Any `idx` exceeding the new length falls back to `len - 1` (or 0 if `len == 0`).
 
 ### 8.1 Output
 
-`docs/superpowers/audits/2026-05-21-tui-audit.md`, committed in the same PR.
+`docs/audit/2026-05-21-tui-audit.md`, committed in the same PR.
 
 ### 8.2 Methodology
 
